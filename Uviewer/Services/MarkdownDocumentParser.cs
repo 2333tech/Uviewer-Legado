@@ -24,7 +24,12 @@ internal static class MarkdownDocumentParser
 
     private static MarkdownPipeline CreatePipeline()
     {
-        var builder = new MarkdownPipelineBuilder().UsePipeTables().UseEmphasisExtras().UseMathematics();
+        var builder = new MarkdownPipelineBuilder()
+            .UsePipeTables()
+            .UseEmphasisExtras()
+            .UseMathematics()
+            // A closing math delimiter is punctuation; allow **$...$**입니다.
+            .UseCjkFriendlyEmphasis();
         // Accept TeX delimiters adjacent to Korean prose as well as whitespace.
         builder.Extensions.Add(new ReaderMathExtension());
         return builder.Build();
