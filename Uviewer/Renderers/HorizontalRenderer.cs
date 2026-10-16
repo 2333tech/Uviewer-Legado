@@ -162,7 +162,9 @@ namespace Uviewer.Renderers
                     
                     float tableMaxWidth = maxWidth - tableIndent - tableRightMargin;
                     float tableDrawX = marginLeft + tableIndent;
-                    float colWidth = tableMaxWidth / colCount;
+                    var columnWidths = TableColumnLayout.Measure(ds, block, tableMaxWidth, fontSize,
+                        block.FontFamily ?? defaultFontFamily, getFontWeight(block.FontFamily ?? defaultFontFamily));
+                    tableMaxWidth = columnWidths.Sum();
 
                     using var tableFormat = new CanvasTextFormat
                     {
@@ -176,18 +178,15 @@ namespace Uviewer.Renderers
                         ds.DrawLine(tableDrawX, currentY, tableDrawX + tableMaxWidth, currentY, Colors.Gray, 1.5f);
 
                     float maxCellHeight = 0;
-                    var cellLayouts = new List<CanvasTextLayout>();
+                    var cellLayouts = new List<TableCellLayout>();
 
-                    foreach (var cellText in row)
+                    for (int c = 0; c < colCount; c++)
                     {
-                        var parsed = ParseTableInline(cellText);
-                        var cellLayout = new CanvasTextLayout(ds, parsed.text, tableFormat, Math.Max(10, colWidth - 20), 0.0f);
-                        cellLayout.Options = CanvasDrawTextOptions.EnableColorFont;
-                        foreach (var br in parsed.boldRanges)
-                            cellLayout.SetFontWeight(br.start, br.length, FontWeights.Bold);
+                        var cellLayout = new TableCellLayout(ds, TableCellLayout.GetCell(block, c),
+                            Math.Max(1, columnWidths[c] - 20), fontSize, tableFormat.FontFamily, tableFormat.FontWeight, textColor);
                             
                         cellLayouts.Add(cellLayout);
-                        float h = (float)cellLayout.LayoutBounds.Height;
+                        float h = (float)cellLayout.Layout.LayoutBounds.Height;
                         if (h > maxCellHeight) maxCellHeight = h;
                     }
 
@@ -198,12 +197,14 @@ namespace Uviewer.Renderers
                     else if (r % 2 == 1)
                         ds.FillRectangle(tableDrawX, currentY, tableMaxWidth, rowHeight, ColorHelper.FromArgb(10, 128, 128, 128));
 
+                    float cellX = tableDrawX;
                     for (int c = 0; c < colCount; c++)
                     {
-                        float cellX = tableDrawX + (c * colWidth);
-                        ds.DrawTextLayout(cellLayouts[c], cellX + 10, currentY + 10, textColor);
+                        float cellOffsetY = (maxCellHeight - (float)cellLayouts[c].Layout.LayoutBounds.Height) / 2;
+                        cellLayouts[c].Draw(ds, cellX + 10, currentY + 10 + cellOffsetY, textColor);
                         cellLayouts[c].Dispose();
                         ds.DrawLine(cellX, currentY, cellX, currentY + rowHeight, Colors.Gray, 1f); 
+                        cellX += columnWidths[c];
                     }
                     
                     ds.DrawLine(tableDrawX + tableMaxWidth, currentY, tableDrawX + tableMaxWidth, currentY + rowHeight, Colors.Gray, 1f);
@@ -218,6 +219,7 @@ namespace Uviewer.Renderers
                 }
 
                 // 2. 일반 텍스트 블록 렌더링
+                if (block.IsCodeBlock) currentY += (float)block.Padding.Top;
                 float lineSpacing = (block.IsTable || block.HeadingLevel > 0) ? fontSize * 1.3f : fontSize * 2.1f;
 
                 StringBuilder sb = new StringBuilder();
@@ -225,12 +227,19 @@ namespace Uviewer.Renderers
                 var boldRanges = new List<(int start, int length)>();
                 var italicRanges = new List<(int start, int length)>();
                 var highlightRanges = new List<(int start, int length)>();
-                var mathRanges = new List<(int start, int length)>();
+                var mathRanges = new List<(int start, int length, AozoraMath math)>();
+                var styledRanges = new List<(int start, int length, AozoraStyledText style)>();
 
                 foreach (var inline in block.Inlines)
                 {
                     int start = sb.Length;
                     if (inline is string s) sb.Append(s);
+                    else if (inline is AozoraStyledText styled)
+                    {
+                        sb.Append(styled.Text);
+                        styledRanges.Add((start, styled.Text.Length, styled));
+                        if (styled.Highlight) highlightRanges.Add((start, styled.Text.Length));
+                    }
                     else if (inline is AozoraRuby ruby)
                     {
                         sb.Append(ruby.BaseText);
@@ -257,7 +266,7 @@ namespace Uviewer.Renderers
                     {
                         var rendered = KatexStandaloneRenderer.RenderToText(math.Text);
                         sb.Append(rendered);
-                        mathRanges.Add((start, rendered.Length));
+                        mathRanges.Add((start, rendered.Length, math));
                         if (math.IsBold) boldRanges.Add((start, rendered.Length));
                     }
                     else if (inline is AozoraTCY tcy)
@@ -283,8 +292,10 @@ namespace Uviewer.Renderers
                     FontFamily = block.FontFamily ?? defaultFontFamily,
                     FontWeight = getFontWeight(block.FontFamily ?? defaultFontFamily),
                     Direction = CanvasTextDirection.LeftToRightThenTopToBottom,
-                    WordWrapping = block.IsTable ? CanvasWordWrapping.NoWrap : CanvasWordWrapping.Wrap, 
+                    WordWrapping = block.IsTable && !block.IsCodeBlock ? CanvasWordWrapping.NoWrap : CanvasWordWrapping.Wrap,
                     LineSpacing = lineSpacing,
+                    LineSpacingBaseline = fontSize * ((block.IsTable || block.HeadingLevel > 0) ? 1.05f : 1.35f),
+                    LineSpacingMode = CanvasLineSpacingMode.Uniform,
                     VerticalAlignment = CanvasVerticalAlignment.Top
                 };
 
@@ -294,14 +305,12 @@ namespace Uviewer.Renderers
                 if (block.IsBold) textLayout.SetFontWeight(0, blockText.Length, FontWeights.Bold);
                 foreach (var r in boldRanges) textLayout.SetFontWeight(r.start, r.length, FontWeights.Bold);
                 foreach (var r in italicRanges) textLayout.SetFontStyle(r.start, r.length, Windows.UI.Text.FontStyle.Italic);
-                foreach (var r in mathRanges)
-                {
-                    textLayout.SetFontFamily(r.start, r.length, "Cambria Math");
-                    textLayout.SetFontStyle(r.start, r.length, Windows.UI.Text.FontStyle.Italic);
-                }
+                foreach (var r in styledRanges) InlineTextFormatting.Apply(textLayout, r.start, r.length, r.style);
+                using var mathLayout = new MathInlineLayout();
+                mathLayout.Apply(textLayout, mathRanges, fontSize, actualMaxWidth, textColor);
 
                 int lineCount = textLayout.LineCount;
-                float currentBlockHeight = block.IsBlankLine ? lineSpacing * 0.3f : lineCount * lineSpacing;
+                float currentBlockHeight = block.IsBlankLine ? lineSpacing * 0.3f : (float)textLayout.LayoutBounds.Height;
 
                 var bounds = textLayout.LayoutBounds;
                 float drawX = marginLeft + indent;
@@ -356,8 +365,14 @@ namespace Uviewer.Renderers
 
                     float bgTop = currentY + dbTop - padTop;
                     float bgHeight = dbHeight + padTop + padBottom;
+                    if (block.IsCodeBlock)
+                    {
+                        bgTop = currentY - padTop;
+                        bgHeight = currentBlockHeight + padTop + padBottom;
+                    }
 
-                    ds.FillRectangle(drawX - padLeft, bgTop, currentW + padLeft + padRight, bgHeight, block.BackgroundColor.Value);
+                    ds.FillRectangle(drawX - padLeft, bgTop,
+                        (block.IsCodeBlock ? actualMaxWidth : currentW) + padLeft + padRight, bgHeight, block.BackgroundColor.Value);
                 }
 
                 // 5. 인라인 배경 및 텍스트 본문 그리기
@@ -416,7 +431,7 @@ namespace Uviewer.Renderers
                     }
                 }
 
-                ds.DrawTextLayout(textLayout, drawX, currentY, textColor);
+                mathLayout.Draw(ds, textLayout, drawX, currentY, textColor);
                 if (selectionGeometry != null)
                 {
                     selectionGeometry.AddBlock(selectionBlockOffset + i, blockText, drawX, currentY, fontSize, textLayout);
@@ -499,6 +514,7 @@ namespace Uviewer.Renderers
                 }
 
                 currentY += currentBlockHeight + (float)block.Margin.Bottom;
+                if (block.IsCodeBlock) currentY += (float)block.Padding.Bottom;
 
                 if (i == blocks.Count - 1 && isBoxing)
                 {

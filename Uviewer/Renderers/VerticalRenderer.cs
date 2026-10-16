@@ -199,12 +199,20 @@ namespace Uviewer.Renderers
                 var tcyRanges = new List<(int start, int length)>();
                 var italicRanges = new List<(int start, int length)>();
                 var highlightRanges = new List<(int start, int length)>();
-                var mathRanges = new List<(int start, int length)>();
+                var mathRanges = new List<(int start, int length, AozoraMath math)>();
+                var styledRanges = new List<(int start, int length, AozoraStyledText style)>();
 
                 foreach (var inline in block.Inlines)
                 {
                     int start = sb.Length;
                     if (inline is string s) sb.Append(NormalizeVerticalText(s));
+                    else if (inline is AozoraStyledText styled)
+                    {
+                        var normText = NormalizeVerticalText(styled.Text);
+                        sb.Append(normText);
+                        styledRanges.Add((start, normText.Length, styled));
+                        if (styled.Highlight) highlightRanges.Add((start, normText.Length));
+                    }
                     else if (inline is AozoraRuby ruby)
                     {
                         var normBase = NormalizeVerticalText(ruby.BaseText);
@@ -235,7 +243,7 @@ namespace Uviewer.Renderers
                     {
                         var rendered = NormalizeVerticalText(KatexStandaloneRenderer.RenderToText(math.Text));
                         sb.Append(rendered);
-                        mathRanges.Add((start, rendered.Length));
+                        mathRanges.Add((start, rendered.Length, math));
                         if (math.IsBold) boldRanges.Add((start, rendered.Length));
                     }
                     else if (inline is AozoraTCY tcy)
@@ -264,11 +272,9 @@ namespace Uviewer.Renderers
                 if (block.IsBold) textLayout.SetFontWeight(0, blockText.Length, FontWeights.Bold);
                 foreach (var r in boldRanges) textLayout.SetFontWeight(r.start, r.length, FontWeights.Bold);
                 foreach (var r in italicRanges) textLayout.SetFontStyle(r.start, r.length, Windows.UI.Text.FontStyle.Italic);
-                foreach (var r in mathRanges)
-                {
-                    textLayout.SetFontFamily(r.start, r.length, "Cambria Math");
-                    textLayout.SetFontStyle(r.start, r.length, Windows.UI.Text.FontStyle.Italic);
-                }
+                foreach (var r in styledRanges) InlineTextFormatting.Apply(textLayout, r.start, r.length, r.style);
+                using var mathLayout = new MathInlineLayout();
+                mathLayout.Apply(textLayout, mathRanges, fontSize, actualDrawHeight, textColor);
 
                 var bounds = textLayout.LayoutBounds;
                 float currentLineThickness = (float)bounds.Width;
@@ -366,7 +372,7 @@ namespace Uviewer.Renderers
                     }
                 }
 
-                ds.DrawTextLayout(textLayout, drawX, drawY, textColor);
+                mathLayout.Draw(ds, textLayout, drawX, drawY, textColor);
                 if (selectionGeometry != null)
                 {
                     selectionGeometry.AddBlock(i, blockText, drawX, drawY, fontSize, textLayout);

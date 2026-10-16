@@ -1,8 +1,13 @@
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.Svg;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net.Http;
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Windows.Storage.Streams;
 using Uviewer.Models;
@@ -33,6 +38,7 @@ namespace Uviewer.Services
     /// </summary>
     public class ImageResourceService
     {
+        private static readonly HttpClient ImageHttpClient = new() { Timeout = TimeSpan.FromSeconds(30) };
         // ------------------------------------------------------------------
         // 통합 이미지 캐시
         // 키 네임스페이스 규칙:
@@ -97,6 +103,11 @@ namespace Uviewer.Services
 
             try
             {
+                if (IsExternalImage(relativePath))
+                {
+                    lock (_lock) return !_knownMissing.Contains(GetTextCacheKey(relativePath));
+                }
+                relativePath = NormalizeImagePath(relativePath);
                 // (A) EPUB 아카이브
                 if (ctx.IsEpubMode && ctx.EpubSession != null)
                 {
@@ -215,7 +226,21 @@ namespace Uviewer.Services
                     }
                     ras.Seek(0);
 
-                    originalBitmap = await CanvasBitmap.LoadAsync(device, ras);
+                    // SVG badges/diagrams are common in Markdown but are not WIC bitmaps.
+                    string prefix = Encoding.UTF8.GetString(bytes, 0, Math.Min(bytes.Length, 2048));
+                    if (Regex.IsMatch(prefix, @"<svg(?:\s|>)", RegexOptions.IgnoreCase))
+                    {
+                        using var svg = await CanvasSvgDocument.LoadAsync(device, ras);
+                        var size = GetSvgSize(Encoding.UTF8.GetString(bytes));
+                        var rendered = new CanvasRenderTarget(device, size.width, size.height, 144);
+                        using (var session = rendered.CreateDrawingSession())
+                        {
+                            session.Clear(Microsoft.UI.Colors.Transparent);
+                            session.DrawSvg(svg, new Windows.Foundation.Size(size.width, size.height));
+                        }
+                        originalBitmap = rendered;
+                    }
+                    else originalBitmap = await CanvasBitmap.LoadAsync(device, ras);
                 }
                 CanvasBitmap finalBitmap = originalBitmap;
 
@@ -271,7 +296,10 @@ namespace Uviewer.Services
                 lock (_lock)
                 {
                     if (loadVersion == _cacheVersion)
+                    {
                         _cache.Remove(cacheKey);
+                        if (IsExternalImage(relativePath)) _knownMissing.Add(cacheKey);
+                    }
                 }
                 return null;
             }
@@ -392,6 +420,18 @@ namespace Uviewer.Services
 
         private async Task<byte[]?> ExtractBytesAsync(string relativePath, ViewingContext ctx)
         {
+            if (relativePath.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase))
+            {
+                int comma = relativePath.IndexOf(',');
+                if (comma < 0) return null;
+                string payload = relativePath[(comma + 1)..];
+                return relativePath[..comma].EndsWith(";base64", StringComparison.OrdinalIgnoreCase)
+                    ? Convert.FromBase64String(payload)
+                    : System.Text.Encoding.UTF8.GetBytes(Uri.UnescapeDataString(payload));
+            }
+            if (Uri.TryCreate(relativePath, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https")
+                return await ImageHttpClient.GetByteArrayAsync(uri);
+            relativePath = NormalizeImagePath(relativePath);
             // (A) EPUB 아카이브
             if (ctx.IsEpubMode && ctx.EpubSession != null)
             {
@@ -450,7 +490,47 @@ namespace Uviewer.Services
             string targetKey = string.IsNullOrEmpty(baseDir)
                 ? subPath
                 : (baseDir.TrimEnd('/') + "/" + subPath);
-            return targetKey.Replace("/./", "/");
+            var segments = new List<string>();
+            foreach (var segment in targetKey.Split('/'))
+            {
+                if (segment is "" or ".") continue;
+                if (segment == "..") { if (segments.Count > 0) segments.RemoveAt(segments.Count - 1); }
+                else segments.Add(segment);
+            }
+            return string.Join('/', segments);
+        }
+
+        private static bool IsExternalImage(string path) =>
+            path.StartsWith("data:image/", StringComparison.OrdinalIgnoreCase) ||
+            (Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https");
+
+        private static (float width, float height) GetSvgSize(string source)
+        {
+            var document = new HtmlAgilityPack.HtmlDocument();
+            document.LoadHtml(source);
+            var root = document.DocumentNode.Descendants("svg").FirstOrDefault();
+            float Length(string name) => float.TryParse(Regex.Match(root?.GetAttributeValue(name, "") ?? "", @"^\s*(\d+(?:\.\d+)?)\s*(?:px)?\s*$").Groups[1].Value,
+                NumberStyles.Float, CultureInfo.InvariantCulture, out float value) ? value : 0;
+            float width = Length("width"), height = Length("height");
+            var box = Regex.Split(root?.GetAttributeValue("viewbox", "").Trim() ?? "", @"[\s,]+");
+            if (box.Length == 4 && float.TryParse(box[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float vw) &&
+                float.TryParse(box[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float vh) && vw > 0 && vh > 0)
+            {
+                if (width <= 0 && height > 0) width = height * vw / vh;
+                if (height <= 0 && width > 0) height = width * vh / vw;
+                if (width <= 0 && height <= 0) { width = vw; height = vh; }
+            }
+            width = width > 0 ? width : 300;
+            height = height > 0 ? height : 150;
+            float scale = Math.Min(1, 4096 / Math.Max(width, height));
+            return (Math.Max(1, width * scale), Math.Max(1, height * scale));
+        }
+
+        private static string NormalizeImagePath(string path)
+        {
+            if (Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.IsFile) return uri.LocalPath;
+            int suffix = path.IndexOfAny(['?', '#']);
+            return Uri.UnescapeDataString(suffix >= 0 ? path[..suffix] : path);
         }
 
         private static bool IsBitmapUsable(CanvasBitmap bitmap)

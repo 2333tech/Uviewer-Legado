@@ -42,7 +42,8 @@ namespace Uviewer.Services
                 float tableIndent = tableIndentChars * fontSize;
                 float tableRightMarginChars = (float)block.RightMarginChars;
                 float tableRightMargin = tableRightMarginChars * fontSize;
-                float colWidth = (availableWidth - tableIndent - tableRightMargin) / colCount;
+                var columnWidths = TableColumnLayout.Measure(device, block, availableWidth - tableIndent - tableRightMargin,
+                    fontSize, block.FontFamily ?? defaultFontFamily, getFontWeight(block.FontFamily ?? defaultFontFamily));
 
                 using var tableFormat = new CanvasTextFormat
                 {
@@ -55,14 +56,12 @@ namespace Uviewer.Services
                 };
 
                 float maxCellHeight = 0;
-                foreach (var cellText in row)
+                for (int c = 0; c < colCount; c++)
                 {
-                    var parsed = HorizontalRenderer.ParseTableInline(cellText);
-                    using var cellLayout = new CanvasTextLayout(device, parsed.text, tableFormat, Math.Max(10, colWidth - 20), 0.0f);
-                    foreach (var r in parsed.boldRanges)
-                        cellLayout.SetFontWeight(r.start, r.length, Microsoft.UI.Text.FontWeights.Bold);
+                    using var cell = new TableCellLayout(device, TableCellLayout.GetCell(block, c),
+                        Math.Max(1, columnWidths[c] - 20), fontSize, tableFormat.FontFamily, tableFormat.FontWeight, Microsoft.UI.Colors.Black);
 
-                    float h = (float)cellLayout.LayoutBounds.Height;
+                    float h = (float)cell.Layout.LayoutBounds.Height;
                     if (h > maxCellHeight) maxCellHeight = h;
                 }
 
@@ -84,8 +83,10 @@ namespace Uviewer.Services
                 FontFamily = block.FontFamily ?? defaultFontFamily,
                 FontWeight = getFontWeight(block.FontFamily ?? defaultFontFamily),
                 Direction = CanvasTextDirection.LeftToRightThenTopToBottom,
-                WordWrapping = block.IsTable ? CanvasWordWrapping.NoWrap : CanvasWordWrapping.Wrap,
+                WordWrapping = block.IsTable && !block.IsCodeBlock ? CanvasWordWrapping.NoWrap : CanvasWordWrapping.Wrap,
                 LineSpacing = lineSpacing,
+                LineSpacingBaseline = fontSize * ((block.IsTable || block.HeadingLevel > 0) ? 1.05f : 1.35f),
+                LineSpacingMode = CanvasLineSpacingMode.Uniform,
                 VerticalAlignment = CanvasVerticalAlignment.Top
             };
 
@@ -102,8 +103,12 @@ namespace Uviewer.Services
             if (block.IsBold) layout.SetFontWeight(0, text.Length, Microsoft.UI.Text.FontWeights.Bold);
             foreach (var r in textInfo.BoldRanges) layout.SetFontWeight(r.start, r.length, Microsoft.UI.Text.FontWeights.Bold);
             foreach (var r in textInfo.ItalicRanges) layout.SetFontStyle(r.start, r.length, Windows.UI.Text.FontStyle.Italic);
+            foreach (var r in textInfo.StyledRanges) InlineTextFormatting.Apply(layout, r.start, r.length, r.style);
 
-            float result = layout.LineCount * lineSpacing + (float)block.Margin.Bottom;
+            using var mathLayout = new MathInlineLayout();
+            mathLayout.Apply(layout, textInfo.MathRanges, fontSize, actualAvailableWidth, Microsoft.UI.Colors.Black);
+            float result = (float)layout.LayoutBounds.Height + (float)block.Margin.Bottom;
+            if (block.IsCodeBlock) result += (float)(block.Padding.Top + block.Padding.Bottom);
             if (block.IsBlankLine) result = lineSpacing * 0.3f;
 
             _cache[cacheKey] = result;
@@ -147,7 +152,10 @@ namespace Uviewer.Services
             if (block.IsBold) layout.SetFontWeight(0, text.Length, Microsoft.UI.Text.FontWeights.Bold);
             foreach (var r in textInfo.BoldRanges) layout.SetFontWeight(r.start, r.length, Microsoft.UI.Text.FontWeights.Bold);
             foreach (var r in textInfo.ItalicRanges) layout.SetFontStyle(r.start, r.length, Windows.UI.Text.FontStyle.Italic);
+            foreach (var r in textInfo.StyledRanges) InlineTextFormatting.Apply(layout, r.start, r.length, r.style);
 
+            using var mathLayout = new MathInlineLayout();
+            mathLayout.Apply(layout, textInfo.MathRanges, fontSize, actualHeight, Microsoft.UI.Colors.Black);
             float boundsWidth = (float)layout.LayoutBounds.Width;
             float spacing = fontSize * (block.IsBlankLine ? 0.2f : 0.6f);
 
@@ -163,11 +171,18 @@ namespace Uviewer.Services
             var sb = new StringBuilder();
             var boldRanges = new List<(int start, int length)>();
             var italicRanges = new List<(int start, int length)>();
+            var mathRanges = new List<(int start, int length, AozoraMath math)>();
+            var styledRanges = new List<(int start, int length, AozoraStyledText style)>();
 
             foreach (var inline in block.Inlines)
             {
                 int start = sb.Length;
                 if (inline is string s) sb.Append(s);
+                else if (inline is AozoraStyledText styled)
+                {
+                    sb.Append(styled.Text);
+                    styledRanges.Add((start, styled.Text.Length, styled));
+                }
                 else if (inline is AozoraRuby ruby)
                 {
                     sb.Append(ruby.BaseText);
@@ -189,6 +204,7 @@ namespace Uviewer.Services
                 {
                     var rendered = KatexStandaloneRenderer.RenderToText(math.Text);
                     sb.Append(rendered);
+                    mathRanges.Add((start, rendered.Length, math));
                     if (math.IsBold) boldRanges.Add((start, rendered.Length));
                 }
                 else if (inline is AozoraTCY tcy)
@@ -199,7 +215,7 @@ namespace Uviewer.Services
                 else if (inline is AozoraLineBreak) sb.Append("\n");
             }
 
-            return new TextMeasureInput(sb.ToString(), boldRanges, italicRanges);
+            return new TextMeasureInput(sb.ToString(), boldRanges, italicRanges, mathRanges, styledRanges);
         }
 
         private static TextMeasureInput BuildVerticalText(AozoraBindingModel block)
@@ -207,11 +223,19 @@ namespace Uviewer.Services
             var sb = new StringBuilder();
             var boldRanges = new List<(int start, int length)>();
             var italicRanges = new List<(int start, int length)>();
+            var mathRanges = new List<(int start, int length, AozoraMath math)>();
+            var styledRanges = new List<(int start, int length, AozoraStyledText style)>();
 
             foreach (var inline in block.Inlines)
             {
                 int start = sb.Length;
                 if (inline is string s) sb.Append(VerticalRenderer.NormalizeVerticalText(s));
+                else if (inline is AozoraStyledText styled)
+                {
+                    var text = VerticalRenderer.NormalizeVerticalText(styled.Text);
+                    sb.Append(text);
+                    styledRanges.Add((start, text.Length, styled));
+                }
                 else if (inline is AozoraRuby ruby)
                 {
                     var normBase = VerticalRenderer.NormalizeVerticalText(ruby.BaseText);
@@ -236,6 +260,7 @@ namespace Uviewer.Services
                 {
                     var normText = VerticalRenderer.NormalizeVerticalText(KatexStandaloneRenderer.RenderToText(math.Text));
                     sb.Append(normText);
+                    mathRanges.Add((start, normText.Length, math));
                     if (math.IsBold) boldRanges.Add((start, normText.Length));
                 }
                 else if (inline is AozoraTCY tcy)
@@ -252,13 +277,15 @@ namespace Uviewer.Services
                 foreach (var row in block.TableRows) sb.AppendLine(string.Join(" | ", row));
             }
 
-            return new TextMeasureInput(sb.ToString(), boldRanges, italicRanges);
+            return new TextMeasureInput(sb.ToString(), boldRanges, italicRanges, mathRanges, styledRanges);
         }
 
         private readonly record struct TextMeasureInput(
             string Text,
             List<(int start, int length)> BoldRanges,
-            List<(int start, int length)> ItalicRanges);
+            List<(int start, int length)> ItalicRanges,
+            List<(int start, int length, AozoraMath math)> MathRanges,
+            List<(int start, int length, AozoraStyledText style)> StyledRanges);
 
         private readonly struct BlockMeasureCacheKey : IEquatable<BlockMeasureCacheKey>
         {
@@ -295,7 +322,18 @@ namespace Uviewer.Services
                 float fontSize,
                 string fontFamily)
             {
-                int contentHash = block.Inlines.Count > 0 ? block.Inlines[0].GetHashCode() : 0;
+                var content = new HashCode();
+                foreach (var inline in block.Inlines) content.Add(inline);
+                content.Add(block.TableRowIndex);
+                content.Add(block.TableContentRows);
+                content.Add(block.IsBold);
+                content.Add(block.IsCodeBlock);
+                content.Add(block.FontSizeScale);
+                content.Add(block.Margin);
+                content.Add(block.Padding);
+                content.Add(block.BlockIndentChars);
+                content.Add(block.RightMarginChars);
+                int contentHash = content.ToHashCode();
                 return new BlockMeasureCacheKey(
                     block.SourceLineNumber,
                     block.Inlines.Count,

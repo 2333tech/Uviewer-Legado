@@ -16,7 +16,11 @@ namespace Uviewer.Models
         public Windows.UI.Color? BackgroundColor { get; set; } = null;
         public string? FontFamily { get; set; } = null; 
         public bool IsTable { get; set; } = false;
+        public bool IsCodeBlock { get; set; }
+        public int CodeBlockGroup { get; set; }
         public List<List<string>> TableRows { get; set; } = new();
+        // Shared by every row of one table, so widths stay stable across pages.
+        public List<List<List<object>>> TableContentRows { get; set; } = new();
         public int SourceLineNumber { get; set; } = 0; 
         public int HeadingLevel { get; set; } = 0; 
         public string HeadingText { get; set; } = "";
@@ -44,6 +48,17 @@ namespace Uviewer.Models
     }
 
     public class AozoraBold { public string Text { get; set; } = ""; }
+    public class AozoraStyledText
+    {
+        public string Text { get; set; } = "";
+        public bool Bold { get; set; }
+        public bool Italic { get; set; }
+        public bool Underline { get; set; }
+        public bool Strikethrough { get; set; }
+        public bool Highlight { get; set; }
+        public bool Code { get; set; }
+        public int Script { get; set; }
+    }
     public class AozoraItalic { public string Text { get; set; } = ""; }
     public class AozoraCode { public string Text { get; set; } = ""; }
     public class AozoraHighlight { public string Text { get; set; } = ""; }

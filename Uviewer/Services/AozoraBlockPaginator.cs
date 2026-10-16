@@ -83,10 +83,11 @@ namespace Uviewer.Services
                     break;
                 }
 
-                if (block.IsParagraphContinuation && currentMergedBlock != null && !block.IsTable && block.HeadingLevel == 0)
+                if (CanMerge(block, currentMergedBlock))
                 {
-                    var tempMerged = AozoraParserService.CloneBlockProperties(currentMergedBlock, true);
+                    var tempMerged = AozoraParserService.CloneBlockProperties(currentMergedBlock!, true);
                     int segmentStart = GetRenderableSearchTextLength(tempMerged, isVertical: false);
+                    if (block.IsCodeBlock) { tempMerged.Inlines.Add(new AozoraLineBreak()); segmentStart++; }
                     tempMerged.Inlines.AddRange(block.Inlines);
                     AddSearchSegment(tempMerged, block, index, segmentStart, isVertical: false);
 
@@ -143,7 +144,7 @@ namespace Uviewer.Services
                 pageBlocks.Add(blockCopy);
                 usedHeight += blockHeight;
 
-                if (!block.IsTable && !block.IsPageBreak && block.HeadingLevel == 0)
+                if ((!block.IsTable || block.IsCodeBlock) && !block.IsPageBreak && block.HeadingLevel == 0)
                 {
                     currentMergedBlock = blockCopy;
                     currentMergedBlockHeight = blockHeight;
@@ -236,10 +237,11 @@ namespace Uviewer.Services
                     break;
                 }
 
-                if (block.IsParagraphContinuation && currentMergedBlock != null && !block.IsTable && block.HeadingLevel == 0)
+                if (CanMerge(block, currentMergedBlock))
                 {
-                    var tempMerged = AozoraParserService.CloneBlockProperties(currentMergedBlock, true);
+                    var tempMerged = AozoraParserService.CloneBlockProperties(currentMergedBlock!, true);
                     int segmentStart = GetRenderableSearchTextLength(tempMerged, isVertical: true);
+                    if (block.IsCodeBlock) { tempMerged.Inlines.Add(new AozoraLineBreak()); segmentStart++; }
                     tempMerged.Inlines.AddRange(block.Inlines);
                     AddSearchSegment(tempMerged, block, index, segmentStart, isVertical: true);
 
@@ -294,7 +296,7 @@ namespace Uviewer.Services
                 pageBlocks.Add(blockCopy);
                 usedWidth += blockWidth;
 
-                if (!block.IsTable && !block.IsPageBreak && block.HeadingLevel == 0)
+                if ((!block.IsTable || block.IsCodeBlock) && !block.IsPageBreak && block.HeadingLevel == 0)
                 {
                     currentMergedBlock = blockCopy;
                     currentMergedBlockWidth = blockWidth;
@@ -310,6 +312,12 @@ namespace Uviewer.Services
 
             return pageBlocks;
         }
+
+        internal static bool CanMerge(AozoraBindingModel block, AozoraBindingModel? previous) =>
+            block.IsParagraphContinuation && previous != null && block.HeadingLevel == 0 &&
+            (block.IsCodeBlock
+                ? previous.IsCodeBlock && block.CodeBlockGroup == previous.CodeBlockGroup
+                : !block.IsTable && !previous.IsCodeBlock);
 
         private static AozoraBindingModel CreatePageBlockCopy(AozoraBindingModel block, int blockIndex, bool isVertical)
         {
@@ -359,6 +367,9 @@ namespace Uviewer.Services
                         break;
                     case AozoraBold bold:
                         sb.Append(NormalizeForMode(bold.Text, isVertical));
+                        break;
+                    case AozoraStyledText styled:
+                        sb.Append(NormalizeForMode(styled.Text, isVertical));
                         break;
                     case AozoraItalic italic:
                         sb.Append(NormalizeForMode(italic.Text, isVertical));

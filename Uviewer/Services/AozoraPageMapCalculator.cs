@@ -124,9 +124,10 @@ namespace Uviewer.Services
                         continue;
                     }
 
-                    if (block.IsParagraphContinuation && currentMergedBlock != null && !block.IsTable && block.HeadingLevel == 0)
+                    if (AozoraBlockPaginator.CanMerge(block, currentMergedBlock))
                     {
-                        var tempMerged = AozoraParserService.CloneBlockProperties(currentMergedBlock, true);
+                        var tempMerged = AozoraParserService.CloneBlockProperties(currentMergedBlock!, true);
+                        if (block.IsCodeBlock) tempMerged.Inlines.Add(new AozoraLineBreak());
                         tempMerged.Inlines.AddRange(block.Inlines);
 
                         float fontSize = (float)(context.FontSize * tempMerged.FontSizeScale);
@@ -168,7 +169,7 @@ namespace Uviewer.Services
                     blockToPageMap[i] = pageCount;
                     currentPageExtent += blockExtent;
 
-                    if (!block.IsTable && !block.IsPageBreak && block.HeadingLevel == 0)
+                    if ((!block.IsTable || block.IsCodeBlock) && !block.IsPageBreak && block.HeadingLevel == 0)
                     {
                         currentMergedBlock = block;
                         currentMergedBlockExtent = blockExtent;

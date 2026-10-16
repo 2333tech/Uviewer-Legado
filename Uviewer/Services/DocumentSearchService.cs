@@ -394,6 +394,9 @@ namespace Uviewer.Services
                     case AozoraMath math:
                         sb.Append(KatexStandaloneRenderer.RenderToText(math.Text));
                         break;
+                    case AozoraStyledText styled:
+                        sb.Append(styled.Text);
+                        break;
                     case AozoraTCY tcy:
                         sb.Append(tcy.Text);
                         break;
