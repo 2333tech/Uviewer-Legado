@@ -1,5 +1,6 @@
 using HtmlAgilityPack;
 using Markdig;
+using Markdig.Extensions.Mathematics;
 using Markdig.Helpers;
 using Markdig.Parsers;
 using Markdig.Renderers;
@@ -37,7 +38,13 @@ internal static class MarkdownDocumentParser
 
     private sealed class ReaderMathExtension : IMarkdownExtension
     {
-        public void Setup(MarkdownPipelineBuilder builder) => builder.InlineParsers.Insert(0, new ReaderMathParser());
+        public void Setup(MarkdownPipelineBuilder builder)
+        {
+            // One owner for inline math: rejected currency must stay literal,
+            // rather than being reconsidered by the standard dollar parser.
+            builder.InlineParsers.TryRemove<MathInlineParser>();
+            builder.InlineParsers.Insert(0, new ReaderMathParser());
+        }
         public void Setup(MarkdownPipeline pipeline, IMarkdownRenderer renderer) { }
     }
 
@@ -103,6 +110,8 @@ internal static class MarkdownDocumentParser
             bool parenthesis = text[start] == '\\' && start + 1 <= slice.End && text[start + 1] == '(';
             if (!parenthesis && text[start] != '$') return false;
             int length = parenthesis ? 2 : (start + 1 <= slice.End && text[start + 1] == '$' ? 2 : 1);
+            bool singleDollar = !parenthesis && length == 1;
+            if (singleDollar && (start == slice.End || char.IsWhiteSpace(text[start + 1]))) return false;
             string closer = parenthesis ? @"\)" : new string('$', length);
             int end = start + length;
             while (end <= slice.End)
@@ -110,6 +119,10 @@ internal static class MarkdownDocumentParser
                 if (text[end] is '\n' or '\r') return false;
                 if (text.AsSpan(end, slice.End - end + 1).StartsWith(closer))
                 {
+                    // The first next dollar is either a valid closer or evidence
+                    // that this opener is literal. Do not span later real formulas.
+                    if (singleDollar && (char.IsWhiteSpace(text[end - 1]) ||
+                        (end < slice.End && (char.IsDigit(text[end + 1]) || text[end + 1] == '$')))) return false;
                     string tex = text.Substring(start + length, end - start - length);
                     if (string.IsNullOrWhiteSpace(tex)) return false;
                     string tag = !parenthesis && length == 2 ? "div" : "span";
