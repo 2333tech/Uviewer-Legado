@@ -46,6 +46,7 @@
     </Content>
     <Content Include="Libs\7z.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
 
@@ -70,7 +71,8 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.5.1" />
     <PackageReference Include="PDFtoImage" Version="5.4.0" />
     <PackageReference Include="PdfPig" Version="0.1.16" />
-    <PackageReference Include="SevenZipExtractor" Version="1.0.19" />
+    <!-- Use Libs\7z.dll; skip the package targets that copy x64/x86 native DLLs. -->
+    <PackageReference Include="SevenZipExtractor" Version="1.0.19" ExcludeAssets="build" />
     <PackageReference Include="SharpCompress" Version="0.50.5" />
     <PackageReference Include="Starward.Codec" Version="0.5.2" />
     <PackageReference Include="Microsoft.Graphics.Win2D" Version="1.4.0" />
