@@ -227,6 +227,7 @@ namespace Uviewer.Controls
         public void ApplyLocalization()
         {
             ToolTipService.SetToolTip(ToggleSidebarButton, Strings.ToggleSidebarTooltip);
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(ToggleSidebarButton, Strings.ToggleSidebarTooltip);
             ToolTipService.SetToolTip(OpenFileButton, Strings.OpenFileTooltip);
             ToolTipService.SetToolTip(OpenFolderButton, Strings.OpenFolderTooltip);
             ToolTipService.SetToolTip(ZoomOutButton, Strings.ZoomOutTooltip);
@@ -449,8 +450,11 @@ namespace Uviewer.Controls
         public void SetFullscreenState(bool isFullscreen) =>
             FullscreenIcon.Glyph = isFullscreen ? "\uE73F" : "\uE740";
 
-        public void SetSidebarState(bool isVisible) =>
+        public void SetSidebarState(bool isVisible)
+        {
+            ToggleSidebarButton.IsChecked = isVisible;
             ToggleSidebarIcon.Glyph = isVisible ? "\uE8A0" : "\uE89F";
+        }
 
         public void SetPinState(bool isPinned)
         {

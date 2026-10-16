@@ -325,6 +325,12 @@ namespace Uviewer.Controls
 
         private void InvokeToolbarOverflowItem(FrameworkElement element, FrameworkElement placementTarget)
         {
+            if (element == ToggleSidebarButton)
+            {
+                ToggleSidebarRequested?.Invoke(this, EventArgs.Empty);
+                return;
+            }
+
             if (element == SettingsButton)
             {
                 SettingsButton.Flyout?.ShowAt(placementTarget);

@@ -161,9 +161,73 @@
             <!-- Toolbar -->
             <StackPanel x:Name="RightToolbarHost" Grid.Column="2" Orientation="Horizontal" Spacing="4">
             <StackPanel x:Name="RightToolbarPanel" Orientation="Horizontal" Spacing="4">
-                <Button x:Name="ToggleSidebarButton" ToolTipService.ToolTip="{x:Bind app:Strings.ToggleSidebarTooltip}">
+                <ToggleButton x:Name="ToggleSidebarButton"
+                              Background="{ThemeResource ToggleButtonBackground}"
+                              Foreground="{ThemeResource ToggleButtonForeground}"
+                              BorderBrush="{ThemeResource ToggleButtonBorderBrush}"
+                              BorderThickness="1" CornerRadius="8"
+                              AutomationProperties.Name="{x:Bind app:Strings.ToggleSidebarTooltip}"
+                              ToolTipService.ToolTip="{x:Bind app:Strings.ToggleSidebarTooltip}">
+                    <ToggleButton.Resources>
+                        <ResourceDictionary>
+                            <ResourceDictionary.ThemeDictionaries>
+                                <ResourceDictionary x:Key="Default">
+                                    <SolidColorBrush x:Key="ToggleButtonBackground" Color="{ThemeResource SystemAccentColor}" Opacity="0.06" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="{ThemeResource SystemAccentColor}" Opacity="0.12" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="{ThemeResource SystemAccentColor}" Opacity="0.18" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="{ThemeResource SystemAccentColor}" Opacity="0.14" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="{ThemeResource SystemAccentColor}" Opacity="0.20" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="{ThemeResource SystemAccentColor}" Opacity="0.24" />
+                                    <StaticResource x:Key="ToggleButtonForeground" ResourceKey="AccentTextFillColorPrimaryBrush" />
+                                    <StaticResource x:Key="ToggleButtonForegroundPointerOver" ResourceKey="AccentTextFillColorPrimaryBrush" />
+                                    <StaticResource x:Key="ToggleButtonForegroundPressed" ResourceKey="AccentTextFillColorSecondaryBrush" />
+                                    <StaticResource x:Key="ToggleButtonForegroundChecked" ResourceKey="AccentTextFillColorPrimaryBrush" />
+                                    <StaticResource x:Key="ToggleButtonForegroundCheckedPointerOver" ResourceKey="AccentTextFillColorPrimaryBrush" />
+                                    <StaticResource x:Key="ToggleButtonForegroundCheckedPressed" ResourceKey="AccentTextFillColorSecondaryBrush" />
+                                    <StaticResource x:Key="ToggleButtonBorderBrushChecked" ResourceKey="CardStrokeColorDefaultBrush" />
+                                    <StaticResource x:Key="ToggleButtonBorderBrushCheckedPointerOver" ResourceKey="CardStrokeColorDefaultBrush" />
+                                </ResourceDictionary>
+                                <ResourceDictionary x:Key="Dark">
+                                    <SolidColorBrush x:Key="ToggleButtonBackground" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.08" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.14" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.20" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.16" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.22" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.28" />
+                                    <SolidColorBrush x:Key="ToggleButtonForeground" Color="{ThemeResource SystemAccentColorLight3}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundPointerOver" Color="{ThemeResource SystemAccentColorLight3}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="{ThemeResource SystemAccentColorLight2}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="{ThemeResource SystemAccentColorLight3}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="{ThemeResource SystemAccentColorLight3}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="{ThemeResource SystemAccentColorLight2}" />
+                                    <SolidColorBrush x:Key="ToggleButtonBorderBrush" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.16" />
+                                    <SolidColorBrush x:Key="ToggleButtonBorderBrushPointerOver" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.24" />
+                                    <SolidColorBrush x:Key="ToggleButtonBorderBrushPressed" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.20" />
+                                    <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.24" />
+                                    <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.30" />
+                                    <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPressed" Color="{ThemeResource SystemAccentColorLight2}" Opacity="0.24" />
+                                </ResourceDictionary>
+                                <ResourceDictionary x:Key="HighContrast">
+                                    <SolidColorBrush x:Key="ToggleButtonBackground" Color="{ThemeResource SystemColorButtonFaceColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundPressed" Color="{ThemeResource SystemColorHighlightColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="{ThemeResource SystemColorHighlightColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="{ThemeResource SystemColorHighlightColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="{ThemeResource SystemColorHighlightColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForeground" Color="{ThemeResource SystemColorButtonTextColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundPressed" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                    <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="{ThemeResource SystemColorHighlightTextColor}" />
+                                </ResourceDictionary>
+                            </ResourceDictionary.ThemeDictionaries>
+                        </ResourceDictionary>
+                    </ToggleButton.Resources>
                     <FontIcon x:Name="ToggleSidebarIcon" Glyph="&#xE8A0;" FontSize="14"/>
-                </Button>
+                </ToggleButton>
 
                 <Button x:Name="FavoritesButton" ToolTipService.ToolTip="{x:Bind app:Strings.FavoritesTooltip}">
                     <FontIcon Glyph="&#xE734;" FontSize="14"/>
