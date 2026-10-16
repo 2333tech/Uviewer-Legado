@@ -14,11 +14,12 @@ namespace Uviewer.Services
         int CurrentImageIndex { get; set; }
 
         Task ConnectToWebDavServerAsync(string serverName, bool loadRoot);
-        Task LoadWebDavFolderAsync(string remotePath);
+        Task LoadWebDavFolderAsync(string remotePath, bool openFirstFile = false);
         Task OpenWebDavFileAsync(FileItem item);
         Task OpenWebDavArchiveAsync(FileItem item);
 
         void LoadExplorerFolder(string path);
+        Task OpenLocalFolderAsync(string path);
         void SelectExplorerItemByName(string fileName);
         Task LoadImagesFromPdfAsync(string path);
         Task LoadImageFromFileAsync(StorageFile file);

@@ -182,7 +182,7 @@ namespace Uviewer
         /// <summary>
         /// WebDAV 원격 폴더를 탐색기에 로드
         /// </summary>
-        private async Task LoadWebDavFolderAsync(string remotePath)
+        private async Task LoadWebDavFolderAsync(string remotePath, bool openFirstFile = false)
         {
             if (!_webDavService.IsConnected || _webDavService.CurrentServer == null)
                 return;
@@ -224,6 +224,35 @@ namespace Uviewer
                 _explorerState.ReplaceItems(explorerItems);
                 _explorerSidebarController.ApplyThumbnailSizeToFileItems();
                 _explorerController.RefreshFilterSearch();
+
+                if (openFirstFile)
+                {
+                    var files = explorerItems
+                        .Where(item => !item.IsDirectory && !item.IsParentDirectory)
+                        .OrderBy(item => item.Name, NaturalSortComparer.Default)
+                        .ToList();
+                    var firstFile = files.FirstOrDefault(item => item.IsImage);
+                    if (firstFile != null)
+                    {
+                        await OpenWebDavFileAsync(firstFile);
+                        return;
+                    }
+
+                    foreach (var archive in files.Where(item => item.IsArchive))
+                    {
+                        if (await _webDavDocumentOpenCoordinator.TryOpenImageArchiveAsync(archive, token))
+                        {
+                            return;
+                        }
+                    }
+
+                    token.ThrowIfCancellationRequested();
+                    var firstText = files.FirstOrDefault(item => item.IsText);
+                    if (firstText != null)
+                    {
+                        await OpenWebDavFileAsync(firstText);
+                    }
+                }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)

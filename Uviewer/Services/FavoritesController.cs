@@ -426,7 +426,7 @@ namespace Uviewer.Services
 
                 if (favorite.Type == "Folder")
                 {
-                    await host.LoadWebDavFolderAsync(favorite.Path);
+                    await host.LoadWebDavFolderAsync(favorite.Path, openFirstFile: true);
                 }
                 else if (favorite.Type == "Archive")
                 {
@@ -461,7 +461,7 @@ namespace Uviewer.Services
                 case "Folder":
                     if (Directory.Exists(favorite.Path))
                     {
-                        host.LoadExplorerFolder(favorite.Path);
+                        await host.OpenLocalFolderAsync(favorite.Path);
                     }
                     else
                     {

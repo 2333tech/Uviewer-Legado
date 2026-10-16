@@ -32,8 +32,8 @@ namespace Uviewer
             public Task ConnectToWebDavServerAsync(string serverName, bool loadRoot) =>
                 _window.ConnectToWebDavServerAsync(serverName, loadRoot);
 
-            public Task LoadWebDavFolderAsync(string remotePath) =>
-                _window.LoadWebDavFolderAsync(remotePath);
+            public Task LoadWebDavFolderAsync(string remotePath, bool openFirstFile = false) =>
+                _window.LoadWebDavFolderAsync(remotePath, openFirstFile);
 
             public Task OpenWebDavFileAsync(FileItem item) =>
                 _window.OpenWebDavFileAsync(item);
@@ -43,6 +43,9 @@ namespace Uviewer
 
             public void LoadExplorerFolder(string path) =>
                 _window._explorerSidebarController.LoadFolder(path);
+
+            public Task OpenLocalFolderAsync(string path) =>
+                _window._localDocumentOpenCoordinator.OpenFolderPathAsync(path);
 
             public void SelectExplorerItemByName(string fileName)
             {

@@ -64,6 +64,24 @@ namespace Uviewer.Services
             }
         }
 
+        public async Task<bool> TryOpenImageArchiveAsync(FileItem item, CancellationToken token)
+        {
+            if (!IsValidWebDavItem(item) || !item.IsArchive) return false;
+
+            var tempPath = await _handlers.DownloadToTempFileAsync(item.WebDavPath!, token);
+            token.ThrowIfCancellationRequested();
+            if (string.IsNullOrEmpty(tempPath) || !await ArchiveSession.ContainsSupportedImageAsync(tempPath))
+            {
+                return false;
+            }
+
+            token.ThrowIfCancellationRequested();
+            if (!await PrepareOpenAsync(item)) return true;
+
+            await OpenDownloadedTempFileAsync(item, tempPath, token);
+            return true;
+        }
+
         public async Task OpenDownloadedFileAsync(FileItem item)
         {
             if (!IsValidWebDavItem(item)) return;

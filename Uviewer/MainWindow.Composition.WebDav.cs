@@ -12,7 +12,7 @@ namespace Uviewer
                 {
                     window._webDavDocumentOpenCoordinator = new WebDavDocumentOpenCoordinator(new WebDavDocumentOpenHandlers
                     {
-                        LoadFolderAsync = window.LoadWebDavFolderAsync,
+                        LoadFolderAsync = path => window.LoadWebDavFolderAsync(path),
                         CloseCurrentPdfAsync = () => window._pdfDocumentController.CloseCurrentPdfAsync(),
                         CloseCurrentEpubAsync = () => window._epubReaderController.CloseCurrentEpubAsync(),
                         CloseCurrentArchiveAsync = () => window._archiveDocumentController.CloseCurrentArchiveAsync(),

@@ -58,44 +58,61 @@ namespace Uviewer.Services
 
             if (Directory.Exists(path))
             {
-                _handlers.LoadExplorerFolder(path);
+                await OpenFolderPathAsync(path, isInitial: true);
+            }
+        }
 
-                var folder = await StorageFolder.GetFolderFromPathAsync(path);
-                var files = (await folder.GetFilesAsync())
-                    .OrderBy(file => file.Name, NaturalSortComparer.Default)
-                    .ToList();
+        public async Task OpenFolderPathAsync(string path, bool isInitial = false)
+        {
+            _handlers.LoadExplorerFolder(path);
 
-                // A directly contained image always wins over an archive, regardless
-                // of where the archive sorts in the folder.
-                var firstImage = files.FirstOrDefault(file =>
-                    ClassifyExtension(Path.GetExtension(file.Name)) == SupportedFileKind.Image);
-                if (firstImage != null)
+            var folder = await StorageFolder.GetFolderFromPathAsync(path);
+            var files = (await folder.GetFilesAsync())
+                .OrderBy(file => file.Name, NaturalSortComparer.Default)
+                .ToList();
+
+            // Direct images take priority over image-containing archives and text.
+            var firstFile = files.FirstOrDefault(file =>
+                ClassifyExtension(Path.GetExtension(file.Name)) == SupportedFileKind.Image);
+            if (firstFile != null)
+            {
+                _handlers.HideEmptyState?.Invoke();
+                await OpenFilePathAsync(
+                    firstFile.Path,
+                    isInitial: isInitial,
+                    saveBeforeOpen: false,
+                    saveOnlyForImageOrText: false,
+                    allowUnknownAsStorageFile: false);
+                return;
+            }
+
+            foreach (var archive in files.Where(file =>
+                ClassifyExtension(Path.GetExtension(file.Name)) == SupportedFileKind.Archive))
+            {
+                if (await ArchiveSession.ContainsSupportedImageAsync(archive.Path))
                 {
                     _handlers.HideEmptyState?.Invoke();
-                    await OpenFilePathAsync(
-                        firstImage.Path,
-                        isInitial: true,
-                        saveBeforeOpen: false,
-                        saveOnlyForImageOrText: false,
-                        allowUnknownAsStorageFile: false);
+                    await _handlers.OpenArchiveAsync(archive.Path);
                     return;
                 }
-
-                foreach (var archive in files.Where(file =>
-                    ClassifyExtension(Path.GetExtension(file.Name)) == SupportedFileKind.Archive))
-                {
-                    if (await ArchiveSession.ContainsSupportedImageAsync(archive.Path))
-                    {
-                        _handlers.HideEmptyState?.Invoke();
-                        await _handlers.OpenArchiveAsync(archive.Path);
-                        return;
-                    }
-                }
-
-                // Preserve the existing empty-folder status when neither an image nor
-                // an image-containing archive can be opened automatically.
-                await _handlers.OpenFolderAsync(folder);
             }
+
+            var firstText = files.FirstOrDefault(file =>
+                ClassifyExtension(Path.GetExtension(file.Name)) == SupportedFileKind.Text);
+            if (firstText != null)
+            {
+                _handlers.HideEmptyState?.Invoke();
+                await OpenFilePathAsync(
+                    firstText.Path,
+                    isInitial: isInitial,
+                    saveBeforeOpen: false,
+                    saveOnlyForImageOrText: false,
+                    allowUnknownAsStorageFile: false);
+                return;
+            }
+
+            // Preserve the existing empty-folder status when no file is selected.
+            await _handlers.OpenFolderAsync(folder);
         }
 
         public async Task OpenPickedFileAsync(StorageFile file)
