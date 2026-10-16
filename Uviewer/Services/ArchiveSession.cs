@@ -14,6 +14,7 @@ namespace Uviewer.Services
     public sealed class ArchiveSession : IDisposable
     {
         private readonly SemaphoreSlim _lock = new(1, 1);
+        private SevenZipImageCache? _sevenZipCache;
 
         public IArchive? CurrentArchive { get; set; }
         public ArchiveFile? Current7zArchive { get; set; }
@@ -52,9 +53,14 @@ namespace Uviewer.Services
             });
         }
 
-        public async Task<IReadOnlyList<ImageEntry>> OpenLocalAsync(string archivePath)
+        // 7z's COM interfaces do not support STA-to-MTA marshalling. Create and
+        // enumerate the archive in the same MTA as the background entry readers.
+        public Task<IReadOnlyList<ImageEntry>> OpenLocalAsync(string archivePath)
+            => Task.Run(() => OpenLocalCoreAsync(archivePath));
+
+        private async Task<IReadOnlyList<ImageEntry>> OpenLocalCoreAsync(string archivePath)
         {
-            await _lock.WaitAsync();
+            await _lock.WaitAsync().ConfigureAwait(false);
             try
             {
                 CloseOpenHandles();
@@ -137,6 +143,14 @@ namespace Uviewer.Services
 
         public void CloseOpenHandles()
         {
+            if (Current7zArchive != null && Thread.CurrentThread.GetApartmentState() == ApartmentState.STA)
+            {
+                Task.Run(CloseOpenHandles).GetAwaiter().GetResult();
+                return;
+            }
+
+            _sevenZipCache?.Cancel();
+            _sevenZipCache = null;
             CurrentArchive?.Dispose();
             CurrentArchive = null;
 
@@ -154,6 +168,15 @@ namespace Uviewer.Services
 
         private async Task<byte[]?> ReadEntryBytesCoreAsync(string entryKey, CancellationToken token)
         {
+            var cache = _sevenZipCache;
+            if (cache != null && cache.TryGetImage(entryKey, out var ready))
+            {
+                // Await just this image outside the archive lock. Preloads must
+                // not queue repeated solid-block decodes ahead of the visible page.
+                string? path = await ready.WaitAsync(token).ConfigureAwait(false);
+                if (path != null) return await File.ReadAllBytesAsync(path, token).ConfigureAwait(false);
+            }
+
             await _lock.WaitAsync(token).ConfigureAwait(false);
             try
             {
@@ -204,41 +227,22 @@ namespace Uviewer.Services
             }
         }
 
-        public async Task<byte[]?> ReadEntryBytesLooseAsync(string entryKey, CancellationToken token = default)
+        public Task<byte[]?> ReadEntryBytesLooseAsync(string entryKey, CancellationToken token = default)
+            => Task.Run(() => ReadEntryBytesLooseCoreAsync(entryKey, token), token);
+
+        private async Task<byte[]?> ReadEntryBytesLooseCoreAsync(string entryKey, CancellationToken token)
         {
-            await _lock.WaitAsync(token);
+            string? resolvedKey;
+            await _lock.WaitAsync(token).ConfigureAwait(false);
             try
             {
-                string? resolvedKey = FindEntryKeyLoose(entryKey);
-                if (resolvedKey == null) return null;
-
-                if (CurrentArchive != null)
-                {
-                    var archiveEntry = CurrentArchive.Entries.FirstOrDefault(e => e.Key == resolvedKey);
-                    if (archiveEntry == null) return null;
-
-                    using var memoryStream = new MemoryStream();
-                    using var entryStream = archiveEntry.OpenEntryStream();
-                    await entryStream.CopyToAsync(memoryStream, token);
-                    return memoryStream.ToArray();
-                }
-
-                if (Current7zArchive != null)
-                {
-                    var archiveEntry = Current7zArchive.Entries.FirstOrDefault(e => e.FileName == resolvedKey);
-                    if (archiveEntry == null) return null;
-
-                    using var memoryStream = new MemoryStream();
-                    archiveEntry.Extract(memoryStream);
-                    return memoryStream.ToArray();
-                }
-
-                return null;
+                resolvedKey = FindEntryKeyLoose(entryKey);
             }
             finally
             {
                 _lock.Release();
             }
+            return resolvedKey == null ? null : await ReadEntryBytesCoreAsync(resolvedKey, token).ConfigureAwait(false);
         }
 
         public async Task ExtractSevenZipEntriesInBackgroundAsync(
@@ -252,32 +256,14 @@ namespace Uviewer.Services
             {
                 string tempFolder = extraction.CreateTempFolder();
 
-                var total = imageEntries.Count;
-                var extracted = new bool[total];
-                var lockObj = new object();
-
-                int threadCount = Math.Min(Environment.ProcessorCount, 6);
-                var tasks = new List<Task>();
-
-                for (int t = 0; t < threadCount; t++)
-                {
-                    tasks.Add(Task.Run(() =>
-                    {
-                        ExtractSevenZipEntriesWorker(
-                            archivePath,
-                            imageEntries,
-                            getCurrentIndex,
-                            extraction,
-                            tempFolder,
-                            extracted,
-                            lockObj,
-                            token);
-                    }, token));
-                }
-
-                await Task.WhenAll(tasks);
+                if (Current7zArchive == null || CurrentPath != archivePath) return;
+                var cache = new SevenZipImageCache(Current7zArchive.Entries, imageEntries, tempFolder, token);
+                _sevenZipCache?.Cancel();
+                _sevenZipCache = cache;
+                await cache.ExtractAsync(archivePath, getCurrentIndex).ConfigureAwait(false);
             }
-            catch { }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { Debug.WriteLine($"7z background extraction failed: {ex}"); }
         }
 
         public void Dispose()
@@ -312,127 +298,6 @@ namespace Uviewer.Services
                     ArchiveEntryKey = e.Key
                 })
                 .ToList();
-        }
-
-        private static void ExtractSevenZipEntriesWorker(
-            string archivePath,
-            IReadOnlyList<ImageEntry> imageEntries,
-            Func<int> getCurrentIndex,
-            SevenZipExtractionCoordinator extraction,
-            string tempFolder,
-            bool[] extracted,
-            object lockObj,
-            CancellationToken token)
-        {
-            try
-            {
-                string libraryPath = Path.Combine(AppContext.BaseDirectory, "Libs", "7z.dll");
-                using var archive = new ArchiveFile(archivePath, libraryPath);
-                var entries = archive.Entries
-                    .Where(e => !e.IsFolder && FileExplorerService.GetSupportedFileKind(e.FileName) == SupportedFileKind.Image)
-                    .ToList();
-                var entryMap = entries.ToDictionary(e => e.FileName!, e => e);
-
-                while (!token.IsCancellationRequested)
-                {
-                    int targetIndex = FindNextExtractionIndex(extracted, getCurrentIndex, lockObj);
-                    if (targetIndex == -1) break;
-
-                    var imageEntry = imageEntries[targetIndex];
-                    if (imageEntry.ArchiveEntryKey == null ||
-                        !entryMap.TryGetValue(imageEntry.ArchiveEntryKey, out var archiveEntry))
-                    {
-                        continue;
-                    }
-
-                    ExtractSevenZipEntry(
-                        archiveEntry,
-                        imageEntry,
-                        targetIndex,
-                        extracted,
-                        lockObj,
-                        extraction,
-                        tempFolder,
-                        token);
-                }
-            }
-            catch { }
-        }
-
-        private static int FindNextExtractionIndex(
-            bool[] extracted,
-            Func<int> getCurrentIndex,
-            object lockObj)
-        {
-            int targetIndex = -1;
-            lock (lockObj)
-            {
-                int current = getCurrentIndex();
-                int bestDist = int.MaxValue;
-                for (int i = 0; i < extracted.Length; i++)
-                {
-                    if (extracted[i]) continue;
-                    int dist = Math.Abs(i - current);
-                    if (dist < bestDist)
-                    {
-                        bestDist = dist;
-                        targetIndex = i;
-                    }
-                }
-
-                if (targetIndex != -1) extracted[targetIndex] = true;
-            }
-
-            return targetIndex;
-        }
-
-        private static void ExtractSevenZipEntry(
-            Entry archiveEntry,
-            ImageEntry imageEntry,
-            int targetIndex,
-            bool[] extracted,
-            object lockObj,
-            SevenZipExtractionCoordinator extraction,
-            string tempFolder,
-            CancellationToken token)
-        {
-            string? tempExtractPath = null;
-
-            try
-            {
-                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, extraction.JumpToken);
-                var linkedToken = linkedCts.Token;
-
-                string ext = Path.GetExtension(imageEntry.ArchiveEntryKey ?? "") ?? "";
-                string fileId = Guid.NewGuid().ToString("N");
-                string outputPath = Path.Combine(tempFolder, fileId + ext);
-                tempExtractPath = Path.Combine(tempFolder, fileId + ".tmp");
-
-                linkedToken.ThrowIfCancellationRequested();
-                archiveEntry.Extract(tempExtractPath);
-                linkedToken.ThrowIfCancellationRequested();
-
-                var fi = new FileInfo(tempExtractPath);
-                if (fi.Exists && fi.Length > 0)
-                {
-                    File.Move(tempExtractPath, outputPath, true);
-                    imageEntry.FilePath = outputPath;
-                }
-                else
-                {
-                    if (fi.Exists) fi.Delete();
-                    lock (lockObj) extracted[targetIndex] = false;
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                TryDeleteFile(tempExtractPath);
-                lock (lockObj) extracted[targetIndex] = false;
-            }
-            catch
-            {
-                TryDeleteFile(tempExtractPath);
-            }
         }
 
         private static void DeleteWebDavTempArchiveIfNeeded(string? archivePath)
