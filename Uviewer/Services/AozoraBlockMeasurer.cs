@@ -90,13 +90,15 @@ namespace Uviewer.Services
                 VerticalAlignment = CanvasVerticalAlignment.Top
             };
 
-            float blockIndentChars = (float)(block.BlockIndentChars > 0 ? block.BlockIndentChars : block.Margin.Left / fontSize);
+            float baseFontSize = block.FontSizeScale > 0 ? fontSize / (float)block.FontSizeScale : fontSize;
+            float blockIndentChars = (float)(block.BlockIndentChars > 0 ? block.BlockIndentChars : block.Margin.Left / baseFontSize);
             float indent = blockIndentChars * fontSize;
             float rightMarginChars = (float)(block.RightMarginChars > 0 ? block.RightMarginChars : block.Margin.Right / fontSize);
             float rightMargin = rightMarginChars * fontSize;
             float actualAvailableWidth = availableWidth - indent - rightMargin;
             if (actualAvailableWidth < 100) actualAvailableWidth = 100;
 
+            HorizontalHeadingLayout.Configure(format, block);
             using var layout = new CanvasTextLayout(device, text, format, actualAvailableWidth, 0.0f);
             layout.Options = CanvasDrawTextOptions.EnableColorFont;
 
@@ -107,7 +109,7 @@ namespace Uviewer.Services
 
             using var mathLayout = new MathInlineLayout();
             mathLayout.Apply(layout, textInfo.MathRanges, fontSize, actualAvailableWidth, Microsoft.UI.Colors.Black);
-            float result = (float)layout.LayoutBounds.Height + (float)block.Margin.Bottom;
+            float result = HorizontalHeadingLayout.Measure(layout, block).height + (float)block.Margin.Bottom;
             if (block.IsCodeBlock) result += (float)(block.Padding.Top + block.Padding.Bottom);
             if (block.IsBlankLine) result = lineSpacing * 0.3f;
 
@@ -329,6 +331,7 @@ namespace Uviewer.Services
                 content.Add(block.IsBold);
                 content.Add(block.IsCodeBlock);
                 content.Add(block.FontSizeScale);
+                content.Add(block.HeadingLevel);
                 content.Add(block.Margin);
                 content.Add(block.Padding);
                 content.Add(block.BlockIndentChars);

@@ -123,7 +123,7 @@ namespace Uviewer.Services
                     fontSizeBase,
                     context.DefaultFontFamily,
                     context.GetFontWeight);
-                float bottomTolerance = fontSizeBase * 1.2f;
+                float bottomTolerance = HorizontalHeadingLayout.BottomTolerance(block, fontSizeBase);
 
                 bool isKeigakomi = block.BorderThickness.Top > 0 && block.BorderThickness.Bottom > 0 && block.BorderThickness.Left > 0 && block.BorderThickness.Right > 0;
                 bool wasKeigakomi = pageBlocks.Count > 0 &&

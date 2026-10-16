@@ -158,7 +158,7 @@ namespace Uviewer.Services
 
                     float blockTolerance = orientation == AozoraPageOrientation.Vertical
                         ? fontSizeBase * 0.8f
-                        : fontSizeBase * 1.2f;
+                        : HorizontalHeadingLayout.BottomTolerance(block, fontSizeBase);
 
                     if (currentPageExtent > 0 && currentPageExtent + blockExtent > pageLimit + blockTolerance)
                     {

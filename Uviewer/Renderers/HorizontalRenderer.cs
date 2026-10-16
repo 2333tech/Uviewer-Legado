@@ -299,6 +299,7 @@ namespace Uviewer.Renderers
                     VerticalAlignment = CanvasVerticalAlignment.Top
                 };
 
+                HorizontalHeadingLayout.Configure(format, block);
                 var textLayout = new CanvasTextLayout(ds, blockText, format, actualMaxWidth, 0.0f);
                 bool layoutRetained = false;
                 textLayout.Options = CanvasDrawTextOptions.EnableColorFont; 
@@ -309,8 +310,9 @@ namespace Uviewer.Renderers
                 using var mathLayout = new MathInlineLayout();
                 mathLayout.Apply(textLayout, mathRanges, fontSize, actualMaxWidth, textColor);
 
-                int lineCount = textLayout.LineCount;
-                float currentBlockHeight = block.IsBlankLine ? lineSpacing * 0.3f : (float)textLayout.LayoutBounds.Height;
+                var extent = HorizontalHeadingLayout.Measure(textLayout, block);
+                currentY += extent.topInset;
+                float currentBlockHeight = block.IsBlankLine ? lineSpacing * 0.3f : extent.height - extent.topInset;
 
                 var bounds = textLayout.LayoutBounds;
                 float drawX = marginLeft + indent;
