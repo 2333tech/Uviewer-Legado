@@ -26,8 +26,7 @@ namespace Uviewer.Services
         {
             _maxBytes = maxBytes;
             _maxEntries = maxEntries;
-            // Keep the location of existing archive thumbnails when extending it to other files.
-            _folder = folder ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            _folder = folder ?? Path.Combine(Path.GetTempPath(),
                 "Uviewer", "Cache", "ArchiveThumbnails");
         }
 
