@@ -169,6 +169,9 @@ namespace Uviewer
         public static string AddToFavorites => GetString("AddToFavorites");
         public static string AddToFavoritesContext => GetString("AddToFavoritesContext");
         public static string DialogTitle => GetString("DialogTitle");
+        public static string EpubNavigationTitle => GetString("EpubNavigationTitle");
+        public static string ChapterLabel => GetString("ChapterLabel");
+        public static string LineLabel => GetString("LineLabel");
         public static string DialogPrimary => GetString("DialogPrimary");
         public static string DialogClose => GetString("DialogClose");
         public static string EncodingMenu => GetString("EncodingMenu");

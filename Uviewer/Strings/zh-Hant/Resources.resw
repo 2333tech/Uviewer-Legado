@@ -322,6 +322,9 @@
   <data name="AddToFavoritesContext" xml:space="preserve">
     <value>加入收藏</value>
   </data>
+  <data name="EpubNavigationTitle" xml:space="preserve"><value>跳轉到章節 / 行</value></data>
+  <data name="ChapterLabel" xml:space="preserve"><value>章節</value></data>
+  <data name="LineLabel" xml:space="preserve"><value>行</value></data>
   <data name="DialogTitle" xml:space="preserve">
     <value>跳至行</value>
   </data>

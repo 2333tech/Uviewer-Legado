@@ -4,6 +4,7 @@ using System;
 using System.Threading.Tasks;
 using Windows.UI;
 using Uviewer.Dialogs;
+using Uviewer.Models;
 
 namespace Uviewer.Services
 {
@@ -108,6 +109,20 @@ namespace Uviewer.Services
                 return dialog.SelectedFont;
             }
             return null;
+        }
+
+        public async Task ShowEpubNavigationAsync(
+            EpubNavigationPosition position,
+            int chapterCount,
+            Func<int, int, Task<EpubNavigationPosition>> navigateAsync)
+        {
+            var dialog = new EpubNavigationDialog(position, chapterCount, navigateAsync)
+            {
+                XamlRoot = this.XamlRoot,
+                RequestedTheme = this.RequestedTheme
+            };
+            await dialog.ShowAsync();
+            await dialog.PendingNavigation;
         }
 
         public async Task<int?> ShowGoToLineAsync(int currentLine, int totalLines, string title, Func<int, Task> navigateAsync)

@@ -322,6 +322,9 @@
   <data name="AddToFavoritesContext" xml:space="preserve">
     <value>Thêm vào Yêu thích</value>
   </data>
+  <data name="EpubNavigationTitle" xml:space="preserve"><value>Đến chương / dòng</value></data>
+  <data name="ChapterLabel" xml:space="preserve"><value>Chương</value></data>
+  <data name="LineLabel" xml:space="preserve"><value>Dòng</value></data>
   <data name="DialogTitle" xml:space="preserve">
     <value>Đến dòng</value>
   </data>

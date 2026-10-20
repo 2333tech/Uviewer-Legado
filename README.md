@@ -120,7 +120,8 @@
 | |  | Blocked in Side-by-Side (2 page) mode |
 | **0**  | Global | Fit to Window |
 | **1**  | Global | Zoom Actual Size (Fit to width in PDF) |
-| **G** | Text/EPUB | Go to Line (Right-click for search)|
+| **G** | Text | Go to Line (Right-click for search)|
+| | EPUB | Go to Chapter / Line (Right-click for search)|
 | | PDF | Go to Page (Right-click for search)|
 | | Image / Archive | Go to Image |
 | **Space** | Image / EPUB | Toggle 2-Page View (Side-by-Side) |

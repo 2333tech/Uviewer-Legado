@@ -322,6 +322,9 @@
   <data name="AddToFavoritesContext" xml:space="preserve">
     <value>Add to Favorites</value>
   </data>
+  <data name="EpubNavigationTitle" xml:space="preserve"><value>Go to Chapter / Line</value></data>
+  <data name="ChapterLabel" xml:space="preserve"><value>Chapter</value></data>
+  <data name="LineLabel" xml:space="preserve"><value>Line</value></data>
   <data name="DialogTitle" xml:space="preserve">
     <value>Go to Line</value>
   </data>
