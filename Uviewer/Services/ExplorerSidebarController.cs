@@ -145,6 +145,13 @@ namespace Uviewer.Services
             }
         }
 
+        public void ClearSelection()
+        {
+            _host.FileListView.SelectedItem = null;
+            _host.FileGridView.SelectedItem = null;
+            _host.ExplorerContextItem = null;
+        }
+
         private void UpdateFilterStatus()
         {
             _host.ClearExplorerFilterButton.IsEnabled = _explorerController.IsFilterActive;
