@@ -470,24 +470,39 @@ namespace Uviewer.Renderers
                 };
 
                 var rubyRenderInfos = new List<HorizontalRubyRenderInfo>();
+                var rubyLineBounds = rubyRanges.Count > 0 ? BuildLineBounds(textLayout) : new List<LineBounds>();
+                using var rubyBaseFormat = new CanvasTextFormat
+                {
+                    FontSize = fontSize,
+                    FontFamily = format.FontFamily,
+                    FontWeight = format.FontWeight,
+                    WordWrapping = CanvasWordWrapping.NoWrap
+                };
                 foreach (var ruby in rubyRanges)
                 {
                     var regions = textLayout.GetCharacterRegions(ruby.start, ruby.length);
                     if (regions.Length > 0)
                     {
                         var charBounds = regions[0].LayoutBounds;
-                        float lineBoxTop = currentY + (float)charBounds.Top;
-                        float rubyY = lineBoxTop - (rubyFontSize * 3f);
                         float charCenter = drawX + (float)charBounds.Left + (float)charBounds.Width / 2.0f;
 
                         var rubyLayout = new CanvasTextLayout(ds, ruby.rubyText, rubyFormat, 0.0f, 0.0f);
                         rubyLayout.Options = CanvasDrawTextOptions.EnableColorFont; 
+                        using var baseLayout = new CanvasTextLayout(ds, blockText.Substring(ruby.start, ruby.length), rubyBaseFormat, 0.0f, 0.0f);
                         
                         if (block.IsBold || boldRanges.Any(br => ruby.start >= br.start && ruby.start < br.start + br.length))
                         {
                             rubyLayout.SetFontWeight(0, ruby.rubyText.Length, FontWeights.Bold);
+                            baseLayout.SetFontWeight(0, ruby.length, FontWeights.Bold);
                         }
 
+                        // Character regions include line spacing, not just visible glyphs.
+                        // Anchor to the actual baseline so uniform spacing, wrapping and
+                        // tall inline formulas cannot push ruby away from its base text.
+                        var line = rubyLineBounds[FindLineIndex(rubyLineBounds, ruby.start, 0)];
+                        float baseInkTop = currentY + line.Top + line.Baseline
+                            + (float)baseLayout.DrawBounds.Top - baseLayout.LineMetrics[0].Baseline;
+                        float rubyY = baseInkTop - Math.Max(3f, fontSize * 0.08f) - (float)rubyLayout.DrawBounds.Bottom;
                         float rubyWidth = (float)rubyLayout.LayoutBounds.Width;
                         float idealLeft = charCenter - (rubyWidth / 2.0f);
 

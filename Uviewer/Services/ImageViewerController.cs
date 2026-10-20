@@ -111,7 +111,9 @@ namespace Uviewer.Services
 
         public void ApplyZoom() => _zoomCoordinator.ApplyZoom();
 
-        public async Task DisplayCurrentImageAsync()
+        public Task DisplayCurrentImageAsync() => DisplayCurrentImageAsync(focusViewer: true);
+
+        public async Task DisplayCurrentImageAsync(bool focusViewer)
         {
             try
             {
@@ -170,7 +172,7 @@ namespace Uviewer.Services
                     await DisplayImageEntryAsync(entry, capturedIndexAtStart, token);
                 }
 
-                _host.FocusRoot();
+                if (focusViewer) _host.FocusRoot();
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)

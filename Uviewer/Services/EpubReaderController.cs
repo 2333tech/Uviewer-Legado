@@ -1119,7 +1119,8 @@ namespace Uviewer.Services
             int totalLines = pg?.TotalLinesInChapter ?? _epubWin2DPages.Count;
             int currentLine = pg?.StartLine ?? (_currentEpubPageIndex + 1);
 
-            var result = await _textDialogService.ShowGoToLineAsync(currentLine, totalLines, Strings.DialogTitle);
+            var result = await _textDialogService.ShowGoToLineAsync(
+                currentLine, totalLines, Strings.DialogTitle, GoToEpubLineAsync);
             if (result.HasValue)
             {
                 await GoToEpubLineAsync(result.Value);

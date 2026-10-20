@@ -122,6 +122,7 @@
 | **1**  | Global | Zoom Actual Size (Fit to width in PDF) |
 | **G** | Text/EPUB | Go to Line (Right-click for search)|
 | | PDF | Go to Page (Right-click for search)|
+| | Image / Archive | Go to Image |
 | **Space** | Image / EPUB | Toggle 2-Page View (Side-by-Side) |
 | **V** | Text / EPUB | Toggle Vertical Mode (Tategaki) |
 | **S** | Image | Toggle Sharpening (Right-click for settings) |

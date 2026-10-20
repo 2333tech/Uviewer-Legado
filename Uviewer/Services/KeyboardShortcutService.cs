@@ -68,12 +68,12 @@ namespace Uviewer.Services
 
         internal static bool IsTextInput(object originalSource)
         {
-            // Input templates can raise key events from a child element. Leave editing
-            // and ComboBox navigation keys to the control instead of viewer shortcuts.
+            // Input templates can raise key events from a child element. Dialogs
+            // and their controls own keys, including Escape and slider arrows.
             var source = originalSource as DependencyObject;
             while (source != null)
             {
-                if (source is TextBox or PasswordBox or NumberBox or ComboBox or ComboBoxItem)
+                if (source is TextBox or PasswordBox or NumberBox or ComboBox or ComboBoxItem or ContentDialog)
                 {
                     return true;
                 }

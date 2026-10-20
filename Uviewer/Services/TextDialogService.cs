@@ -110,7 +110,7 @@ namespace Uviewer.Services
             return null;
         }
 
-        public async Task<int?> ShowGoToLineAsync(int currentLine, int totalLines, string title)
+        public async Task<int?> ShowGoToLineAsync(int currentLine, int totalLines, string title, Func<int, Task> navigateAsync)
         {
             var dialog = new GoToLineDialog(currentLine, totalLines, title)
             {
@@ -118,7 +118,22 @@ namespace Uviewer.Services
                 RequestedTheme = this.RequestedTheme
             };
 
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            // Serialize releases so a slower render cannot replace a later selection.
+            Task navigationTask = Task.CompletedTask;
+            async Task NavigateAfterAsync(Task previousNavigation, int line)
+            {
+                await previousNavigation;
+                await navigateAsync(line);
+            }
+
+            dialog.SliderPositionSelected += (_, line) =>
+            {
+                navigationTask = NavigateAfterAsync(navigationTask, line);
+            };
+
+            var result = await dialog.ShowAsync();
+            await navigationTask;
+            if (result == ContentDialogResult.Primary)
             {
                 if (int.TryParse(dialog.EnteredText, out int line))
                 {

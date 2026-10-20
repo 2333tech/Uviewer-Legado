@@ -437,7 +437,7 @@ namespace Uviewer.Controls
             if (SideBySideToolbarItemIds.Contains(id)) return _isSideBySideToolbarAvailable;
             if (id == ToolbarItemIds.Sharpen) return _isSharpenAvailable;
             if (id == ToolbarItemIds.PdfToc) return _isPdfTocAvailable;
-            if (id == ToolbarItemIds.PdfGoToPage) return _isPdfGoToPageAvailable;
+            if (id == ToolbarItemIds.PdfGoToPage) return _isPdfGoToPageAvailable || _isImageToolbarAvailable;
             return true;
         }
 

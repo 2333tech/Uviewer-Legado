@@ -107,6 +107,7 @@ namespace Uviewer
             public void UpdateNextImageSideButtonState() => _window._imageViewerController.UpdateNextImageSideButtonState();
             public void UpdateStatusBar(ImageEntry entry, CanvasBitmap bitmap) => _window._imageViewerController.UpdateStatusBar(entry, bitmap);
             public Task DisplayCurrentImageAsync() => _window._imageViewerController.DisplayCurrentImageAsync();
+            public Task NavigateToImageAsync(int index) => _window._imageNavigationCoordinator.NavigateToImageAsync(index);
             public ViewingContext CreateViewingContext() => _window.CreateViewingContext();
             public SharpenParams CreateSharpenParams() => _window.CreateSharpenParams();
             public Task LoadImageResourceAndInvalidateAsync(

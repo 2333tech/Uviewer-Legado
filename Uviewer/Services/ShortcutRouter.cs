@@ -108,7 +108,8 @@ namespace Uviewer.Services
                     return Set(out route, AppCommand.HandledOnly);
 
                 case VirtualKey.G:
-                    if (!context.IsTextMode && !context.IsEpubMode && context.HasPdfDocument)
+                    if (!context.IsTextMode && !context.IsEpubMode &&
+                        (context.HasPdfDocument || context.ImageEntriesCount > 0))
                     {
                         return Set(out route, AppCommand.ShowGoToLineDialog);
                     }
