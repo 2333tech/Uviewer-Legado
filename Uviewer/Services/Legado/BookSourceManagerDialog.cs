@@ -29,9 +29,19 @@ namespace Uviewer.Services.Legado
     /// </summary>
     public sealed class BookSourceManagerDialog
     {
+        /// <summary>
+        /// 滚动区期望高度（px）。
+        /// <para>书源详情表单很长（基本信息 + 5 个规则分组 + 脚本登录，通常 30+ 个字段），
+        /// 给足高度可减少滚动；实际值会被 <see cref="LegadoDialogLayout"/> 按窗口高度收敛，
+        /// 避免小窗口下对话框超出屏幕。</para>
+        /// </summary>
+        private const double PreferredContentHeight = 620;
         private readonly FrameworkElement _rootElement;
         private readonly BookSourceService _service;
         private readonly Func<string, Task> _onImportRequested;
+
+        /// <summary>提示回调（消息 / 图标 / 颜色），用于把失败原因告诉用户。</summary>
+        private readonly Action<string, string, string> _notify;
 
         /// <summary>当前编辑中的副本（null = 未选中/未在编辑）。</summary>
         private BookSourceModel? _draft;
@@ -42,11 +52,15 @@ namespace Uviewer.Services.Legado
         public BookSourceManagerDialog(
             FrameworkElement rootElement,
             BookSourceService service,
-            Func<string, Task> onImportRequested)
+            Func<string, Task> onImportRequested,
+            Action<string, string, string>? notify = null)
         {
             _rootElement = rootElement ?? throw new ArgumentNullException(nameof(rootElement));
             _service = service ?? throw new ArgumentNullException(nameof(service));
             _onImportRequested = onImportRequested ?? throw new ArgumentNullException(nameof(onImportRequested));
+
+            // 提示回调可选：没给就用调试输出，不影响主流程
+            _notify = notify ?? ((msg, _, _) => System.Diagnostics.Debug.WriteLine($"Legado manager: {msg}"));
         }
 
         /// <summary>弹出管理器。<paramref name="importPathJson"/> 预填的导入对话框参数（内部使用）。</summary>
@@ -55,8 +69,13 @@ namespace Uviewer.Services.Legado
             var list = new ListView
             {
                 SelectionMode = ListViewSelectionMode.Single,
-                Width = 280,
+
+                // 固定宽度：列表内容（名称/分组/徽标/启用复选框）不需要更多空间，
+                // 把余量留给右侧编辑区（书源 URL、规则正则都是长文本，可读性优先）。
+                // 320 是加了复选框后的宽度：名称列 + 徽标(⚠) + 复选框放得下且不挤。
+                Width = 320,
                 HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
             };
 
             var detailTitle = new TextBlock
@@ -74,8 +93,21 @@ namespace Uviewer.Services.Legado
                 TextWrapping = TextWrapping.Wrap,
             };
 
-            var formHost = new StackPanel { Spacing = 8 };
-            var detailPanel = new StackPanel { Spacing = 8, Margin = new Thickness(12, 0, 0, 0) };
+            // 反射生成表单的宿主：必须 Stretch，否则里面的 TextBox 会按内容固有宽度撑开并溢出
+            var formHost = new StackPanel
+            {
+                Spacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
+
+            var detailPanel = new StackPanel
+            {
+                Spacing = 8,
+                Margin = new Thickness(12, 0, 0, 0),
+
+                // 关键：跟随 Star 列伸缩。原先这里没约束，编辑区会按内容撑开并溢出对话框。
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
             detailPanel.Children.Add(detailTitle);
             detailPanel.Children.Add(detailSubtitle);
             detailPanel.Children.Add(formHost);
@@ -101,7 +133,15 @@ namespace Uviewer.Services.Legado
             grid.Children.Add(list);
             grid.Children.Add(detailPanel);
 
-            var root = new StackPanel { Spacing = 10, Width = 900 };
+            var root = new StackPanel
+            {
+                Spacing = 10,
+
+                // 不再写死 Width：容器跟随对话框宽度，窗口窄时由 Star 列自然收缩。
+                // 原先写死 900 而对话框没设 MaxWidth（默认 548，可用内容仅 500），
+                // 右侧编辑区被裁掉 400px —— 表现就是"点开书源后编辑框超出窗口"。
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+            };
             root.Children.Add(summary);
             root.Children.Add(grid);
 
@@ -115,9 +155,13 @@ namespace Uviewer.Services.Legado
             buttonRow.Children.Add(saveButton);
             buttonRow.Children.Add(deleteButton);
 
-            var panel = new StackPanel { Spacing = 10 };
+            var panel = new StackPanel { Spacing = 10, HorizontalAlignment = HorizontalAlignment.Stretch };
             panel.Children.Add(root);
             panel.Children.Add(buttonRow);
+
+            // 左侧列表固定 320（名称/分组/徽标/启用复选框），右侧编辑区吃掉剩余宽度
+            const double ListWidth = 320;
+            const double DesiredContentWidth = ListWidth + 12 + 560;
 
             var dialog = new ContentDialog
             {
@@ -129,11 +173,22 @@ namespace Uviewer.Services.Legado
                     Content = panel,
                     VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                     VerticalScrollMode = ScrollMode.Auto,
-                    MaxHeight = 620,
+
+                    // 横向不滚：内容整体已按对话框宽度收敛，再横滚只会让人以为布局坏了
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                    HorizontalScrollMode = ScrollMode.Disabled,
+                    HorizontalAlignment = HorizontalAlignment.Stretch,
                 },
                 PrimaryButtonText = "关闭",
                 DefaultButton = ContentDialogButton.Close,
             };
+
+            // 加大窗口以装下内容（而非缩小内容尺寸），并按实际窗口收敛
+            LegadoDialogLayout.Fit(dialog, _rootElement, DesiredContentWidth);
+            if (dialog.Content is ScrollViewer viewer)
+            {
+                viewer.MaxHeight = LegadoDialogLayout.ScrollViewportHeight(_rootElement, PreferredContentHeight);
+            }
 
             // ── 列表 ──────────────────────────────────────────────
             void RefreshList(string? selectUrl = null)
@@ -143,7 +198,7 @@ namespace Uviewer.Services.Legado
                 {
                     list.Items.Add(new ListViewItem
                     {
-                        Content = BuildListItemContent(src),
+                        Content = BuildListItemContent(src, RefreshList),
                         Tag = src.BookSourceUrl,
                     });
                 }
@@ -333,9 +388,17 @@ namespace Uviewer.Services.Legado
                 TextWrapping = multi ? TextWrapping.Wrap : TextWrapping.NoWrap,
                 IsReadOnly = commit is null,
                 Height = tall ? 120 : (multi ? 64 : double.NaN),
-                MinHeight = multi ? 56 : double.NaN,
                 IsEnabled = commit is not null,
             };
+
+            // MinHeight 只在多行时给。
+            // 刻意不写 `MinHeight = multi ? 56 : double.NaN`：WinUI 的 MinHeight setter
+            // 收到 NaN 会抛 ArgumentException（Height 允许 NaN 表示"自动"，Min/Max 不允许），
+            // 于是每次构建单行字段都崩 —— 点开任意书源即致命错误。
+            if (multi)
+            {
+                box.MinHeight = 56;
+            }
 
             if (commit is not null)
             {
@@ -422,7 +485,13 @@ namespace Uviewer.Services.Legado
             return panel;
         }
 
-        private static object BuildListItemContent(BookSourceModel source)
+        /// <summary>
+        /// 构建书源列表项内容：左侧名称/状态，中间能力徽标（⚠），右侧启用复选框。
+        /// <para>启用复选框放在徽标<b>右侧</b>：徽标是"这条源当前引擎读不了"的警示，
+        /// 复选框是"这条源要不要参与搜索/阅读"的开关，两者语义不同、位置分开才不会误读。
+        /// 勾选变化立即落盘（与详情页的"启用"开关一致），不必再点保存。</para>
+        /// </summary>
+        private UIElement BuildListItemContent(BookSourceModel source, Action<string?> refreshList)
         {
             var caps = BookSourceCapabilities.Assess(source);
             var supported = caps == BookSourceCapability.None || caps == BookSourceCapability.HasJsLib;
@@ -430,7 +499,10 @@ namespace Uviewer.Services.Legado
             var badge = new TextBlock
             {
                 Text = supported ? "" : "⚠",
-                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xE6, 0x7B, 0x22)),
+
+                // ⚠ 是语义化 Emoji（表示"当前引擎读不了"），允许用彩色以示警示；
+                // 文字类内容一律灰度（见 LegadoTheme）。这里取一个在亮/暗底上都够醒目的橙。
+                Foreground = LegadoTheme.Rgb(0xE8, 0x8A, 0x00),
                 FontSize = 14,
                 VerticalAlignment = VerticalAlignment.Center,
             };
@@ -461,14 +533,51 @@ namespace Uviewer.Services.Legado
             text.Children.Add(title);
             text.Children.Add(subtitle);
 
+            // 启用复选框：勾选 = 启用该书源（即时落盘）
+            var enableBox = new CheckBox
+            {
+                IsChecked = source.IsEnabled,
+                VerticalAlignment = VerticalAlignment.Center,
+                MinWidth = 32,
+            };
+            ToolTipService.SetToolTip(enableBox, source.IsEnabled ? "已启用，点击停用" : "已停用，点击启用");
+
+            enableBox.Checked += async (s, e) => await ToggleEnabledAsync(source, true, refreshList);
+            enableBox.Unchecked += async (s, e) => await ToggleEnabledAsync(source, false, refreshList);
+
             var row = new Grid();
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             Grid.SetColumn(text, 0);
             Grid.SetColumn(badge, 1);
+            Grid.SetColumn(enableBox, 2);
             row.Children.Add(text);
             row.Children.Add(badge);
+            row.Children.Add(enableBox);
             return row;
+        }
+
+        /// <summary>
+        /// 复选框切换启用状态并立即落盘。
+        /// <para>失败时刷新列表：复选框会按存储里的真实状态重建，
+        /// 避免出现"勾着但其实没生效"的错位（那比报错更难排查）。</para>
+        /// </summary>
+        private async Task ToggleEnabledAsync(BookSourceModel source, bool enabled, Action<string?> refreshList)
+        {
+            try
+            {
+                await _service.SetSourceEnabledAsync(source, enabled);
+
+                // 列表项的"已启用/已停用"文字与字重也要同步更新
+                refreshList(source.BookSourceUrl);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Toggle source enabled failed: {ex.Message}");
+                _notify($"切换启用状态失败：{ex.Message}", "\uE783", "Red");
+                refreshList(source.BookSourceUrl);
+            }
         }
 
         private static string Describe(BookSourceCapability caps)

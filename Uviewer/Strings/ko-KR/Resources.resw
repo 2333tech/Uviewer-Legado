@@ -722,6 +722,15 @@
   <data name="TextHorizontalTwoColumnsHint" xml:space="preserve"><value>아오조라와 EPUB 본문에 적용됩니다. 창 너비가 높이의 1.2배 이상이면 가로 읽기를 2단으로 표시합니다.</value></data>
   <data name="LegadoManageSources" xml:space="preserve"><value>SID 관리</value></data>
   <data name="LegadoImportSources" xml:space="preserve"><value>SID JSON 가져오기…</value></data>
+  <data name="LegadoManageSourcesHint" xml:space="preserve"><value>도서 목록, 정제 규칙, 제목 규칙을 한곳에서 관리</value></data>
+  <data name="LegadoImportReplaceRules" xml:space="preserve"><value>정제 규칙 JSON 가져오기…</value></data>
+  <data name="LegadoShowReplaceRules" xml:space="preserve"><value>정제 규칙 보기 / 켜기·끄기</value></data>
+  <data name="LegadoShowReplaceRulesHint" xml:space="preserve"><value>규칙별로 사용 여부를 지정하며 저장 즉시 본문에 반영됩니다</value></data>
+  <data name="LegadoImportTitleRules" xml:space="preserve"><value>제목 / 장 규칙 JSON 가져오기…</value></data>
+  <data name="LegadoShowTitleRules" xml:space="preserve"><value>제목 규칙 보기 / 켜기·끄기</value></data>
+  <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>TXT 장 분할과 목차 생성을 제어하며 저장 즉시 반영됩니다</value></data>
+  <data name="LegadoPurifyEnabled" xml:space="preserve"><value>텍스트 정제 (전체 스위치)</value></data>
+  <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>전체 스위치: 끄면 모든 정제 규칙이 일시 중지되며, 규칙별 설정은 유지됩니다</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>책 검색</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>활성화된 모든 SID에서 책제목/저자로 책 검색</value></data>
 </root>

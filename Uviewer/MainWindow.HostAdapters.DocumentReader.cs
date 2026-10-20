@@ -36,6 +36,15 @@ namespace Uviewer
 
             public DispatcherQueue DispatcherQueue => _window.DispatcherQueue;
             public AppWindow AppWindow => _window.AppWindow;
+
+            /// <summary>
+            /// 主窗口 HWND。
+            /// <para>用 <c>WindowNative.GetWindowHandle(this)</c>（<c>this</c> 是 <c>Window</c>）取，
+            /// 而不是从 <c>AppWindow</c> 换算——后者拿不到 <c>IWindowNative</c>，
+            /// 换出来的是无效句柄，会让 FileOpenPicker 报"Invalid window handle"。</para>
+            /// </summary>
+            public nint WindowHandle => WinRT.Interop.WindowNative.GetWindowHandle(_window);
+
             public WindowShellController WindowShellController => _window._windowShellController;
 
             public void EnsureMinWindowSizeForText() => _window.EnsureMinWindowSizeForText();

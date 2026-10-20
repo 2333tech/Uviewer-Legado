@@ -270,6 +270,33 @@ namespace Uviewer
 
         /// <summary>导入书源 JSON 菜单项文案。</summary>
         public static string LegadoImportSources => GetString("LegadoImportSources");
+
+        /// <summary>书源管理二级菜单的悬停提示（概括其下含哪些能力）。</summary>
+        public static string LegadoManageSourcesHint => GetString("LegadoManageSourcesHint");
+
+        /// <summary>导入净化（替换）规则 JSON 菜单项文案。</summary>
+        public static string LegadoImportReplaceRules => GetString("LegadoImportReplaceRules");
+
+        /// <summary>查看已导入净化规则菜单项文案。</summary>
+        public static string LegadoShowReplaceRules => GetString("LegadoShowReplaceRules");
+
+        /// <summary>查看净化规则菜单项的悬停提示。</summary>
+        public static string LegadoShowReplaceRulesHint => GetString("LegadoShowReplaceRulesHint");
+
+        /// <summary>导入标题 / 章节划分规则 JSON 菜单项文案。</summary>
+        public static string LegadoImportTitleRules => GetString("LegadoImportTitleRules");
+
+        /// <summary>查看已导入标题 / 章节规则菜单项文案。</summary>
+        public static string LegadoShowTitleRules => GetString("LegadoShowTitleRules");
+
+        /// <summary>查看标题规则菜单项的悬停提示。</summary>
+        public static string LegadoShowTitleRulesHint => GetString("LegadoShowTitleRulesHint");
+
+        /// <summary>替换净化总开关菜单项文案（设置一级菜单）。</summary>
+        public static string LegadoPurifyEnabled => GetString("LegadoPurifyEnabled");
+
+        /// <summary>替换净化总开关菜单项的悬停提示。</summary>
+        public static string LegadoPurifyEnabledHint => GetString("LegadoPurifyEnabledHint");
         public static string MoreCommandsTooltip => GetString("MoreCommandsTooltip");
         public static string ToolbarCustomizationDescription => GetString("ToolbarCustomizationDescription");
         public static string ToolbarApply => GetString("ToolbarApply");

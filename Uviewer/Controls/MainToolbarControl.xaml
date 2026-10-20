@@ -94,23 +94,50 @@
                                     <FontIcon Glyph="&#xE771;"/>
                                 </MenuFlyoutItem.Icon>
                             </MenuFlyoutItem>
-                            <!-- Stage 5: search books across all enabled book sources (Legado) -->
-                            <MenuFlyoutItem x:Name="LegadoSearchMenuItem" Text="{x:Bind app:Strings.LegadoSearch}">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xE721;"/>
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <!-- Stage 5: manage / import book sources -->
-                            <MenuFlyoutItem x:Name="LegadoManageMenuItem" Text="{x:Bind app:Strings.LegadoManageSources}">
-                                <MenuFlyoutItem.Icon>
+                            <!-- Stage 5: 书源相关能力收进「书源管理」二级菜单，避免设置菜单被书源项撑长 -->
+                            <MenuFlyoutSubItem x:Name="LegadoRootMenuItem" Text="{x:Bind app:Strings.LegadoManageSources}">
+                                <MenuFlyoutSubItem.Icon>
                                     <FontIcon Glyph="&#xE8C5;"/>
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
-                            <MenuFlyoutItem x:Name="LegadoImportMenuItem" Text="{x:Bind app:Strings.LegadoImportSources}">
-                                <MenuFlyoutItem.Icon>
-                                    <FontIcon Glyph="&#xE896;"/>
-                                </MenuFlyoutItem.Icon>
-                            </MenuFlyoutItem>
+                                </MenuFlyoutSubItem.Icon>
+                                <MenuFlyoutItem x:Name="LegadoManageMenuItem" Text="{x:Bind app:Strings.LegadoManageSources}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8D4;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator/>
+                                <MenuFlyoutItem x:Name="LegadoSearchMenuItem" Text="{x:Bind app:Strings.LegadoSearch}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE721;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem x:Name="LegadoImportMenuItem" Text="{x:Bind app:Strings.LegadoImportSources}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE896;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator/>
+                                <MenuFlyoutItem x:Name="LegadoImportReplaceRulesMenuItem" Text="{x:Bind app:Strings.LegadoImportReplaceRules}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8F2;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem x:Name="LegadoShowReplaceRulesMenuItem" Text="{x:Bind app:Strings.LegadoShowReplaceRules}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8F1;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutSeparator/>
+                                <MenuFlyoutItem x:Name="LegadoImportTitleRulesMenuItem" Text="{x:Bind app:Strings.LegadoImportTitleRules}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8C5;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                                <MenuFlyoutItem x:Name="LegadoShowTitleRulesMenuItem" Text="{x:Bind app:Strings.LegadoShowTitleRules}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE8FD;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
+                            </MenuFlyoutSubItem>
                             <MenuFlyoutSubItem x:Name="LanguageMenuItem" Text="{x:Bind app:Strings.LanguageSelection}">
                                 <MenuFlyoutSubItem.Icon>
                                     <FontIcon Glyph="&#xE909;"/>
@@ -123,6 +150,12 @@
                                 <ToggleMenuFlyoutItem x:Name="LangZhHantItem" Text="{x:Bind app:Strings.LanguageChineseTraditional}" Tag="zh-Hant"/>
                                 <ToggleMenuFlyoutItem x:Name="LangViItem" Text="{x:Bind app:Strings.LanguageVietnamese}" Tag="vi-VN"/>
                             </MenuFlyoutSubItem>
+                            <!-- 替换净化总开关：一级菜单项（不在“书源管理”二级菜单内） -->
+                            <ToggleMenuFlyoutItem x:Name="LegadoPurifyEnabledMenuItem" Text="{x:Bind app:Strings.LegadoPurifyEnabled}" IsChecked="True">
+                                <ToggleMenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE890;"/>
+                                </ToggleMenuFlyoutItem.Icon>
+                            </ToggleMenuFlyoutItem>
                             <MenuFlyoutSeparator/>
                             <ToggleMenuFlyoutItem x:Name="FastNavigationMenuItem" Text="{x:Bind app:Strings.FastNavigation}" IsChecked="True">
                                 <ToggleMenuFlyoutItem.Icon>

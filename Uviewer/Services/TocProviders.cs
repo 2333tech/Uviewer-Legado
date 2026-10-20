@@ -6,7 +6,11 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using BookSource.Core.Services;
 using Uviewer.Models;
+// 注意：BookSource.Core.Models 里也有 TocItem，直接 using 该命名空间会让本文件的
+// TocItem 变成二义（CS0104）。这里只显式引入真正需要的标题规则类型。
+using TitleRule = BookSource.Core.Models.TitleRule;
 
 namespace Uviewer.Services
 {
@@ -274,55 +278,4 @@ namespace Uviewer.Services
         }
     }
 
-    public class TextTocProvider : ITocProvider
-    {
-        private readonly string _content;
-        private readonly List<AozoraBindingModel>? _blocks;
-
-        public TextTocProvider(string content, List<AozoraBindingModel>? blocks = null)
-        {
-            _content = content;
-            _blocks = blocks;
-        }
-
-        public async Task<List<TocItem>> GetTocAsync(CancellationToken token = default)
-        {
-            if (_blocks != null && _blocks.Count > 0)
-            {
-                return _blocks
-                    .Where(b => b.HeadingLevel > 0)
-                    .Select(b => new TocItem
-                    {
-                        HeadingText = b.HeadingText,
-                        SourceLineNumber = b.SourceLineNumber,
-                        HeadingLevel = b.HeadingLevel
-                    })
-                    .ToList();
-            }
-
-            return await Task.Run(() =>
-            {
-                var list = new List<TocItem>();
-                var rawLines = _content.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
-
-                for (int i = 0; i < rawLines.Length; i++)
-                {
-                    var line = rawLines[i].Trim();
-                    int level = 0;
-                    string text = "";
-
-                    if (line.Contains("［＃大見出し］") || line.StartsWith("# ")) { level = 1; text = line.Replace("［＃大見出し］", "").TrimStart('#', ' '); }
-                    else if (line.Contains("［＃中見出し］") || line.StartsWith("## ")) { level = 2; text = line.Replace("［＃中見出し］", "").TrimStart('#', ' '); }
-                    else if (line.Contains("［＃小見出し］") || line.StartsWith("### ")) { level = 3; text = line.Replace("［＃小見出し］", "").TrimStart('#', ' '); }
-
-                    if (level > 0)
-                    {
-                        text = Regex.Replace(text, @"［＃[^］]+］|\[.*?\]|[#]", "").Trim();
-                        list.Add(new TocItem { HeadingText = text, SourceLineNumber = i + 1, HeadingLevel = level });
-                    }
-                }
-                return list;
-            }, token);
-        }
-    }
 }

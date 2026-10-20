@@ -25,6 +25,16 @@ namespace Uviewer.Controls
         public event EventHandler? LegadoManageRequested;
         /// <summary>导入书源 JSON 入口被点击。</summary>
         public event EventHandler? LegadoImportRequested;
+        /// <summary>导入净化（替换）规则 JSON 入口被点击。</summary>
+        public event EventHandler? LegadoImportReplaceRulesRequested;
+        /// <summary>查看已导入净化规则（逐条开关）入口被点击。</summary>
+        public event EventHandler? LegadoShowReplaceRulesRequested;
+        /// <summary>导入标题 / 章节划分规则 JSON 入口被点击。</summary>
+        public event EventHandler? LegadoImportTitleRulesRequested;
+        /// <summary>查看已导入标题 / 章节规则（逐条开关）入口被点击。</summary>
+        public event EventHandler? LegadoShowTitleRulesRequested;
+        /// <summary>替换净化总开关被切换（参数 = 新状态）。</summary>
+        public event EventHandler<bool>? LegadoPurifyEnabledChanged;
         public event EventHandler<string>? LanguageSelected;
         public event EventHandler<bool>? MatchControlDirectionChanged;
         public event EventHandler<bool>? FastNavigationChanged;
@@ -131,6 +141,12 @@ namespace Uviewer.Controls
             LegadoSearchMenuItem.Click += (_, _) => LegadoSearchRequested?.Invoke(this, EventArgs.Empty);
             LegadoManageMenuItem.Click += (_, _) => LegadoManageRequested?.Invoke(this, EventArgs.Empty);
             LegadoImportMenuItem.Click += (_, _) => LegadoImportRequested?.Invoke(this, EventArgs.Empty);
+            LegadoImportReplaceRulesMenuItem.Click += (_, _) => LegadoImportReplaceRulesRequested?.Invoke(this, EventArgs.Empty);
+            LegadoShowReplaceRulesMenuItem.Click += (_, _) => LegadoShowReplaceRulesRequested?.Invoke(this, EventArgs.Empty);
+            LegadoImportTitleRulesMenuItem.Click += (_, _) => LegadoImportTitleRulesRequested?.Invoke(this, EventArgs.Empty);
+            LegadoShowTitleRulesMenuItem.Click += (_, _) => LegadoShowTitleRulesRequested?.Invoke(this, EventArgs.Empty);
+            LegadoPurifyEnabledMenuItem.Click += (_, _) =>
+                LegadoPurifyEnabledChanged?.Invoke(this, LegadoPurifyEnabledMenuItem.IsChecked);
             LangAutoItem.Click += LanguageItem_Click;
             LangKoItem.Click += LanguageItem_Click;
             LangEnItem.Click += LanguageItem_Click;
@@ -290,9 +306,18 @@ namespace Uviewer.Controls
                 : Strings.ExternalProgramMenuWithName(System.IO.Path.GetFileName(_externalProgramPath));
             CustomizeToolbarMenuItem.Text = Strings.ToolbarCustomization;
             LegadoSearchMenuItem.Text = Strings.LegadoSearch;
-            LegadoManageMenuItem.Text = Strings.LegadoManageSources;
+            LegadoRootMenuItem.Text = Strings.LegadoManageSources;
             LegadoImportMenuItem.Text = Strings.LegadoImportSources;
+            LegadoImportReplaceRulesMenuItem.Text = Strings.LegadoImportReplaceRules;
+            LegadoShowReplaceRulesMenuItem.Text = Strings.LegadoShowReplaceRules;
+            LegadoImportTitleRulesMenuItem.Text = Strings.LegadoImportTitleRules;
+            LegadoShowTitleRulesMenuItem.Text = Strings.LegadoShowTitleRules;
+            LegadoPurifyEnabledMenuItem.Text = Strings.LegadoPurifyEnabled;
+            ToolTipService.SetToolTip(LegadoPurifyEnabledMenuItem, Strings.LegadoPurifyEnabledHint);
             ToolTipService.SetToolTip(LegadoSearchMenuItem, Strings.LegadoSearchHint);
+            ToolTipService.SetToolTip(LegadoRootMenuItem, Strings.LegadoManageSourcesHint);
+            ToolTipService.SetToolTip(LegadoShowReplaceRulesMenuItem, Strings.LegadoShowReplaceRulesHint);
+            ToolTipService.SetToolTip(LegadoShowTitleRulesMenuItem, Strings.LegadoShowTitleRulesHint);
             MatchControlDirectionMenuItem.Text = Strings.MatchControlDirection;
             FastNavigationMenuItem.Text = Strings.FastNavigation;
             ToolTipService.SetToolTip(MatchControlDirectionMenuItem, Strings.MatchControlDirectionTooltip);
@@ -370,6 +395,9 @@ namespace Uviewer.Controls
         }
 
         public void SetMatchControlDirection(bool value) => MatchControlDirectionMenuItem.IsChecked = value;
+
+        /// <summary>回写替换净化总开关的勾选状态（从设置读回后同步）。</summary>
+        public void SetLegadoPurifyEnabled(bool value) => LegadoPurifyEnabledMenuItem.IsChecked = value;
         public void SetAllowMultipleInstances(bool value)
         {
             AllowMultipleInstancesMenuItem.IsChecked = value;

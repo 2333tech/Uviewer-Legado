@@ -26,6 +26,19 @@ namespace Uviewer.Services
 
         DispatcherQueue DispatcherQueue { get; }
         AppWindow AppWindow { get; }
+
+        /// <summary>
+        /// 主窗口的原生句柄（HWND）。
+        /// <para><b>为什么单独暴露而不是从 <see cref="AppWindow"/> 换算</b>：
+        /// <c>WinRT.Interop.WindowNative.GetWindowHandle</c> 只有一个
+        /// <c>(object target)</c> 重载，内部走 <c>IWindowNative</c> 转换。
+        /// WinUI3 的 <c>Window</c> 实现了该接口，而 WinAppSDK 的
+        /// <c>Microsoft.UI.Windowing.AppWindow</c> <b>没有</b>——拿它去换会得到无效句柄，
+        /// 于是 FileOpenPicker 抛 <c>Invalid window handle (0x80070578)</c>。
+        /// 故必须用真正的 <c>Window</c> 句柄（宿主在 MainWindow 侧取一次传进来）。</para>
+        /// </summary>
+        nint WindowHandle { get; }
+
         WindowShellController WindowShellController { get; }
 
         void EnsureMinWindowSizeForText();

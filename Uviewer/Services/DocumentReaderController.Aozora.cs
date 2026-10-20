@@ -1447,6 +1447,15 @@ namespace Uviewer
                         ScrollToLine(item.SourceLineNumber);
                     }
                 }
+                else if (item.SourceLineNumber == 0)
+                {
+                    // 卷标题 / 无跳转目标的条目（分章规则标记的卷、PDF 书签等）：
+                    // 给出明确反馈，而不是"点了没反应"让用户以为功能坏了。
+                    ShowNotification(
+                        string.IsNullOrEmpty(item.HeadingText) ? Strings.NoTocContent : $"“{item.HeadingText}”是卷标题，请选择其下的具体章节",
+                        "\uE946",
+                        "Gray");
+                }
             }
         }
     }

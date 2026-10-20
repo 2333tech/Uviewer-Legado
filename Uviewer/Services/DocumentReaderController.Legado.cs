@@ -1,11 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using BookSource.Core.Services.BookSources;
+using Uviewer.Models;
 using Uviewer.Services;
 using Uviewer.Services.Legado;
+using Windows.Storage;
 
 namespace Uviewer
 {
@@ -48,8 +51,83 @@ namespace Uviewer
         /// <summary>书源会话（未打开书时 null）。</summary>
         internal BookSourceReadingSession? LegadoSession => _legadoSession;
 
+        /// <summary>
+        /// 当前启用的标题/章节划分规则（供 TXT 目录生成）。
+        /// <para>存储可能尚未加载（BookSources 首次访问才构造），故这里容忍未初始化状态：
+        /// 返回空列表时 <c>TextTocProvider</c> 会退回到内置标记识别，功能不受影响。</para>
+        /// </summary>
+        internal List<BookSource.Core.Models.TitleRule> GetEnabledTitleRules()
+        {
+            var service = _bookSourceService;
+            return service is null || !service.IsInitialized
+                ? new List<BookSource.Core.Models.TitleRule>()
+                : service.TitleRules.GetEnabledOrdered();
+        }
+
+        /// <summary>
+        /// 用最新的标题规则重建当前 TXT 的目录（导入/开关规则后调用）。
+        /// <para>必须重建 provider 而不是只 LoadToc —— provider 在构造时就固定了规则快照，
+        /// 规则变了不重建就还是旧结果。</para>
+        /// </summary>
+        internal async Task RefreshTextTocFromTitleRulesAsync()
+        {
+            if (string.IsNullOrEmpty(_currentTextContent))
+            {
+                return;
+            }
+
+            // 书源阅读模式下目录来自书源会话，不受标题规则影响
+            if (_legadoSession is not null)
+            {
+                return;
+            }
+
+            _tocService.SetProvider(new TextTocProvider(_currentTextContent, null, GetEnabledTitleRules()));
+            await _tocService.LoadTocAsync().ConfigureAwait(true);
+        }
+
         /// <summary>是否正处于书源阅读模式。</summary>
         internal bool IsLegadoMode => _legadoSession is not null;
+
+        /// <summary>
+        /// <b>读取 → 渲染之间</b>的统一净化（受一级菜单"替换净化（总开关）"控制）。
+        ///
+        /// <para><b>净化时机</b>：抓取阶段一律只拿原文（<c>BookSourceEngine</c> 内部
+        /// 已不做任何净化），本方法在文本<b>送去渲染之前</b>净化一次。
+        /// 三个来源共用这一个入口：书源章节、整本下载后重新打开的 txt、压缩包内 txt。</para>
+    ///
+  /// <para><b>为什么总开关在这里才生效</b>：源头永远是原文，所以开关切换只是
+        /// "净化 / 不净化"的选择——关掉即刻还原原文，<b>不需要重新抓取网络</b>；
+        /// 打开时也只是多一遍正则替换（实测 60 章约 37ms，窗口内约 7ms）。</para>
+    ///
+        /// <para>书源章节走的是 <see cref="BookSourceReadingSession.ConvertToPlainText"/>，
+        /// 那里也调同一入口 <see cref="BookSourceService.PurifyForDisplay"/>，
+/// 但净化发生在 <c>HTML → 纯文本</c> <b>转换之前</b>——替换规则里有大量
+        /// 针对 HTML 标签的规则（去 script / 去注释），先转纯文本就再也匹配不到了。</para>
+        /// </summary>
+    internal string PurifyTextBeforeDisplay(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+      return text;
+        }
+
+        // 注意：<b>不要</b>用"_legadoSession 非空"来跳过净化。
+        // 本方法只被本地文件 / 压缩包条目这两条路径调用，它们的内容与书源章节无关；
+        // 而"书源阅读中又打开本地文件"时会话可能仍然活着——若据此跳过，
+        // 本地文件就不会被净化（总开关对它失效），是个隐蔽的错。
+        // 书源章节走的是 BookSourceReadingSession.ConvertToPlainText（在那里净化），
+        // 两条路径内容来源不同、互不重叠，不存在二次净化。
+
+        var service = _bookSourceService;
+   if (service is null || !service.IsInitialized)
+{
+            // 书源数据尚未加载：不净化，也不阻塞打开文件
+            return text;
+        }
+
+        return service.PurifyForDisplay(text, null, null, null);
+    }
 
         /// <summary>
         /// 打开一本书（深链入口：搜索结果点击 / 收藏夹里的书源链接）。
@@ -84,16 +162,42 @@ namespace Uviewer
 
             ShowNotification($"正在打开《{source.BookSourceName}》…", "\uE8F1", "Gray");
 
-            var opened = await session.OpenAsync(token).ConfigureAwait(true);
+            BookSource.Core.Models.BookInfo? info = null;
+            IReadOnlyList<BookSource.Core.Models.TocItem> chapters = Array.Empty<BookSource.Core.Models.TocItem>();
+            try
+            {
+                var opened = await session.OpenAsync(token).ConfigureAwait(true);
+                info = opened.Info;
+                chapters = opened.Chapters;
+            }
+            catch (OperationCanceledException)
+            {
+                session.Dispose();
+                return false;
+            }
+            catch (Exception ex)
+            {
+                // 网络/DNS/SSL 失败：说清是"取不到"而不是含糊的"不适配"
+                ShowNotification($"打开失败：{ex.Message}", "\uE783", "Red");
+                session.Dispose();
+                return false;
+            }
+
             if (generation != _legadoGeneration || token.IsCancellationRequested)
             {
                 session.Dispose();
                 return false;
             }
 
-            if (opened.Chapters.Count == 0)
+            if (chapters.Count == 0)
             {
-                ShowNotification("目录为空：书源规则可能不适配当前网站", "\uE783", "Red");
+                // 区分两种失败，给出可执行的下一步（换源 vs 稍后重试）
+                ShowNotification(
+                    BookSourceCapabilities.ReadingNeedsStage4(source)
+                        ? $"“{source.BookSourceName}”的目录依赖完整 JavaScript 支持（阶段 4），当前取不到章节，请换一个书源"
+                        : $"“{source.BookSourceName}”未返回章节（站点可能已失效或改版），请换一个书源",
+                    "\uE783",
+                    "Red");
                 session.Dispose();
                 return false;
             }
@@ -101,11 +205,19 @@ namespace Uviewer
             _legadoSession = session;
             LegadoBookName = session.BookName;
 
+            // 断点续读的起始章：命中进度则回到上次位置，否则从第一章开始
+            var startIndex = 0;
+            var saved = service.GetReadingPosition(source.BookSourceUrl, bookUrl);
+            if (saved is not null && saved.ChapterIndex >= 0 && saved.ChapterIndex < chapters.Count)
+            {
+                startIndex = saved.ChapterIndex;
+            }
+
             // 目录先行：让用户马上看到章节列表，点击任意章都能跳
-            InstallLegadoToc(opened.Chapters);
+            InstallLegadoToc(chapters);
 
             SwitchToTextMode();
-            await ShowLegadoChapterAsync(opened.StartIndex, token).ConfigureAwait(true);
+            await ShowLegadoChapterAsync(startIndex, token).ConfigureAwait(true);
             return true;
         }
 
@@ -288,9 +400,207 @@ namespace Uviewer
                 async hit =>
                 {
                     await OpenLegadoBookAsync(hit.SourceUrl, hit.BookUrl).ConfigureAwait(true);
+                },
+                async filePath =>
+                {
+                    await OpenDownloadedBookAsync(filePath).ConfigureAwait(true);
                 });
 
             await dialog.ShowAsync().ConfigureAwait(true);
+        }
+
+        // ============================================================
+        // 净化规则 / 标题章节规则（设置菜单二级项）
+        // ============================================================
+
+        /// <summary>导入净化（替换）规则 JSON。</summary>
+        internal async Task ImportReplaceRulesAsync()
+        {
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            var rules = new ReplaceRuleService(service, RootGrid, GetWindowHandle, NotifyFromRuleService);
+            await rules.PickAndImportAsync().ConfigureAwait(true);
+        }
+
+        /// <summary>查看已导入的净化规则并逐条开关。</summary>
+        internal async Task ShowReplaceRulesAsync()
+        {
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            var rules = new ReplaceRuleService(service, RootGrid, GetWindowHandle, NotifyFromRuleService);
+            var dialog = new RuleListDialog(
+                RootGrid,
+                "替换净化规则（勾选即生效）",
+                rules.List,
+                rules.SetEnabledAsync,
+                "尚未导入任何净化规则。\n请先用「导入净化规则 JSON…」从 legado / reader 导出的规则文件导入。");
+
+            await dialog.ShowAsync().ConfigureAwait(true);
+        }
+
+        /// <summary>导入标题 / 章节划分规则 JSON。</summary>
+        internal async Task ImportTitleRulesAsync()
+        {
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            var rules = new TitleRuleService(
+                service, RootGrid, GetWindowHandle, NotifyFromRuleService,
+                () => RefreshTextTocFromTitleRulesAsync());
+
+            await rules.PickAndImportAsync().ConfigureAwait(true);
+        }
+
+        /// <summary>查看已导入的标题 / 章节规则并逐条开关。</summary>
+        internal async Task ShowTitleRulesAsync()
+        {
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            var rules = new TitleRuleService(
+                service, RootGrid, GetWindowHandle, NotifyFromRuleService,
+                () => RefreshTextTocFromTitleRulesAsync());
+
+            var dialog = new RuleListDialog(
+                RootGrid,
+                "标题 / 章节划分规则（勾选即生效）",
+                rules.List,
+                rules.SetEnabledAsync,
+                "尚未导入任何标题规则。\n内置默认规则已覆盖“第一章 xxx / Chapter N / Markdown 标题”等常见写法；\n需要更多写法时用「导入标题规则 JSON…」补充。");
+
+            await dialog.ShowAsync().ConfigureAwait(true);
+        }
+
+        private void NotifyFromRuleService(string message, string icon, string color) =>
+            ShowNotification(message, icon, color);
+
+        /// <summary>
+        /// 启动后把持久化的"替换净化总开关"状态回写到菜单勾选框。
+        /// <para>不阻塞启动：后台读一次小 JSON 即可，读完再回写勾选。
+        /// 用户在这之前手动点过也没关系——回写的是存储里的真实状态。</para>
+        /// </summary>
+        internal async Task SyncPurifyEnabledMenuAsync()
+        {
+            try
+            {
+                var service = BookSources;
+                await service.EnsureInitializedAsync().ConfigureAwait(true);
+                MainToolbar.SetLegadoPurifyEnabled(service.PurifyEnabled);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Sync purify switch failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 切换替换净化总开关（一级菜单项）。
+        /// <para>关掉后净化管线整段空转（零开销），但各条规则自身的开关状态<b>不被改动</b>——
+        /// 重新打开总开关即恢复用户原本的逐条配置。</para>
+        ///
+    /// <para><b>只重算窗口，不重算全书</b>：当前章 + 前后邻近各若干章（见
+    /// <see cref="BookSourceReadingSession.RepurifyWindow"/>）。全书重算是 O(全书)
+    /// 的正则替换（实测 60 章 60ms，1663 章按比例约 1.7s），每次开关都等 1.7s 不可接受。
+    /// 窗口外的章节在读到时按需重算（原文仍在缓存里，同样零网络）。</para>
+        /// </summary>
+        internal async Task SetPurifyEnabledAsync(bool enabled)
+        {
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            var now = await service.SetPurifyEnabledAsync(enabled).ConfigureAwait(true);
+
+            // 回写菜单勾选状态（落盘失败时以实际状态为准）
+            MainToolbar.SetLegadoPurifyEnabled(now);
+
+            // 正在读书源：就地重算窗口内的章并重绘当前章（用户立刻能看到效果）
+            if (_legadoSession is not null && _legadoChapterIndex >= 0)
+            {
+                var touched = _legadoSession.RepurifyWindow(_legadoChapterIndex, RepurifyWindowBefore, RepurifyWindowAfter);
+                if (touched.Count > 0)
+          {
+  await ShowLegadoChapterAsync(_legadoChapterIndex).ConfigureAwait(true);
+         }
+            }
+    else if (!string.IsNullOrEmpty(_currentTextContent))
+        {
+   // 正在看本地文件（含整本下载下来的书）：重新读一遍 + 重新净化。
+   // 走"重载"通路而不是就地改 _currentTextContent —— 后者存的是**已净化**的文本，
+            // 已经丢掉了原文，无法还原（这正是"源头存原文"的意义所在）。
+            await ReloadCurrentTextAsync().ConfigureAwait(true);
+        }
+
+      ShowNotification(
+       now ? "已开启替换净化" : "已关闭替换净化（各条规则配置已保留）",
+    now ? "\uE73E" : "\uE711",
+          now ? "Green" : "Gray");
+  }
+
+        /// <summary>
+        /// 重新加载当前文本（用于净化总开关切换后重算本地文件内容）。
+        /// <para>复用既有的三条重载通路：本地文件 / 压缩包条目 / 内存文本。</para>
+  /// </summary>
+        private async Task ReloadCurrentTextAsync()
+    {
+            try
+  {
+        if (!string.IsNullOrEmpty(_currentTextFilePath))
+      {
+            var file = await Windows.Storage.StorageFile.GetFileFromPathAsync(_currentTextFilePath);
+   await LoadTextFileAsync(file).ConfigureAwait(true);
+       return;
+    }
+
+      if (_currentTextArchiveEntryKey is not null && _archiveSession.HasArchive)
+         {
+     // 压缩包条目：按既有范式构造一个 ImageEntry 再重载（见 EncodingItem_Click）
+        var entry = new ImageEntry
+    {
+      ArchiveEntryKey = _currentTextArchiveEntryKey,
+         DisplayName = FileNameText.Text,
+            };
+   await LoadTextFromArchiveEntryAsync(entry).ConfigureAwait(true);
+     return;
+         }
+ }
+            catch (Exception ex)
+       {
+       System.Diagnostics.Debug.WriteLine($"Reload current text failed: {ex.Message}");
+   }
+        }
+
+        /// <summary>切换净化后重算窗口：当前章之前重算 2 章、之后重算 4 章（与预取窗口一致）。</summary>
+        private const int RepurifyWindowBefore = 2;
+
+        /// <summary>切换净化后重算窗口：当前章之后重算 4 章。</summary>
+        private const int RepurifyWindowAfter = 4;
+        /// <para>刻意走 <see cref="LoadTextFileAsync"/> 这条<b>本地文件</b>通路而不是
+        /// <c>OpenLegadoBookAsync</c>：下载的意义就是"从此不依赖网络与书源"，
+        /// 打开已下好的文件才能兑现这一点。副作用一并复用：进最近记录、侧栏选中、
+        /// 断点续读、全文高亮、三种排版，全部零新增代码。</para>
+        /// </summary>
+        internal async Task OpenDownloadedBookAsync(string filePath)
+        {
+            if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
+            {
+                ShowNotification("下载文件不存在", "\uE783", "Red");
+                return;
+            }
+
+            // 先退出书源阅读模式：避免旧会话的预取任务继续抢网络/内存
+            await CloseLegadoAsync().ConfigureAwait(true);
+
+            try
+            {
+                var file = await StorageFile.GetFileFromPathAsync(filePath);
+                await LoadTextFileAsync(file).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                ShowNotification($"打开下载文件失败：{ex.Message}", "\uE783", "Red");
+            }
         }
 
         /// <summary>
@@ -311,7 +621,8 @@ namespace Uviewer
                     // 从管理器里点"导入"：关掉管理器 → 导入 → 再开回来显示新条目
                     await ImportBookSourcesAsync().ConfigureAwait(true);
                     await ShowBookSourceManagerAsync().ConfigureAwait(true);
-                });
+                },
+                NotifyFromRuleService);
 
             await dialog.ShowAsync().ConfigureAwait(true);
         }
@@ -335,12 +646,14 @@ namespace Uviewer
             await importer.PickAndImportAsync().ConfigureAwait(true);
         }
 
-        /// <summary>取主窗口句柄（FileOpenPicker 在 WinUI3 里必须绑定窗口才能正确弹出）。</summary>
-        private nint GetWindowHandle()
-        {
-            var window = AppWindow;
-            return window is null ? nint.Zero : WinRT.Interop.WindowNative.GetWindowHandle(window);
-        }
+        /// <summary>
+        /// 取主窗口句柄（FileOpenPicker 在 WinUI3 里必须绑定窗口才能正确弹出）。
+        /// <para><b>不能用 <c>AppWindow</c> 换算</b>：<c>WindowNative.GetWindowHandle</c> 只有一个
+        /// <c>(object)</c> 重载，内部转 <c>IWindowNative</c>；<c>Microsoft.UI.Windowing.AppWindow</c>
+        /// 不实现该接口，换出来是无效句柄 → picker 抛
+        /// <c>Invalid window handle (0x80070578)</c>。这里用宿主从真正的 <c>Window</c> 取到的 HWND。</para>
+        /// </summary>
+        private nint GetWindowHandle() => _appStateHost.WindowHandle;
 
         /// <summary>
         /// 静态目录提供器：书源目录在打开时已全部取回（阶段 2 的分页并行已完成），

@@ -722,6 +722,15 @@
   <data name="TextHorizontalTwoColumnsHint" xml:space="preserve"><value>适用于青空文库和EPUB正文。窗口宽度达到高度的1.2倍时，横向阅读使用双栏显示。</value></data>
   <data name="LegadoManageSources" xml:space="preserve"><value>书源管理</value></data>
   <data name="LegadoImportSources" xml:space="preserve"><value>导入书源 JSON…</value></data>
+  <data name="LegadoManageSourcesHint" xml:space="preserve"><value>书源、净化规则与标题规则的统一入口</value></data>
+  <data name="LegadoImportReplaceRules" xml:space="preserve"><value>导入净化规则 JSON…</value></data>
+  <data name="LegadoShowReplaceRules" xml:space="preserve"><value>查看 / 开关净化规则</value></data>
+  <data name="LegadoShowReplaceRulesHint" xml:space="preserve"><value>逐条勾选启用，保存后立即对正文生效</value></data>
+  <data name="LegadoImportTitleRules" xml:space="preserve"><value>导入标题 / 章节规则 JSON…</value></data>
+  <data name="LegadoShowTitleRules" xml:space="preserve"><value>查看 / 开关标题规则</value></data>
+  <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>控制 TXT 章节切分与目录生成，保存后立即生效</value></data>
+  <data name="LegadoPurifyEnabled" xml:space="preserve"><value>替换净化（总开关）</value></data>
+  <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>全局开关：关闭后所有净化规则暂停生效，各条规则配置保留</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>搜索书籍</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>在所有已启用书源中按书名/作者搜索书籍</value></data>
 </root>

@@ -26,6 +26,11 @@ namespace Uviewer
                             ShowLegadoSearchAsync = () => window._documentReaderController.ShowBookSourceSearchAsync(),
                             ShowLegadoManagerAsync = () => window._documentReaderController.ShowBookSourceManagerAsync(),
                             ImportLegadoSourcesAsync = () => window._documentReaderController.ImportBookSourcesAsync(),
+                            ImportLegadoReplaceRulesAsync = () => window._documentReaderController.ImportReplaceRulesAsync(),
+                            ShowLegadoReplaceRulesAsync = () => window._documentReaderController.ShowReplaceRulesAsync(),
+                            ImportLegadoTitleRulesAsync = () => window._documentReaderController.ImportTitleRulesAsync(),
+                            ShowLegadoTitleRulesAsync = () => window._documentReaderController.ShowTitleRulesAsync(),
+                            SetLegadoPurifyEnabledAsync = enabled => window._documentReaderController.SetPurifyEnabledAsync(enabled),
                             SaveToolbarCustomization = () => window._windowSettingsCoordinator.SaveWindowSettings(),
                             ApplyLanguageAsync = language => window._documentReaderController.ApplyLanguageSelectionAsync(language),
                             SetMatchControlDirection = isChecked =>
@@ -121,6 +126,10 @@ namespace Uviewer
                             CloseWindow = window.RequestWindowClose,
                             ShowNotification = (message, icon, color) => window.ShowNotification(message, icon, color)
                         });
+
+                    // 启动后异步回写"替换净化总开关"的勾选状态（读持久化设置）。
+                    // 不阻塞启动：读一个很小的 JSON，读完再回写即可。
+                    _ = window._documentReaderController.SyncPurifyEnabledMenuAsync();
                 }
 
                 public static void InitializeExtractedControlEvents(MainWindow window)

@@ -152,14 +152,19 @@ namespace Uviewer
                 _textReaderState.SetLocalSource(file.Path);
                 // No reset here, DisplayLoadedText will handle it after using the value
 
-                CancelAndResetGlobalTextCts();
-                var token = _globalTextCts!.Token;
+CancelAndResetGlobalTextCts();
+       var token = _globalTextCts!.Token;
 
-                SwitchToTextMode();
-                string content = await _textDocumentLoadService.ReadLocalFileAsync(file, _settingsManager.EncodingName, token);
-                if (token.IsCancellationRequested) return;
+     SwitchToTextMode();
+          string content = await _textDocumentLoadService.ReadLocalFileAsync(file, _settingsManager.EncodingName, token);
+      if (token.IsCancellationRequested) return;
 
-                await DisplayLoadedText(content, file.Name, file.Path, token);
+    // 读取 → 渲染之间净化（受一级菜单"替换净化（总开关）"控制）。
+      // 抓取阶段（整本下载）现在只落原文，净化统一在这里做；
+       // 这样下载下来的书重新打开时，总开关依然能立即生效。
+        content = PurifyTextBeforeDisplay(content);
+
+        await DisplayLoadedText(content, file.Name, file.Path, token);
 
                 if (token.IsCancellationRequested) return;
                 await RevealTextContentAsync(loadGeneration, token);
@@ -202,11 +207,15 @@ namespace Uviewer
                 CancelAndResetGlobalTextCts();
                 var token = _globalTextCts!.Token;
 
-                SwitchToTextMode();
-                string content = await _textDocumentLoadService.ReadArchiveEntryAsync(entry, _settingsManager.EncodingName, token);
+SwitchToTextMode();
+     string content = await _textDocumentLoadService.ReadArchiveEntryAsync(entry, _settingsManager.EncodingName, token);
 
-                if (token.IsCancellationRequested) return;
-                await DisplayLoadedText(content, entry.DisplayName, null, token);
+            if (token.IsCancellationRequested) return;
+
+      // 与本地文件同一时机净化（读取 → 渲染之间，受总开关控制）
+     content = PurifyTextBeforeDisplay(content);
+
+       await DisplayLoadedText(content, entry.DisplayName, null, token);
 
                 if (token.IsCancellationRequested) return;
                 await RevealTextContentAsync(loadGeneration, token);
@@ -238,8 +247,22 @@ namespace Uviewer
             }
 
             _currentTextContent = content; // Save for reload
-            _tocService.SetProvider(new TextTocProvider(content));
-            _ = _tocService.LoadTocAsync(token);
+
+// 打开文件时即做分章 + 生成目录。
+            // 三级来源：青空块优先 → 内置标记（# / ［＃大見出し］）→ 用户导入的标题/章节划分规则。
+            // 传入 titleRules 才能让"第一章 xxx"这类中文 TXT 生成目录并支持跳章
+            // （整本下载下来的书正是这一类）。
+            // 注意：此处用的是**已净化后**的 content —— 净化在前、分章在后，
+            // 这样净化规则若删掉了某个标题行，目录也不会指向一行不存在的正文。
+            //
+            // 书源阅读模式除外：那��的目录来自书源本身（InstallLegadoToc 装的静态目录），
+            // 若在这里换成"按正文行号切分"的目录，会把整本书的目录覆盖成
+            // **当前这一章**的行目录 —— 目录从"全书章节"退化成"本章小节"。
+            if (_legadoSession is null)
+            {
+       _tocService.SetProvider(new TextTocProvider(content, null, GetEnabledTitleRules()));
+         _ = _tocService.LoadTocAsync(token);
+      }
 
             _aozoraBlocks.Clear(); // [핵심 수정] 새 파일을 로드할 때 이전 파일의 블록 캐시를 제거합니다.
             _aozoraParseGeneration++;

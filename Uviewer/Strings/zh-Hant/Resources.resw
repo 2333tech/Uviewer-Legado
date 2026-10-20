@@ -722,6 +722,15 @@
   <data name="TextHorizontalTwoColumnsHint" xml:space="preserve"><value>適用於青空文庫和EPUB內文。視窗寬度達到高度的1.2倍時，橫向閱讀使用雙欄顯示。</value></data>
   <data name="LegadoManageSources" xml:space="preserve"><value>書源管理</value></data>
   <data name="LegadoImportSources" xml:space="preserve"><value>匯入書源 JSON…</value></data>
+  <data name="LegadoManageSourcesHint" xml:space="preserve"><value>書源、淨化規則與標題規則的統一入口</value></data>
+  <data name="LegadoImportReplaceRules" xml:space="preserve"><value>匯入淨化規則 JSON…</value></data>
+  <data name="LegadoShowReplaceRules" xml:space="preserve"><value>檢視 / 開關淨化規則</value></data>
+  <data name="LegadoShowReplaceRulesHint" xml:space="preserve"><value>逐條勾選啟用，儲存後立即對正文生效</value></data>
+  <data name="LegadoImportTitleRules" xml:space="preserve"><value>匯入標題 / 章節規則 JSON…</value></data>
+  <data name="LegadoShowTitleRules" xml:space="preserve"><value>檢視 / 開關標題規則</value></data>
+  <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>控制 TXT 章節切分與目錄生成，儲存後立即生效</value></data>
+  <data name="LegadoPurifyEnabled" xml:space="preserve"><value>替換淨化（總開關）</value></data>
+  <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>全域開關：關閉後所有淨化規則暫停生效，各條規則設定保留</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>搜尋書籍</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>在所有已啟用書源中按書名/作者搜尋書籍</value></data>
 </root>

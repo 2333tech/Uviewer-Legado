@@ -21,6 +21,16 @@ namespace Uviewer.Services
         public Func<Task> ShowLegadoManagerAsync { get; init; } = null!;
         /// <summary>导入书源 JSON。</summary>
         public Func<Task> ImportLegadoSourcesAsync { get; init; } = null!;
+        /// <summary>导入净化（替换）规则 JSON。</summary>
+        public Func<Task> ImportLegadoReplaceRulesAsync { get; init; } = null!;
+        /// <summary>查看已导入净化规则并逐条开关。</summary>
+        public Func<Task> ShowLegadoReplaceRulesAsync { get; init; } = null!;
+        /// <summary>导入标题 / 章节划分规则 JSON。</summary>
+        public Func<Task> ImportLegadoTitleRulesAsync { get; init; } = null!;
+        /// <summary>查看已导入标题 / 章节规则并逐条开关。</summary>
+        public Func<Task> ShowLegadoTitleRulesAsync { get; init; } = null!;
+        /// <summary>切换替换净化总开关（参数 = 新状态）。</summary>
+        public Func<bool, Task> SetLegadoPurifyEnabledAsync { get; init; } = null!;
         public Action SaveToolbarCustomization { get; init; } = null!;
         public Func<string, Task> ApplyLanguageAsync { get; init; } = null!;
         public Action<bool> SetMatchControlDirection { get; init; } = null!;
@@ -97,6 +107,12 @@ namespace Uviewer.Services
             _toolbar.LegadoSearchRequested += (_, _) => RunAsync(_handlers.ShowLegadoSearchAsync);
             _toolbar.LegadoManageRequested += (_, _) => RunAsync(_handlers.ShowLegadoManagerAsync);
             _toolbar.LegadoImportRequested += (_, _) => RunAsync(_handlers.ImportLegadoSourcesAsync);
+            _toolbar.LegadoImportReplaceRulesRequested += (_, _) => RunAsync(_handlers.ImportLegadoReplaceRulesAsync);
+            _toolbar.LegadoShowReplaceRulesRequested += (_, _) => RunAsync(_handlers.ShowLegadoReplaceRulesAsync);
+            _toolbar.LegadoImportTitleRulesRequested += (_, _) => RunAsync(_handlers.ImportLegadoTitleRulesAsync);
+            _toolbar.LegadoShowTitleRulesRequested += (_, _) => RunAsync(_handlers.ShowLegadoTitleRulesAsync);
+            _toolbar.LegadoPurifyEnabledChanged += (_, enabled) =>
+                RunAsync(() => _handlers.SetLegadoPurifyEnabledAsync(enabled));
             _toolbar.ToolbarCustomizationChanged += (_, _) => _handlers.SaveToolbarCustomization();
             _toolbar.LanguageSelected += (_, language) => RunAsync(() => _handlers.ApplyLanguageAsync(language));
             _toolbar.MatchControlDirectionChanged += (_, isChecked) => _handlers.SetMatchControlDirection(isChecked);

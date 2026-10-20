@@ -722,6 +722,15 @@
   <data name="TextHorizontalTwoColumnsHint" xml:space="preserve"><value>Applies to Aozora and EPUB text. Horizontal reading uses two columns when the window width is at least 1.2 times its height.</value></data>
   <data name="LegadoManageSources" xml:space="preserve"><value>Manage book sources</value></data>
   <data name="LegadoImportSources" xml:space="preserve"><value>Import book sources JSON…</value></data>
+  <data name="LegadoManageSourcesHint" xml:space="preserve"><value>Book sources, purification rules and title rules in one place</value></data>
+  <data name="LegadoImportReplaceRules" xml:space="preserve"><value>Import purification rules JSON…</value></data>
+  <data name="LegadoShowReplaceRules" xml:space="preserve"><value>View / toggle purification rules</value></data>
+  <data name="LegadoShowReplaceRulesHint" xml:space="preserve"><value>Enable rules one by one; changes apply to text immediately</value></data>
+  <data name="LegadoImportTitleRules" xml:space="preserve"><value>Import title / chapter rules JSON…</value></data>
+  <data name="LegadoShowTitleRules" xml:space="preserve"><value>View / toggle title rules</value></data>
+  <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>Controls TXT chapter splitting and TOC generation</value></data>
+  <data name="LegadoPurifyEnabled" xml:space="preserve"><value>Text purification (master switch)</value></data>
+  <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>Master switch: when off, all purification rules are paused; per-rule settings are kept</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>Search books</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>Search books by title/author across enabled sources</value></data>
 </root>

@@ -25,6 +25,9 @@ namespace Uviewer.Services.Legado
             _service = service ?? throw new ArgumentNullException(nameof(service));
         }
 
+        /// <summary>底层书源服务（对话框据此构造下载服务）。</summary>
+        public BookSourceService Service => _service;
+
         /// <summary>书源分组（一个书源一组，组内是该源命中的书）。</summary>
         public sealed record SearchGroup(
             string SourceName,
@@ -44,13 +47,17 @@ namespace Uviewer.Services.Legado
         /// <para><paramref name="progress"/> 回报「已完成/总数」，UI 显示为 "X/X"。
         /// 多源搜索常在数十秒量级（数百源 / 16 并发 / 单源 15s 超时），没有进度
         /// 用户无法区分"正在搜"与"卡死"——这正是本功能第一版被反馈"一直搜索中"的原因之一。</para>
-        /// <para>结果<b>边搜边出</b>（Channel 流），不等全部搜完才刷列表：
-        /// 长尾源动辄十几秒，先出来的命中能立刻点开读。</para>
+        /// <para>结果<b>边搜边出</b>：<paramref name="onGroup"/> 每命中一个书源立即回调一次
+        /// （工作线程，UI 需自行切回 UI 线程），不等全部搜完才刷列表。
+        /// <b>这是"搜索永远 0 命中"的根因修复</b>：实测 204 源全量搜索需 ~78s，
+        /// 若等 SearchAsync 返回再一次性渲染，用户看到的就是"搜了 78 秒 0 条结果"。
+        /// 首个命中通常在 250ms 内出现，流式渲染能让结果立刻可见。</para>
         /// </summary>
         public async Task<IReadOnlyList<SearchGroup>> SearchAsync(
             string keyword,
             int? maxConcurrency = null,
             IProgress<SearchProgress>? progress = null,
+            Action<SearchGroup>? onGroup = null,
             CancellationToken token = default)
         {
             var sources = _service.GetSearchableSources();
@@ -110,6 +117,16 @@ namespace Uviewer.Services.Legado
             await foreach (var group in channel.Reader.ReadAllAsync(token).ConfigureAwait(false))
             {
                 groups.Add(group);
+
+                // 单个回调异常不能带崩整次搜索（回调是 UI 代码）
+                try
+                {
+                    onGroup?.Invoke(group);
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Legado onGroup callback failed: {ex.Message}");
+                }
             }
 
             return groups;

@@ -722,6 +722,15 @@
   <data name="TextHorizontalTwoColumnsHint" xml:space="preserve"><value>Áp dụng cho văn bản Aozora và EPUB. Đọc ngang hiển thị hai cột khi chiều rộng cửa sổ ít nhất bằng 1,2 lần chiều cao.</value></data>
   <data name="LegadoManageSources" xml:space="preserve"><value>Quản lý nguồn sách</value></data>
   <data name="LegadoImportSources" xml:space="preserve"><value>Nhập JSON nguồn sách…</value></data>
+  <data name="LegadoManageSourcesHint" xml:space="preserve"><value>Nguồn sách, quy tắc lọc và quy tắc tiêu đề tại một chỗ</value></data>
+  <data name="LegadoImportReplaceRules" xml:space="preserve"><value>Nhập quy tắc lọc JSON…</value></data>
+  <data name="LegadoShowReplaceRules" xml:space="preserve"><value>Xem / bật tắt quy tắc lọc</value></data>
+  <data name="LegadoShowReplaceRulesHint" xml:space="preserve"><value>Bật từng quy tắc; lưu là áp dụng ngay cho nội dung</value></data>
+  <data name="LegadoImportTitleRules" xml:space="preserve"><value>Nhập quy tắc tiêu đề / chương JSON…</value></data>
+  <data name="LegadoShowTitleRules" xml:space="preserve"><value>Xem / bật tắt quy tắc tiêu đề</value></data>
+  <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>Điều khiển việc tách chương và tạo mục lục cho TXT</value></data>
+  <data name="LegadoPurifyEnabled" xml:space="preserve"><value>Lọc văn bản (công tắc tổng)</value></data>
+  <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>Công tắc tổng: tắt sẽ tạm dừng mọi quy tắc lọc; cấu hình từng quy tắc được giữ nguyên</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>Tìm sách</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>Tìm sách theo tên/tác giả trong các nguồn đã bật</value></data>
 </root>

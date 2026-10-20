@@ -29,6 +29,8 @@
     <!-- 链接宿主的纯逻辑实现（不复制代码，保证测的就是集成层真实代码） -->
     <Compile Include="..\Uviewer\Services\Legado\LegadoHtmlText.cs" Link="Host\LegadoHtmlText.cs" />
     <Compile Include="..\Uviewer\Services\Legado\LegadoTocAdapter.cs" Link="Host\LegadoTocAdapter.cs" />
+    <!-- 分章/目录生成：TextTocBuilder（纯逻辑，不依赖 WinUI，可直接链接） -->
+    <Compile Include="..\Uviewer\Services\Legado\TextTocBuilder.cs" Link="Host\TextTocBuilder.cs" />
   </ItemGroup>
 
   <ItemGroup>

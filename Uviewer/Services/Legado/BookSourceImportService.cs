@@ -46,42 +46,15 @@ namespace Uviewer.Services.Legado
         /// </summary>
         public async Task<ImportResult?> PickAndImportAsync(CancellationToken token = default)
         {
-            var picker = new FileOpenPicker
+            // 统一走 JsonPicker：句柄来源、绑定、错误提示只有一份定义，
+            // 避免各处自写一份慢慢漂移（曾因取错句柄类型导致 picker 报无效句柄）。
+            var path = await JsonPicker.PickAsync(_windowHandleProvider, _notify).ConfigureAwait(true);
+            if (path is null)
             {
-                ViewMode = PickerViewMode.List,
-                SuggestedStartLocation = PickerLocationId.Downloads,
-            };
-
-            try
-            {
-                WinRT.Interop.InitializeWithWindow.Initialize(picker, _windowHandleProvider());
-            }
-            catch
-            {
-                // 拿不到窗口句柄时 picker 可能无法弹出；不致命，继续尝试
+                return null;   // 用户取消 / 选择器不可用（原因已提示）
             }
 
-            picker.FileTypeFilter.Add(".json");
-
-            var file = await picker.PickSingleFileAsync();
-            if (file is null)
-            {
-                return null;   // 用户取消
-            }
-
-            // WinRT StorageFile → 本地路径（库侧按流式文件读取，需要真实路径）
-            string path;
-            try
-            {
-                path = file.Path;
-            }
-            catch
-            {
-                _notify("无法读取所选文件的路径", "\uE783", "Red");
-                return null;
-            }
-
-            return await ImportFileAsync(path, token);
+            return await ImportFileAsync(path, token).ConfigureAwait(false);
         }
 
         /// <summary>

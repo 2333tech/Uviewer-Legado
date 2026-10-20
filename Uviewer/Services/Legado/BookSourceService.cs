@@ -34,9 +34,21 @@ namespace Uviewer.Services.Legado
     {
         private readonly BookSourceManager _sources;
         private readonly ReplaceRuleManager _replaceRules;
+        private readonly TitleRuleManager _titleRules;
         private readonly ContentPurifier _purifier = new();
         private readonly BookSourceReadingStore _readingStore;
         private readonly BookSourceEngine _engine;
+
+        /// <summary>
+        /// 替换净化总开关（用户级，持久化到 <c>legadoSettings.json</c>）。
+        /// <para><b>与逐条规则开关的关系</b>：总开关关掉 = 整条净化管线空转
+        /// （等价于"没有任何规则生效"），但<b>不改动</b>各条规则的 <c>IsEnabled</c>。
+        /// 这样"临时全局暂停"不会破坏用户逐条的配置，重新打开总开关即刻恢复。</para>
+        /// </summary>
+        private volatile bool _purifyEnabled = true;
+
+        /// <summary>总开关等 Legado 侧设置的落盘路径。</summary>
+        private readonly string _settingsPath;
         private readonly SearchService _search;
 
         // 初始化任务缓存：幂等 + 并发去重（多个调用者 await 同一个 Task）
@@ -53,7 +65,9 @@ namespace Uviewer.Services.Legado
 
             _sources = new BookSourceManager(Path.Combine(dir, "booksources.json"));
             _replaceRules = new ReplaceRuleManager(Path.Combine(dir, "replaceRules.json"));
+            _titleRules = new TitleRuleManager(Path.Combine(dir, "titleRules.json"));
             _readingStore = new BookSourceReadingStore(Path.Combine(dir, "readingProgress.json"));
+            _settingsPath = Path.Combine(dir, "legadoSettings.json");
 
             // 引擎在构造时就绑定净化器实例：净化器的规则列表可在加载后整体替换
             //（ContentPurifier 内部按引用比较失效编译快照），无需重建引擎。
@@ -69,6 +83,9 @@ namespace Uviewer.Services.Legado
 
         /// <summary>替换规则存储（阶段 3）。</summary>
         public ReplaceRuleManager ReplaceRules => _replaceRules;
+
+        /// <summary>标题 / 章节划分规则存储（TXT 分章与目录）。</summary>
+        public TitleRuleManager TitleRules => _titleRules;
 
         /// <summary>净化管线实例（已注入引擎）。</summary>
         public ContentPurifier Purifier => _purifier;
@@ -102,25 +119,172 @@ namespace Uviewer.Services.Legado
 
         private async Task InitializeCoreAsync(CancellationToken token)
         {
-            // 三个存储相互独立：并发加载（各读各的文件，无共享写），总耗时取最慢那个
+            // 四个存储相互独立：并发加载（各读各的文件，无共享写），总耗时取最慢那个
             await Task.WhenAll(
                 _sources.LoadAsync(token),
                 _replaceRules.LoadAsync(token),
+                _titleRules.LoadAsync(token),
                 _readingStore.LoadAsync(token)).ConfigureAwait(false);
+
+            // 首次启动且用户从未导入过分章规则时写入内置默认规则。
+            // 否则 TXT 目录功能对"什么都没配过的用户"完全不可用——而这恰恰是最常见状态。
+            await EnsureDefaultTitleRulesAsync().ConfigureAwait(false);
+
+            // 读回总开关等 Legado 侧设置（在 ApplyReplaceRules 之前，保证首次 Apply 就带上正确状态）
+            LoadSettings();
 
             // 净化器接管规则快照：此后 ReplaceRules 的变更由调用方显式 ApplyReplaceRules 同步
             ApplyReplaceRules();
             IsInitialized = true;
         }
 
+        // ============================================================
+        // 替换净化总开关
+        // ============================================================
+
         /// <summary>
-        /// 把替换规则存储的当前内容灌入净化器（整体替换 → 净化器按引用比较重建编译快照）。
-        /// 在导入/删除替换规则后调用；重复调用是幂等的（内容相同则引用不同也会重建一次，
-        /// 代价仅一次 O(规则数) 编译）。
+        /// 替换净化总开关是否开启（默认开）。
+        /// <para>关掉后整条净化管线空转（等价于"没有任何规则生效"），
+        /// 但各条规则自身的 <c>IsEnabled</c> 不受影响——随时可以恢复。</para>
         /// </summary>
-        public void ApplyReplaceRules() => _purifier.Rules = _replaceRules.GetAll();
+        public bool PurifyEnabled => _purifyEnabled;
+
+        /// <summary>切换替换净化总开关并落盘。返回切换后的新状态。</summary>
+        public async Task<bool> SetPurifyEnabledAsync(bool enabled, CancellationToken token = default)
+        {
+            if (_purifyEnabled == enabled)
+            {
+                return _purifyEnabled;
+            }
+
+            _purifyEnabled = enabled;
+
+            // 立即让净化器生效：开 → 灌入规则快照；关 → 置空（管线空转）
+            ApplyReplaceRules();
+
+            await SaveSettingsAsync(token).ConfigureAwait(false);
+            return _purifyEnabled;
+        }
 
 /// <summary>
+        /// 把规则快照灌进净化器。
+        /// <para>总开关关闭时<b>置空</b>（而不是仍然灌入）——净化器据此整段跳过，
+        /// 这是"总开关"能做到"零开销"的关键。</para>
+        /// </summary>
+        public void ApplyReplaceRules() =>
+            _purifier.Rules = _purifyEnabled ? _replaceRules.GetAll() : null;
+
+        /// <summary>
+        /// <b>读取 → 渲染之间</b>的统一净化入口（受一级菜单"替换净化（总开关）"控制）。
+        ///
+        /// <para><b>这是全应用唯一的正文净化时机</b>：
+        /// 抓取阶段（<c>BookSourceEngine.GetContentAsync</c> /
+        /// <c>GetContentsIndexedAsync</c>）一律<b>只返回原文</b>，不做任何净化；
+        /// 无论文本来自书源网络还是本地文件，都由本方法在送去渲染之前净化一次。</para>
+        ///
+        /// <para>这样设计的三个直接后果：
+        /// <list type="bullet">
+        /// <item><b>总开关真正可逆</b>：源头永远是原文，开关切换只是"净化 or 不净化"，
+        /// 不需要重新抓取网络；</item>
+        /// <item><b>零开销</b>：总开关关闭时 <c>Purifier.Rules</c> 为 null，
+        /// <c>Apply</c> 走快路径原样返回；</item>
+        /// <item><b>时机一致</b>：不会出现"抓取时净化了一份、渲染时又用另一份"的错位。</item>
+        /// </list></para>
+        /// </summary>
+        /// <param name="text">待净化的正文（可以是 HTML 或纯文本）。</param>
+        /// <param name="bookName">书名（<c>name;</c> 作用域用）。</param>
+        /// <param name="bookUrl">书籍 URL（<c>book;</c> 作用域用）。</param>
+        /// <param name="sourceUrl">书源 URL（<c>source;</c> 作用域用）。</param>
+  public string PurifyForDisplay(string text, string? bookName = null, string? bookUrl = null, string? sourceUrl = null)
+        {
+            if (string.IsNullOrEmpty(text))
+    {
+      return text;
+            }
+
+      var ctx = new PurifyContext(bookName, bookUrl, sourceUrl, null);
+  return _purifier.Apply(text, in ctx);
+        }
+
+        // ============================================================
+        // Legado 侧设置持久化（目前只有替换净化总开关）
+        // ============================================================
+
+        /// <summary>读回 Legado 侧设置。文件不存在 = 用默认值（总开关开）。</summary>
+        private void LoadSettings()
+        {
+            try
+            {
+                if (!File.Exists(_settingsPath))
+                {
+                    _purifyEnabled = true;
+                    return;
+                }
+
+                var json = File.ReadAllText(_settingsPath);
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("purifyEnabled", out var v) &&
+                    v.ValueKind == System.Text.Json.JsonValueKind.True)
+                {
+                    _purifyEnabled = true;
+                }
+                else if (doc.RootElement.TryGetProperty("purifyEnabled", out var v2) &&
+                         v2.ValueKind == System.Text.Json.JsonValueKind.False)
+                {
+                    _purifyEnabled = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                // 设置文件损坏：回落到默认值，不阻断启动
+                System.Diagnostics.Debug.WriteLine($"Load legado settings failed: {ex.Message}");
+                _purifyEnabled = true;
+            }
+        }
+
+        /// <summary>落盘 Legado 侧设置（原子替换：tmp + File.Move）。</summary>
+        private async Task SaveSettingsAsync(CancellationToken token = default)
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(_settingsPath);
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+
+                var temp = _settingsPath + ".tmp";
+                var json = $"{{\r\n  \"purifyEnabled\": {(_purifyEnabled ? "true" : "false")}\r\n}}";
+                await File.WriteAllTextAsync(temp, json, token).ConfigureAwait(false);
+                File.Move(temp, _settingsPath, overwrite: true);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Save legado settings failed: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 首次运行时灌入内置分章规则（仅当用户规则为空）。
+        /// <para><b>不覆盖用户数据</b>：只要用户导入过自己的规则（含全部停用），
+        /// 一律不再写入——否则用户删掉的默认规则会在下次启动时复活。</para>
+        /// </summary>
+        private async Task EnsureDefaultTitleRulesAsync()
+        {
+            if (_titleRules.Count > 0)
+            {
+                return;
+            }
+
+            foreach (var rule in TxtChapterSplitter.CreateDefaultRules())
+            {
+                _titleRules.Upsert(rule);
+            }
+
+            await _titleRules.SaveAsync().ConfigureAwait(false);
+        }
+
+        /// <summary>
     /// 并发搜索全部启用书源（阶段 1）。<paramref name="maxConcurrency"/> 为 null 时用
     /// <see cref="BookSourceLimits.DefaultConcurrency"/>（16）。
     /// <para>前置过滤：跳过需要阶段 4 能力（java.*/WebView）的书源——它们搜索必然拿到
