@@ -35,6 +35,8 @@ namespace Uviewer.Controls
         public event EventHandler? LegadoShowTitleRulesRequested;
         /// <summary>替换净化总开关被切换（参数 = 新状态）。</summary>
         public event EventHandler<bool>? LegadoPurifyEnabledChanged;
+        /// <summary>章节缓存菜单项被点击（保存 / 删除当前文件的目录+章节缓存；切换后状态由 SetTextCacheState 回写）。</summary>
+        public event EventHandler? TextCacheToggled;
         public event EventHandler<string>? LanguageSelected;
         public event EventHandler<bool>? MatchControlDirectionChanged;
         public event EventHandler<bool>? FastNavigationChanged;
@@ -147,6 +149,7 @@ namespace Uviewer.Controls
             LegadoShowTitleRulesMenuItem.Click += (_, _) => LegadoShowTitleRulesRequested?.Invoke(this, EventArgs.Empty);
             LegadoPurifyEnabledMenuItem.Click += (_, _) =>
                 LegadoPurifyEnabledChanged?.Invoke(this, LegadoPurifyEnabledMenuItem.IsChecked);
+            TextCacheMenuItem.Click += (_, _) => TextCacheToggled?.Invoke(this, EventArgs.Empty);
             LangAutoItem.Click += LanguageItem_Click;
             LangKoItem.Click += LanguageItem_Click;
             LangEnItem.Click += LanguageItem_Click;
@@ -314,6 +317,8 @@ namespace Uviewer.Controls
             LegadoShowTitleRulesMenuItem.Text = Strings.LegadoShowTitleRules;
             LegadoPurifyEnabledMenuItem.Text = Strings.LegadoPurifyEnabled;
             ToolTipService.SetToolTip(LegadoPurifyEnabledMenuItem, Strings.LegadoPurifyEnabledHint);
+            TextCacheMenuItem.Text = Strings.TextCache;
+            ToolTipService.SetToolTip(TextCacheMenuItem, Strings.TextCacheHint);
             ToolTipService.SetToolTip(LegadoSearchMenuItem, Strings.LegadoSearchHint);
             ToolTipService.SetToolTip(LegadoRootMenuItem, Strings.LegadoManageSourcesHint);
             ToolTipService.SetToolTip(LegadoShowReplaceRulesMenuItem, Strings.LegadoShowReplaceRulesHint);
@@ -398,6 +403,16 @@ namespace Uviewer.Controls
 
         /// <summary>回写替换净化总开关的勾选状态（从设置读回后同步）。</summary>
         public void SetLegadoPurifyEnabled(bool value) => LegadoPurifyEnabledMenuItem.IsChecked = value;
+
+        /// <summary>
+        /// 回写章节缓存菜单项状态：勾选 = 当前文件有有效缓存；可用 = 正打开着文本源。
+        /// 点击语义由控制器决定（有缓存 → 删；无 → 保存），勾选只是状态镜像。
+        /// </summary>
+        public void SetTextCacheState(bool isChecked, bool isEnabled)
+        {
+            TextCacheMenuItem.IsChecked = isChecked;
+            TextCacheMenuItem.IsEnabled = isEnabled;
+        }
         public void SetAllowMultipleInstances(bool value)
         {
             AllowMultipleInstancesMenuItem.IsChecked = value;

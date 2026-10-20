@@ -483,9 +483,12 @@ namespace Uviewer
         {
             _ = CompleteAozoraParsingAsync(rawContent, isMarkdown, fontSize, parseGeneration, token);
         }
-        else
+        else if (!TextCacheActive)
         {
-            _tocService.SetProvider(new TextTocProvider(_currentTextContent, _aozoraBlocks));
+            // ⚠ 必须带标题规则：青空模式只是排版，普通小说块里没有标题，
+            // 只传块会把刚由 DisplayLoadedText 装好的"规则目录"换成空目录（无目录 bug）。
+            // 章节窗口模式除外：那儿的目录来自缓存，由 ShowTextCacheWindowAsync 安装。
+            _tocService.SetProvider(new TextTocProvider(_currentTextContent, _aozoraBlocks, GetEnabledTitleRules()));
             _ = _tocService.LoadTocAsync(token);
             StartAozoraPageCalculationAsync();
         }
@@ -602,8 +605,12 @@ namespace Uviewer
 
                         if (!preview.IsPartial)
                         {
-                            _tocService.SetProvider(new TextTocProvider(_currentTextContent, _aozoraBlocks));
-                            _ = _tocService.LoadTocAsync(token);
+                            if (!TextCacheActive)
+                            {
+                                _tocService.SetProvider(new TextTocProvider(_currentTextContent, _aozoraBlocks, GetEnabledTitleRules()));
+                                _ = _tocService.LoadTocAsync(token);
+                            }
+
                             StartAozoraPageCalculationAsync();
                         }
 
@@ -1187,8 +1194,11 @@ namespace Uviewer
             }
             else if (!preview.IsPartial)
             {
-                _tocService.SetProvider(new TextTocProvider(_currentTextContent, _aozoraBlocks));
-                _ = _tocService.LoadTocAsync(token);
+                if (!TextCacheActive)
+                {
+                    _tocService.SetProvider(new TextTocProvider(_currentTextContent, _aozoraBlocks, GetEnabledTitleRules()));
+                    _ = _tocService.LoadTocAsync(token);
+                }
             }
 
             return remappedCurrentStart;
@@ -1342,6 +1352,20 @@ namespace Uviewer
                         }
                     }
                 }
+                else if (IsLegadoMode)
+                {
+                    // 书源目录：SourceLineNumber 存的是"章节下标"而不是行号（阶段 5 约定），
+                    // 不能放进下面的行号比较。按当前章下标直接定位；
+                    // 卷标题的下标是 -1（不可跳章），自然不会命中。
+                    for (int i = 0; i < items.Count; i++)
+                    {
+                        if (items[i].SourceLineNumber >= 0 && items[i].SourceLineNumber == _legadoChapterIndex)
+                        {
+                            currentIndex = i;
+                            break;
+                        }
+                    }
+                }
                 else
                 {
                     // Text / Aozora Mode
@@ -1413,6 +1437,12 @@ namespace Uviewer
                 // 书源目录优先：SourceLineNumber 在书源目录里是"章节下标"而非行号，
                 // 必须先于按行跳转的分支处理（阶段 5 集成）。
                 if (TryHandleLegadoTocClick(item))
+                {
+                    return;
+                }
+
+                // 章节缓存（窗口模式）目录：Tag 是章下标；窗口外点击 ⇒ 重开窗口
+                if (TryHandleTextCacheTocClick(item))
                 {
                     return;
                 }

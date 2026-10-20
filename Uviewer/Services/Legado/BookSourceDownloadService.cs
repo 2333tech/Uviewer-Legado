@@ -211,9 +211,17 @@ namespace Uviewer.Services.Legado
         /// </summary>
         private static string BuildChapter(string? chapterName, string body, int ordinal)
         {
+            // 章名必须"单独成行、写在每章最前面"——这是离线 txt 的唯一分章依据
+            // （用户导入的标题规则按行匹配）。顺手去空白 + 解实体：
+            // 书源的章名偶带 &nbsp; / 首尾空格，原样写进文件会让标题规则匹配不上。
             var name = string.IsNullOrWhiteSpace(chapterName)
                 ? $"第 {ordinal.ToString(CultureInfo.InvariantCulture)} 章"
-                : chapterName!;
+                : System.Net.WebUtility.HtmlDecode(chapterName!).Trim();
+
+            if (name.Length == 0)
+            {
+                name = $"第 {ordinal.ToString(CultureInfo.InvariantCulture)} 章";
+            }
 
             return Environment.NewLine + name + Environment.NewLine +
                    new string('-', 32) + Environment.NewLine + Environment.NewLine +

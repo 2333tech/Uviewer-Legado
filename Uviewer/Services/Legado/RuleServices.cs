@@ -20,7 +20,8 @@ namespace Uviewer.Services.Legado
     /// 净化功能等于没有入口。这里补上与书源导入同构的 FileOpenPicker + 流式导入。</para>
     ///
     /// <para><b>开关语义</b>：逐条 <c>IsEnabled</c>，勾选即落盘并刷新净化器快照。
-    /// 刻意不提供"全局总开关"——见 <see cref="RuleListDialog"/> 的说明。</para>
+    /// 刻意不提供"全局总开关"——逐条开关的语义单一，整体停用逐条取消即可
+    /// （界面见 <see cref="RuleManagerDialog{T}"/>）。</para>
     /// </summary>
     public sealed class ReplaceRuleService
     {
@@ -41,25 +42,51 @@ namespace Uviewer.Services.Legado
             _notify = notify ?? throw new ArgumentNullException(nameof(notify));
         }
 
-        /// <summary>规则清单（供 RuleListDialog 罗列）。</summary>
+        /// <summary>规则清单（供 RuleManagerDialog 罗列）。</summary>
         public IReadOnlyList<RuleListItem> List() => _service.ReplaceRules.GetAll()
             .Select(r => new RuleListItem(
                 r.Id,
-                string.IsNullOrWhiteSpace(r.Name) ? "(未命名规则)" : r.Name,
-                BuildDetail(r),
+                NameOf(r),
+                DetailOf(r),
                 r.IsEnabled))
             .ToList();
 
-        /// <summary>副标题：分组 / 作用范围 / 正则类型 / 匹配串摘要。</summary>
-        private static string BuildDetail(ReplaceRule rule)
-        {
-            var kind = rule.IsRegex ? "正则" : "文本";
-            var scope = string.IsNullOrWhiteSpace(rule.Scope) || rule.Scope == "*" ? "全部书籍" : rule.Scope;
-            var group = string.IsNullOrWhiteSpace(rule.Group) ? null : $"[{rule.Group}]";
-            var pattern = rule.Pattern.Length > 40 ? rule.Pattern[..40] + "…" : rule.Pattern;
+        /// <summary>列表/表单共用的规则名（空名兜底为"(未命名规则)"）。</summary>
+        public static string NameOf(ReplaceRule rule) => RuleEditSpec.ReplaceRuleName(rule);
 
-            return string.Join("　", new[] { group, $"{kind}：{pattern}", scope }
-                .Where(s => !string.IsNullOrEmpty(s)));
+        /// <summary>副标题：分组 / 作用范围 / 正则类型 / 匹配串摘要。</summary>
+        public static string DetailOf(ReplaceRule rule) => RuleEditSpec.ReplaceRuleDetail(rule);
+
+        // ============================================================
+        // 规则管理（RuleManagerDialog 主从编辑界面）所需的读写操作
+        // ============================================================
+
+        /// <summary>深拷贝（进编辑时用：表单改副本，不污染正在净化的内存实例）。</summary>
+        public static ReplaceRule Clone(ReplaceRule rule) => RuleEditSpec.Clone(rule);
+
+        /// <summary>保存前校验（空匹配串 / 非法正则在此拦住，不给用户"存了却不生效"的谜）。</summary>
+        public static string? Validate(ReplaceRule rule) => RuleEditSpec.Validate(rule);
+
+        /// <summary>新建一条带默认值的净化规则（Id=0，保存时由存储层分配）。</summary>
+        public ReplaceRule CreateNew() => RuleEditSpec.NewReplaceRule(_service.ReplaceRules.Count);
+
+        /// <summary>按 Id 取存储中的规则（选中列表项时定位）。</summary>
+        public ReplaceRule? GetById(long id) => _service.ReplaceRules.GetById(id);
+
+        /// <summary>保存（新建或覆盖）：入库 + 落盘 + 刷新净化器快照。</summary>
+        public async Task SaveAsync(ReplaceRule rule)
+        {
+            _service.ReplaceRules.Upsert(rule);
+            await _service.ReplaceRules.SaveAsync().ConfigureAwait(true);
+            ApplyRules();
+        }
+
+        /// <summary>删除：移除 + 落盘 + 刷新净化器快照。</summary>
+        public async Task DeleteAsync(long id)
+        {
+            _service.ReplaceRules.Remove(id);
+            await _service.ReplaceRules.SaveAsync().ConfigureAwait(true);
+            ApplyRules();
         }
 
         /// <summary>切换单条规则的启用状态（落盘 + 刷新净化器）。</summary>
@@ -161,23 +188,51 @@ namespace Uviewer.Services.Legado
             _refreshToc = refreshToc;
         }
 
-        /// <summary>规则清单（供 RuleListDialog 罗列）。</summary>
+        /// <summary>规则清单（供 RuleManagerDialog 罗列）。</summary>
         public IReadOnlyList<RuleListItem> List() => _service.TitleRules.GetAll()
             .Select(r => new RuleListItem(
                 r.Id,
-                string.IsNullOrWhiteSpace(r.Name) ? "(未命名规则)" : r.Name,
-                BuildDetail(r),
+                NameOf(r),
+                DetailOf(r),
                 r.IsEnabled))
             .ToList();
 
-        private static string BuildDetail(TitleRule rule)
-        {
-            var kind = rule.IsBookTitle ? "书名行" : rule.IsVolume ? "卷标题" : $"层级 {rule.Level}";
-            var pattern = rule.Pattern.Length > 40 ? rule.Pattern[..40] + "…" : rule.Pattern;
-            var group = string.IsNullOrWhiteSpace(rule.Group) ? null : $"[{rule.Group}]";
+        /// <summary>列表/表单共用的规则名（空名兜底为"(未命名规则)"）。</summary>
+        public static string NameOf(TitleRule rule) => RuleEditSpec.TitleRuleName(rule);
 
-            return string.Join("　", new[] { group, kind, pattern }
-                .Where(s => !string.IsNullOrEmpty(s)));
+        /// <summary>副标题：分组 / 规则种类 / 匹配串摘要。</summary>
+        public static string DetailOf(TitleRule rule) => RuleEditSpec.TitleRuleDetail(rule);
+
+        // ============================================================
+        // 规则管理（RuleManagerDialog 主从编辑界面）所需的读写操作
+        // ============================================================
+
+        /// <summary>深拷贝（进编辑时用：表单改副本，不污染正在切分的内存实例）。</summary>
+        public static TitleRule Clone(TitleRule rule) => RuleEditSpec.Clone(rule);
+
+        /// <summary>保存前校验（空正则且非书名行 / 非法正则会在此拦住）。</summary>
+        public static string? Validate(TitleRule rule) => RuleEditSpec.Validate(rule);
+
+        /// <summary>新建一条带默认值的标题规则（预填常见中文写法正则，Id=0）。</summary>
+        public TitleRule CreateNew() => RuleEditSpec.NewTitleRule(_service.TitleRules.Count);
+
+        /// <summary>按 Id 取存储中的规则（选中列表项时定位）。</summary>
+        public TitleRule? GetById(long id) => _service.TitleRules.GetById(id);
+
+        /// <summary>保存（新建或覆盖）：入库 + 落盘 + 刷新 TXT 目录。</summary>
+        public async Task SaveAsync(TitleRule rule)
+        {
+            _service.TitleRules.Upsert(rule);
+            await _service.TitleRules.SaveAsync().ConfigureAwait(true);
+            await RefreshTocAsync().ConfigureAwait(true);
+        }
+
+        /// <summary>删除：移除 + 落盘 + 刷新 TXT 目录。</summary>
+        public async Task DeleteAsync(long id)
+        {
+            _service.TitleRules.Remove(id);
+            await _service.TitleRules.SaveAsync().ConfigureAwait(true);
+            await RefreshTocAsync().ConfigureAwait(true);
         }
 
         /// <summary>切换单条规则启用状态（落盘）。</summary>

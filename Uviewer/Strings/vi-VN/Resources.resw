@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
@@ -731,6 +731,8 @@
   <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>Điều khiển việc tách chương và tạo mục lục cho TXT</value></data>
   <data name="LegadoPurifyEnabled" xml:space="preserve"><value>Lọc văn bản (công tắc tổng)</value></data>
   <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>Công tắc tổng: tắt sẽ tạm dừng mọi quy tắc lọc; cấu hình từng quy tắc được giữ nguyên</value></data>
+  <data name="TextCache" xml:space="preserve"><value>Bộ nhớ chương</value></data>
+  <data name="TextCacheHint" xml:space="preserve"><value>Lưu mục lục và phân chia chương đầy đủ của tệp này; các lần mở sau chỉ thanh lọc các chương quanh vị trí đọc. Bấm lại để xóa</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>Tìm sách</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>Tìm sách theo tên/tác giả trong các nguồn đã bật</value></data>
 </root>

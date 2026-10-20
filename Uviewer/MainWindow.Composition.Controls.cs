@@ -31,6 +31,7 @@ namespace Uviewer
                             ImportLegadoTitleRulesAsync = () => window._documentReaderController.ImportTitleRulesAsync(),
                             ShowLegadoTitleRulesAsync = () => window._documentReaderController.ShowTitleRulesAsync(),
                             SetLegadoPurifyEnabledAsync = enabled => window._documentReaderController.SetPurifyEnabledAsync(enabled),
+                            ToggleTextCacheAsync = () => window._documentReaderController.ToggleTextCacheAsync(),
                             SaveToolbarCustomization = () => window._windowSettingsCoordinator.SaveWindowSettings(),
                             ApplyLanguageAsync = language => window._documentReaderController.ApplyLanguageSelectionAsync(language),
                             SetMatchControlDirection = isChecked =>

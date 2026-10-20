@@ -82,6 +82,14 @@ namespace Uviewer
                 return;
             }
 
+            // 章节窗口模式：标题规则变了 ⇒ 标题规则指纹变 ⇒ 缓存失效，
+            // 直接重载（重载会走整本路径，下次打开才按新规则建缓存）
+            if (TextCacheActive)
+            {
+                await ReloadCurrentTextAsync().ConfigureAwait(true);
+                return;
+            }
+
             _tocService.SetProvider(new TextTocProvider(_currentTextContent, null, GetEnabledTitleRules()));
             await _tocService.LoadTocAsync().ConfigureAwait(true);
         }
@@ -353,6 +361,13 @@ namespace Uviewer
                 .ToList();
 
             _tocService.SetProvider(new StaticTocProvider(_legadoTocItems));
+
+            // ⚠ 必须紧接着 LoadTocAsync：SetProvider 只换 provider 并清空 CurrentToc，
+            // 不加载的话 CurrentToc 恒为空 —— 顶栏目录按钮（TocButton_Click）读的正是
+            // CurrentToc，空列表会被替换成"无目录"占位，表现为"目录装好了但下拉里没有"。
+            // StaticTocProvider 是内存快照，GetTocAsync 立即完成，没有额外开销。
+            _ = _tocService.LoadTocAsync();
+
             MainToolbar.SetTextTocItems(_legadoTocItems);
         }
 
@@ -423,19 +438,39 @@ namespace Uviewer
             await rules.PickAndImportAsync().ConfigureAwait(true);
         }
 
-        /// <summary>查看已导入的净化规则并逐条开关。</summary>
+        /// <summary>查看并逐条编辑已导入的净化规则（主从界面，与书源管理同构）。</summary>
         internal async Task ShowReplaceRulesAsync()
         {
             var service = BookSources;
             await service.EnsureInitializedAsync().ConfigureAwait(true);
 
             var rules = new ReplaceRuleService(service, RootGrid, GetWindowHandle, NotifyFromRuleService);
-            var dialog = new RuleListDialog(
+            var dialog = new RuleManagerDialog<BookSource.Core.Models.ReplaceRule>(
                 RootGrid,
-                "替换净化规则（勾选即生效）",
-                rules.List,
-                rules.SetEnabledAsync,
-                "尚未导入任何净化规则。\n请先用「导入净化规则 JSON…」从 legado / reader 导出的规则文件导入。");
+                new RuleManagerConfig<BookSource.Core.Models.ReplaceRule>
+                {
+                    DialogTitle = "替换净化规则管理",
+                    ItemNoun = "净化规则",
+                    EmptyHint = "尚未导入任何净化规则。\n请先用「导入净化规则 JSON…」从 legado / reader 导出的规则文件导入。",
+                    ListItems = rules.List,
+                    NameOf = ReplaceRuleService.NameOf,
+                    DetailOf = ReplaceRuleService.DetailOf,
+                    IdOf = r => r.Id,
+                    GetById = rules.GetById,
+                    Clone = ReplaceRuleService.Clone,
+                    CreateNew = rules.CreateNew,
+                    Validate = ReplaceRuleService.Validate,
+                    SaveAsync = rules.SaveAsync,
+                    DeleteAsync = rules.DeleteAsync,
+                    SetEnabledAsync = rules.SetEnabledAsync,
+                    OnImportRequested = async () =>
+                    {
+                        // 与书源管理里的"导入"一致：关掉对话框 → 导入 → 再开回来显示新条目
+                        await ImportReplaceRulesAsync().ConfigureAwait(true);
+                        await ShowReplaceRulesAsync().ConfigureAwait(true);
+                    },
+                    Notify = NotifyFromRuleService,
+                });
 
             await dialog.ShowAsync().ConfigureAwait(true);
         }
@@ -453,7 +488,7 @@ namespace Uviewer
             await rules.PickAndImportAsync().ConfigureAwait(true);
         }
 
-        /// <summary>查看已导入的标题 / 章节规则并逐条开关。</summary>
+        /// <summary>查看并逐条编辑已导入的标题 / 章节规则（主从界面，与书源管理同构）。</summary>
         internal async Task ShowTitleRulesAsync()
         {
             var service = BookSources;
@@ -463,12 +498,32 @@ namespace Uviewer
                 service, RootGrid, GetWindowHandle, NotifyFromRuleService,
                 () => RefreshTextTocFromTitleRulesAsync());
 
-            var dialog = new RuleListDialog(
+            var dialog = new RuleManagerDialog<BookSource.Core.Models.TitleRule>(
                 RootGrid,
-                "标题 / 章节划分规则（勾选即生效）",
-                rules.List,
-                rules.SetEnabledAsync,
-                "尚未导入任何标题规则。\n内置默认规则已覆盖“第一章 xxx / Chapter N / Markdown 标题”等常见写法；\n需要更多写法时用「导入标题规则 JSON…」补充。");
+                new RuleManagerConfig<BookSource.Core.Models.TitleRule>
+                {
+                    DialogTitle = "标题 / 章节划分规则管理",
+                    ItemNoun = "标题规则",
+                    EmptyHint = "尚未导入任何标题规则。\n内置默认规则已覆盖“第一章 xxx / Chapter N / Markdown 标题”等常见写法；\n需要更多写法时用「导入标题规则 JSON…」补充。",
+                    ListItems = rules.List,
+                    NameOf = TitleRuleService.NameOf,
+                    DetailOf = TitleRuleService.DetailOf,
+                    IdOf = r => r.Id,
+                    GetById = rules.GetById,
+                    Clone = TitleRuleService.Clone,
+                    CreateNew = rules.CreateNew,
+                    Validate = TitleRuleService.Validate,
+                    SaveAsync = rules.SaveAsync,
+                    DeleteAsync = rules.DeleteAsync,
+                    SetEnabledAsync = rules.SetEnabledAsync,
+                    OnImportRequested = async () =>
+                    {
+                        // 与书源管理里的"导入"一致：关掉对话框 → 导入 → 再开回来显示新条目
+                        await ImportTitleRulesAsync().ConfigureAwait(true);
+                        await ShowTitleRulesAsync().ConfigureAwait(true);
+                    },
+                    Notify = NotifyFromRuleService,
+                });
 
             await dialog.ShowAsync().ConfigureAwait(true);
         }

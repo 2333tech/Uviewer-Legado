@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
@@ -731,6 +731,8 @@
   <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>Controls TXT chapter splitting and TOC generation</value></data>
   <data name="LegadoPurifyEnabled" xml:space="preserve"><value>Text purification (master switch)</value></data>
   <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>Master switch: when off, all purification rules are paused; per-rule settings are kept</value></data>
+  <data name="TextCache" xml:space="preserve"><value>Chapter cache</value></data>
+  <data name="TextCacheHint" xml:space="preserve"><value>Saves the full TOC and chapter split for this file; later opens purify only the chapters around your reading position. Click again to delete</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>Search books</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>Search books by title/author across enabled sources</value></data>
 </root>

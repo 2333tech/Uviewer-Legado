@@ -156,6 +156,12 @@
                                     <FontIcon Glyph="&#xE890;"/>
                                 </ToggleMenuFlyoutItem.Icon>
                             </ToggleMenuFlyoutItem>
+                            <!-- 章节缓存：一级菜单项（点选保存/再点选删除当前文件的目录+章节缓存） -->
+                            <ToggleMenuFlyoutItem x:Name="TextCacheMenuItem" Text="{x:Bind app:Strings.TextCache}" IsChecked="False" IsEnabled="False">
+                                <ToggleMenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE777;"/>
+                                </ToggleMenuFlyoutItem.Icon>
+                            </ToggleMenuFlyoutItem>
                             <MenuFlyoutSeparator/>
                             <ToggleMenuFlyoutItem x:Name="FastNavigationMenuItem" Text="{x:Bind app:Strings.FastNavigation}" IsChecked="True">
                                 <ToggleMenuFlyoutItem.Icon>

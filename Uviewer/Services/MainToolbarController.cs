@@ -31,6 +31,8 @@ namespace Uviewer.Services
         public Func<Task> ShowLegadoTitleRulesAsync { get; init; } = null!;
         /// <summary>切换替换净化总开关（参数 = 新状态）。</summary>
         public Func<bool, Task> SetLegadoPurifyEnabledAsync { get; init; } = null!;
+        /// <summary>章节缓存菜单项：有缓存 → 删除；无 → 保存当前文件的目录+章节缓存。</summary>
+        public Func<Task> ToggleTextCacheAsync { get; init; } = null!;
         public Action SaveToolbarCustomization { get; init; } = null!;
         public Func<string, Task> ApplyLanguageAsync { get; init; } = null!;
         public Action<bool> SetMatchControlDirection { get; init; } = null!;
@@ -113,6 +115,7 @@ namespace Uviewer.Services
             _toolbar.LegadoShowTitleRulesRequested += (_, _) => RunAsync(_handlers.ShowLegadoTitleRulesAsync);
             _toolbar.LegadoPurifyEnabledChanged += (_, enabled) =>
                 RunAsync(() => _handlers.SetLegadoPurifyEnabledAsync(enabled));
+            _toolbar.TextCacheToggled += (_, _) => RunAsync(_handlers.ToggleTextCacheAsync);
             _toolbar.ToolbarCustomizationChanged += (_, _) => _handlers.SaveToolbarCustomization();
             _toolbar.LanguageSelected += (_, language) => RunAsync(() => _handlers.ApplyLanguageAsync(language));
             _toolbar.MatchControlDirectionChanged += (_, isChecked) => _handlers.SetMatchControlDirection(isChecked);

@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -12,6 +13,7 @@ using System.Threading.Tasks;
 using BookSource.Core.Services.BookSources;
 using Uviewer.Services;
 using Uviewer.Services.Legado;
+using CoreTocItem = BookSource.Core.Models.TocItem;
 
 namespace Uviewer.Services.Legado
 {
@@ -34,18 +36,19 @@ namespace Uviewer.Services.Legado
     public sealed class BookSourceSearchDialog
     {
         /// <summary>
-        /// 内容区期望宽度（px）。结果卡片要并排显示两行长文本（书名|作者、书源|最新章节）
-        /// 与右侧下载按钮，宽度不足会立刻触发省略号，反而看不清是哪本书。
-        /// <para>取 620 而非更小：书源名（如"趣悦小说（优++）"）+ 最新章节名
-        /// 本身就是长文本，压缩它们等于牺牲可用性。</para>
+        /// 内容区期望宽度（px）。结果卡片要并排显示两行长文本（书名|作者、书源 + 最新章节）
+        /// 与右侧按钮，宽度不足会立刻触发省略号，反而看不清是哪本书。
+        /// <para>取 680：书源名（如"趣悦小说（优++）"）+ 最新章节名本身就是长文本，
+        /// 压缩它们等于牺牲可用性。</para>
         /// </summary>
-        private const double ContentWidth = 620;
+        private const double ContentWidth = 680;
 
         /// <summary>
-        /// 结果滚动区期望高度（px）：约 6 张卡片，便于纵向扫读与比较。
-        /// 实际高度由 <see cref="LegadoDialogLayout"/> 按窗口高度收敛。
+        /// 结果滚动区期望高度（px）：约 18 张卡片（原 340px ≈ 6 张的 3 倍）。
+        /// <para>多源搜索一次常命中几十到几百本，6 张的可视区等于"搜完还得roll很多屏"。
+        /// 实际高度由 <see cref="LegadoDialogLayout"/> 按窗口高度收敛（小窗口下自动变矮）。</para>
         /// </summary>
-        private const double ContentHeight = 340;
+        private const double ContentHeight = 1020;
 
         private readonly FrameworkElement _rootElement;
         private readonly BookSourceSearchService _search;
@@ -120,6 +123,10 @@ namespace Uviewer.Services.Legado
             int completed = 0, totalSources = 0, hitCount = 0;
             var running = false;
 
+            // 相关性排序用的落位表：卡片按评分降序插入（同分保持"先到先得"，流式渲染不跳字）
+            var ranked = new List<(int Score, long Seq, UIElement Card)>();
+            long sequence = 0;
+
             var header = new Grid { ColumnSpacing = 8 };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -158,7 +165,8 @@ namespace Uviewer.Services.Legado
 
             // 结果卡片要放"书名 | 作者"+"书源名 | 最新章节名"两行长文本 + 右侧下载按钮，
             // 默认 548px 的对话框装不下。这里放宽窗口（不缩字号/不缩文本），并按窗口收敛。
-            LegadoDialogLayout.Fit(dialog, _rootElement, ContentWidth);
+            // 尺寸机制（资源键而非属性）见 LegadoDialogLayout 类注释。
+            LegadoDialogLayout.Fit(dialog, _rootElement, ContentWidth, ContentHeight);
             scroller.Height = LegadoDialogLayout.ScrollViewportHeight(_rootElement, ContentHeight);
 
             var downloads = new BookSourceDownloadService(service);
@@ -184,6 +192,8 @@ namespace Uviewer.Services.Legado
                 totalSources = 0;
                 hitCount = 0;
                 resultPanel.Children.Clear();
+                ranked.Clear();
+                sequence = 0;
                 progressBar.Visibility = Visibility.Visible;
                 progressBar.IsIndeterminate = true;
                 progressText.Text = string.Empty;
@@ -237,7 +247,11 @@ namespace Uviewer.Services.Legado
                             foreach (var hit in group.Hits)
                             {
                                 hitCount++;
-                                resultPanel.Children.Add(BuildResultCard(hit, downloads, palette, cts.Token));
+
+                                // 相关性降序插入：完全匹配的书名永远在最上面，
+                                // 而不是"哪个源先返回就排前面"
+                                var card = BuildResultCard(hit, downloads, palette, cts.Token);
+                                InsertByRelevance(resultPanel, ranked, hit, keyword, card, sequence++);
                             }
 
                             RefreshProgress();
@@ -335,31 +349,62 @@ namespace Uviewer.Services.Legado
                 HorizontalAlignment = HorizontalAlignment.Stretch,
             };
 
-            var secondary = new TextBlock
+            // 第二行拆成"书源名（纯文字）+ 最新章节（可点看目录）"两段。
+            // 落后一版把整行做成 IsHitTestVisible=false，点章节名会落到卡片的"打开书籍"上——
+            // 用户只想先看看目录，却被直接打开了正文（部分源正文取不到，更像是结果坏了）。
+            var sourceLabel = new TextBlock
             {
-                // 默认文案；拿到目录后会替换为"书源名 | 最新章节名"
-                Text = $"{hit.SourceName} | 正在获取最新章节…",
+                Text = hit.SourceName,
+                FontSize = 12,
+                Foreground = palette.TextSecondary,
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
+            };
+
+            var latestHolder = new LatestChapterHolder();
+            var latestLabel = new TextBlock
+            {
+                Text = "｜正在获取最新章节…",
                 FontSize = 12,
                 Foreground = palette.TextSecondary,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 MaxLines = 1,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-
-                // 第二行是纯信息：点它不该触发"打开书籍"。
-                //（早期版本整卡统一处理点击，落在章节名上时用户看到的是书籍被打开，
-                //  而部分源本就打不开 → 误以为是这条结果坏了。）
-                IsHitTestVisible = false,
+                VerticalAlignment = VerticalAlignment.Center,
             };
+            ToolTipService.SetToolTip(latestLabel, "点击查看该书目录");
+
+            // 悬停仅提亮文字（不用按钮样式：这是"信息 + 可点"，不是操作按钮）
+            latestLabel.PointerEntered += (s2, e2) => latestLabel.Foreground = palette.TextPrimary;
+            latestLabel.PointerExited += (s2, e2) => latestLabel.Foreground = palette.TextSecondary;
+            latestLabel.PointerPressed += (s2, e2) =>
+            {
+                if (!e2.GetCurrentPoint(latestLabel).Properties.IsLeftButtonPressed)
+                {
+                    return;
+                }
+
+                // 标记已处理：不再冒泡到卡片的"打开书籍"
+                e2.Handled = true;
+                ShowChapterListFlyout(latestLabel, latestHolder, hit, palette);
+            };
+
+            var secondaryRow = new Grid { ColumnSpacing = 0 };
+            secondaryRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            secondaryRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            Grid.SetColumn(sourceLabel, 0);
+            Grid.SetColumn(latestLabel, 1);
+            secondaryRow.Children.Add(sourceLabel);
+            secondaryRow.Children.Add(latestLabel);
 
             var textStack = new Grid { VerticalAlignment = VerticalAlignment.Center };
             textStack.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             textStack.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             Grid.SetRow(primary, 0);
-            Grid.SetRow(secondary, 1);
+            Grid.SetRow(secondaryRow, 1);
             textStack.Children.Add(primary);
-            textStack.Children.Add(secondary);
+            textStack.Children.Add(secondaryRow);
 
-            var downloadButton = BuildDownloadButton(hit, downloads, secondary, palette, searchToken);
+            var downloadButton = BuildDownloadButton(hit, downloads, latestLabel, palette, searchToken);
 
             var grid = new Grid { ColumnSpacing = 10 };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -401,7 +446,7 @@ namespace Uviewer.Services.Legado
             };
 
             // 后台补最新章节名（不阻塞 UI；失败静默，保留占位文案）
-            _ = FillLatestChapterAsync(hit, secondary, searchToken);
+            _ = FillLatestChapterAsync(hit, latestLabel, latestHolder, searchToken);
 
             return card;
         }
@@ -414,59 +459,68 @@ namespace Uviewer.Services.Legado
         /// </summary>
         private async Task FillLatestChapterAsync(
             BookSourceSearchService.BookSearchHit hit,
-            TextBlock secondary,
+            TextBlock latestLabel,
+            LatestChapterHolder holder,
             CancellationToken token)
         {
             try
             {
                 // 同一时刻最多 4 个目录请求
                 await _tocFetchGate.WaitAsync(token).ConfigureAwait(false);
-                string latest;
+                IReadOnlyList<CoreTocItem> chapters;
                 try
                 {
                     var session = _search.CreateSession(hit);
                     var opened = await session.OpenAsync(token).ConfigureAwait(false);
-                    latest = opened.Chapters.Count > 0
-                        ? opened.Chapters[^1].ChapterName ?? string.Empty
-                        : string.Empty;
+                    chapters = opened.Chapters;
+                    holder.Chapters = chapters;
                 }
                 finally
                 {
                     _tocFetchGate.Release();
                 }
 
-                if (token.IsCancellationRequested || string.IsNullOrWhiteSpace(latest))
+                if (token.IsCancellationRequested)
                 {
                     return;
                 }
 
-                var text = $"{hit.SourceName} | 最新：{latest}";
+                var latest = chapters.Count > 0 ? chapters[^1].ChapterName ?? string.Empty : string.Empty;
+                var text = string.IsNullOrWhiteSpace(latest) ? "｜目录为空" : $"｜最新：{latest}";
+
                 _rootElement.DispatcherQueue.TryEnqueue(() =>
                 {
                     // 下载中显示的是实时进度，别被迟到的目录结果覆盖掉
-                    if (secondary.Text.Contains("下载中"))
+                    if (latestLabel.Text.Contains("下载中"))
                     {
                         return;
                     }
 
-                    secondary.Text = text;
-                    ToolTipService.SetToolTip(secondary, text);
+                    latestLabel.Text = text;
+                    ToolTipService.SetToolTip(latestLabel, "点击查看该书目录（" + text.TrimStart('｜') + "）");
                 });
             }
-            catch
+            catch (Exception ex)
             {
-                // 目录拉取失败不影响结果卡片（用户点进去仍会尝试打开）
+                // 目录拉取失败不影响结果卡片（点击标签会显示失败原因）
+                holder.Error = $"目录获取失败：{ex.Message}";
             }
         }
 
         /// <summary>
-        /// 下载按钮：未下载时显示"下载"（强调色），下载中显示"取消"（警示色），
-        /// 点击切换状态——下载中点击即取消，已下载点击则重新打开。
+        /// 下载按钮的三态机（用户明确要求）：
+        /// <list type="number">
+        /// <item><b>下载</b>（Idle）→ 第一次按下开始下载，按钮变<b>取消</b>（警示色）；</item>
+        /// <item><b>取消</b>（Downloading）→ 再按一次才进入<b>取消中…</b> 并真正发取消信号；</item>
+        /// <item><b>取消中…</b>（Cancelling）→ 期间禁用按钮，直到下载任务真正结束才回到<b>下载</b>。</item>
+        /// </list>
+        /// <para>早期实现按下即显示"取消中…"，用户根本分不清
+        /// "正在下载、可以点取消"与"已经请求取消"——这两件事的状态意义完全不同。</para>
         /// </summary>
         private Button BuildDownloadButton(
             BookSourceSearchService.BookSearchHit hit,
             BookSourceDownloadService downloads,
-            TextBlock secondary,
+            TextBlock latestLabel,
             LegadoPalette palette,
             CancellationToken searchToken)
         {
@@ -480,7 +534,7 @@ namespace Uviewer.Services.Legado
                 Background = palette.Accent,
                 Foreground = palette.OnAccent,
             };
-            ToolTipService.SetToolTip(button, "下载整本书到本地（下载中点击可取消）");
+            ToolTipService.SetToolTip(button, "下载整本书到本地（下载中可按取消）");
 
             CancellationTokenSource? downloadCts = null;
             var state = DownloadState.Idle;
@@ -491,8 +545,13 @@ namespace Uviewer.Services.Legado
             switch (state)
             {
                 case DownloadState.Downloading:
-                    // 再按一次 = 取消
+                    // 第一次按"取消"：进入取消中（等任务真正收尾）
+                    SetButton(DownloadState.Cancelling, "取消中…", palette.Warning);
                     downloadCts?.Cancel();
+                    return;
+
+                case DownloadState.Cancelling:
+                    // 已经在取消：忽略重复点击（按钮此时也是禁用的）
                     return;
 
                 case DownloadState.Done:
@@ -511,6 +570,9 @@ namespace Uviewer.Services.Legado
                 state = next;
                 button.Content = label;
                 button.Background = background ?? button.Background;
+
+                // 取消中禁用：否则用户会以为还能再按一次
+                button.IsEnabled = next != DownloadState.Cancelling;
             }
 
             async Task StartDownloadAsync()
@@ -518,7 +580,7 @@ namespace Uviewer.Services.Legado
                 var cts = CancellationTokenSource.CreateLinkedTokenSource(searchToken);
                 downloadCts = cts;
 
-                SetButton(DownloadState.Downloading, "取消中…", palette.Warning);
+                SetButton(DownloadState.Downloading, "取消", palette.Warning);
 
                 BookSourceReadingSession session;
                 try
@@ -529,17 +591,16 @@ namespace Uviewer.Services.Legado
                 {
                     // 书源已被删除/URL 对不上：立刻复位按钮，不要停在"下载中"
                     SetButton(DownloadState.Idle, "下载", palette.Accent);
-                    secondary.Text = $"{hit.SourceName} | 无法下载：{ex.Message}";
+                    latestLabel.Text = $"｜无法下载：{ex.Message}";
                     return;
                 }
 
                 // 进度经 IProgress 回到 UI 线程更新第二行文字
                 var progress = new Progress<BookSourceDownloadService.DownloadProgress>(p =>
                 {
-                    secondary.Text = string.Format(
+                    latestLabel.Text = string.Format(
                         CultureInfo.CurrentCulture,
-                        "{0} | 下载中 {1}/{2}  {3}",
-                        hit.SourceName,
+                        "｜下载中 {0}/{1}  {2}",
                         p.Done,
                         p.Total,
                         p.ChapterName);
@@ -566,25 +627,159 @@ namespace Uviewer.Services.Legado
                 if (result.Cancelled)
                 {
                     SetButton(DownloadState.Idle, "下载", palette.Accent);
-                    secondary.Text = $"{hit.SourceName} | 点击查看目录";
+                    latestLabel.Text = "｜已取消下载";
                     return;
                 }
 
                 if (!result.Success)
                 {
                     SetButton(DownloadState.Idle, "重试", palette.Accent);
-                    secondary.Text = $"{hit.SourceName} | {result.Message}";
+                    latestLabel.Text = $"｜{result.Message}";
                     return;
                 }
 
                 // 完成：按钮变"已下载"，并自动打开刚下好的本地文件
                 downloadedPath = result.FilePath;
                 SetButton(DownloadState.Done, "已下载", palette.Success);
-                secondary.Text = $"{hit.SourceName} | 已下载 {result.Message}";
+                latestLabel.Text = $"｜已下载 {result.Message}";
                 await OpenDownloaded(result.FilePath);
             }
 
             return button;
+        }
+
+        /// <summary>
+        /// 按文本相关性把卡片插到正确位置（降序；同分保持"先到先得"）。
+        /// <para>用二分查找定位插入点：几百条结果 × 每命中一个源插一批，
+        /// 线性扫描的代价会随列表长度平方增长（实测 500 条时卡顿明显）。</para>
+        /// </summary>
+        private static void InsertByRelevance(
+            StackPanel panel,
+            List<(int Score, long Seq, UIElement Card)> ranked,
+            BookSourceSearchService.BookSearchHit hit,
+            string keyword,
+            UIElement card,
+            long sequence)
+        {
+            var score = SearchRelevance.Score(hit.Name, hit.Author, keyword);
+
+            // 找第一个"评分更低"的位置（同分排在后到者之后 → 先到先得）
+            var low = 0;
+            var high = ranked.Count;
+            while (low < high)
+            {
+                var mid = (low + high) / 2;
+                if (ranked[mid].Score >= score)
+                {
+                    low = mid + 1;
+                }
+                else
+                {
+                    high = mid;
+                }
+            }
+
+            ranked.Insert(low, (score, sequence, card));
+            panel.Children.Insert(low, card);
+        }
+
+        /// <summary>
+        /// 弹窗显示该书目录（无按钮样式：纯文字列表，与顶栏目录下拉同一观感）。
+        /// <para>目录在 <see cref="FillLatestChapterAsync"/> 里已经拉过一次并缓存在
+        /// <see cref="LatestChapterHolder"/> 中，这里零网络开销；未取到则显示原因。</para>
+        /// </summary>
+        private void ShowChapterListFlyout(
+            FrameworkElement anchor,
+            LatestChapterHolder holder,
+            BookSourceSearchService.BookSearchHit hit,
+            LegadoPalette palette)
+        {
+            var list = new ListView
+            {
+                SelectionMode = ListViewSelectionMode.None,
+                IsItemClickEnabled = false,
+            };
+
+            if (holder.Chapters is { Count: > 0 })
+            {
+                foreach (var chapter in holder.Chapters)
+                {
+                    list.Items.Add(new TextBlock
+                    {
+                        Text = string.IsNullOrWhiteSpace(chapter.ChapterName) ? "(无标题)" : chapter.ChapterName,
+                        FontSize = 14,
+                        Foreground = palette.TextPrimary,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        MaxLines = 1,
+                        Margin = new Thickness(0, 3, 0, 3),
+
+                        // 纯展示：不响应点击，也就不会被误认为是按钮
+                        IsHitTestVisible = false,
+                    });
+                }
+            }
+            else
+            {
+                list.Items.Add(new TextBlock
+                {
+                    Text = holder.Error ?? "目录尚未取到（可稍后再试，或点卡片直接打开）",
+                    FontSize = 12,
+                    Foreground = palette.TextSecondary,
+                    TextWrapping = TextWrapping.Wrap,
+                    IsHitTestVisible = false,
+                });
+            }
+
+            var panel = new Grid { Width = 320, MaxHeight = 420 };
+            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+
+            var title = new TextBlock
+            {
+                Text = $"目录 · {hit.Name}",
+                FontSize = 16,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = palette.TextPrimary,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 0, 0, 10),
+            };
+
+            var count = new TextBlock
+            {
+                Text = holder.Chapters is { Count: > 0 } ? $"共 {holder.Chapters.Count} 章" : string.Empty,
+                FontSize = 11,
+                Foreground = palette.TextSecondary,
+                Margin = new Thickness(0, -6, 0, 8),
+            };
+
+            var header = new StackPanel();
+            header.Children.Add(title);
+            header.Children.Add(count);
+            Grid.SetRow(header, 0);
+            Grid.SetRow(list, 1);
+            panel.Children.Add(header);
+            panel.Children.Add(list);
+
+            // Flyout 没有 RequestedTheme（只有 FrameworkElement 有）；主题随 XamlRoot 继承
+            var flyout = new Flyout
+            {
+                XamlRoot = _rootElement.XamlRoot,
+                Placement = FlyoutPlacementMode.Bottom,
+                Content = panel,
+            };
+
+            flyout.ShowAt(anchor);
+        }
+
+        /// <summary>
+        /// 一条结果卡的目录状态：<see cref="FillLatestChapterAsync"/> 写入，
+        /// 点"最新章节"弹目录时直接复用（不重复请求）。
+        /// </summary>
+        private sealed class LatestChapterHolder
+        {
+            public IReadOnlyList<CoreTocItem>? Chapters { get; set; }
+
+            public string? Error { get; set; }
         }
 
         /// <summary>打开已下载的本地文件（关闭搜索框后打开，避免挡住阅读区）。</summary>
@@ -618,7 +813,7 @@ namespace Uviewer.Services.Legado
             }
         }
 
-        private enum DownloadState { Idle, Downloading, Done }
+        private enum DownloadState { Idle, Downloading, Cancelling, Done }
 
     }
 }

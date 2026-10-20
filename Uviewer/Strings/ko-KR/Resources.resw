@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
@@ -731,6 +731,8 @@
   <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>TXT 장 분할과 목차 생성을 제어하며 저장 즉시 반영됩니다</value></data>
   <data name="LegadoPurifyEnabled" xml:space="preserve"><value>텍스트 정제 (전체 스위치)</value></data>
   <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>전체 스위치: 끄면 모든 정제 규칙이 일시 중지되며, 규칙별 설정은 유지됩니다</value></data>
+  <data name="TextCache" xml:space="preserve"><value>챕터 캐시</value></data>
+  <data name="TextCacheHint" xml:space="preserve"><value>현재 파일의 전체 목차와 챕터 분할을 저장합니다. 이후 열 때는 읽는 위치 전후 챕터만 정화합니다. 다시 클릭하면 삭제</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>책 검색</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>활성화된 모든 SID에서 책제목/저자로 책 검색</value></data>
 </root>

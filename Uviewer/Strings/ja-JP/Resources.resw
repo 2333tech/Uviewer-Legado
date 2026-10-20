@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
@@ -731,6 +731,8 @@
   <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>TXT のチャプター分割と目次生成を制御します</value></data>
   <data name="LegadoPurifyEnabled" xml:space="preserve"><value>テキスト浄化（マスタースイッチ）</value></data>
   <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>全体スイッチ：オフにするとすべての浄化ルールが一時停止し、ルールごとの設定は保持されます</value></data>
+  <data name="TextCache" xml:space="preserve"><value>章キャッシュ</value></data>
+  <data name="TextCacheHint" xml:space="preserve"><value>このファイルの完全な目次と章分割を保存します。以降の起動では閲覧位置の前後の章のみ浄化します。再度クリックで削除</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>本を検索</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>有効なすべての SID から書名・作者で本を検索</value></data>
 </root>

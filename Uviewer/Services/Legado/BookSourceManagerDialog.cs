@@ -8,7 +8,6 @@ using BookSource.Core.Services;
 using BookSource.Core.Services.BookSources;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
 using BookSourceModel = BookSource.Core.Models.BookSource;
 
 namespace Uviewer.Services.Legado
@@ -245,17 +244,17 @@ namespace Uviewer.Services.Legado
 
                 // 基本信息：书源 URL 只读（它是主键，改了等于换一条源）
                 var basic = new StackPanel { Spacing = 6 };
-                basic.Children.Add(Header("基本信息"));
-                basic.Children.Add(Field("书源名称", _draft.BookSourceName, v => _draft!.BookSourceName = v));
-                basic.Children.Add(Field("书源 URL（主键，不可改）", _draft.BookSourceUrl, null));
-                basic.Children.Add(Field("分组", _draft.BookSourceGroup, v => _draft!.BookSourceGroup = v));
-                basic.Children.Add(Field("书籍 URL 正则", _draft.BookUrlPattern, v => _draft!.BookUrlPattern = v));
-                basic.Children.Add(Field("并发速率", _draft.ConcurrentRate, v => _draft!.ConcurrentRate = v));
-                basic.Children.Add(Field("请求头（JSON）", _draft.Header, v => _draft!.Header = v, multi: true));
-                basic.Children.Add(Field("权重（排序用）", _draft.Weight.ToString(), v =>
+                basic.Children.Add(LegadoForm.Header("基本信息"));
+                basic.Children.Add(LegadoForm.Field("书源名称", _draft.BookSourceName, v => _draft!.BookSourceName = v));
+                basic.Children.Add(LegadoForm.Field("书源 URL（主键，不可改）", _draft.BookSourceUrl, null));
+                basic.Children.Add(LegadoForm.Field("分组", _draft.BookSourceGroup, v => _draft!.BookSourceGroup = v));
+                basic.Children.Add(LegadoForm.Field("书籍 URL 正则", _draft.BookUrlPattern, v => _draft!.BookUrlPattern = v));
+                basic.Children.Add(LegadoForm.Field("并发速率", _draft.ConcurrentRate, v => _draft!.ConcurrentRate = v));
+                basic.Children.Add(LegadoForm.Field("请求头（JSON）", _draft.Header, v => _draft!.Header = v, multi: true));
+                basic.Children.Add(LegadoForm.Field("权重（排序用）", _draft.Weight.ToString(), v =>
                     _draft!.Weight = int.TryParse(v, out var w) ? w : 0));
-                basic.Children.Add(Field("备注", _draft.BookSourceComment, v => _draft!.BookSourceComment = v, multi: true));
-                basic.Children.Add(Toggle("启用", _draft.IsEnabled, async (s, val) =>
+                basic.Children.Add(LegadoForm.Field("备注", _draft.BookSourceComment, v => _draft!.BookSourceComment = v, multi: true));
+                basic.Children.Add(LegadoForm.Toggle("启用", _draft.IsEnabled, async (s, val) =>
                 {
                     // 启用开关是高频操作（批量禁用失效源），立即落盘而不必点"保存"
                     _draft!.Enabled = val;
@@ -282,13 +281,13 @@ namespace Uviewer.Services.Legado
 
                 // 脚本与登录
                 var scripts = new StackPanel { Spacing = 6 };
-                scripts.Children.Add(Header("脚本与登录"));
-                scripts.Children.Add(Field("jsLib（库代码）", _draft.JsLib, v => _draft!.JsLib = v, multi: true, tall: true));
-                scripts.Children.Add(Field("登录地址", _draft.LoginUrl, v => _draft!.LoginUrl = v));
-                scripts.Children.Add(Field("登录校验脚本", _draft.LoginCheckJs, v => _draft!.LoginCheckJs = v, multi: true));
-                scripts.Children.Add(Toggle("启用 Cookie 保持", _draft.EnabledCookieJar ?? false,
+                scripts.Children.Add(LegadoForm.Header("脚本与登录"));
+                scripts.Children.Add(LegadoForm.Field("jsLib（库代码）", _draft.JsLib, v => _draft!.JsLib = v, multi: true, tall: true));
+                scripts.Children.Add(LegadoForm.Field("登录地址", _draft.LoginUrl, v => _draft!.LoginUrl = v));
+                scripts.Children.Add(LegadoForm.Field("登录校验脚本", _draft.LoginCheckJs, v => _draft!.LoginCheckJs = v, multi: true));
+                scripts.Children.Add(LegadoForm.Toggle("启用 Cookie 保持", _draft.EnabledCookieJar ?? false,
                     (s, val) => _draft!.EnabledCookieJar = val));
-                scripts.Children.Add(Field("登录界面脚本", _draft.LoginUi, v => _draft!.LoginUi = v, multi: true));
+                scripts.Children.Add(LegadoForm.Field("登录界面脚本", _draft.LoginUi, v => _draft!.LoginUi = v, multi: true));
                 formHost.Children.Add(scripts);
             }
 
@@ -365,75 +364,10 @@ namespace Uviewer.Services.Legado
         }
 
         // ============================================================
-        // 通用 UI 构件（各字段/各规则组共用，不重复实现）
+        // 字段构件（Header / Field / Toggle）已抽到 LegadoForm——
+        // 规则管理界面（RuleManagerDialog）与本书源管理共用同一份实现，
+        // 不在此保留私有副本（避免两处漂移）。
         // ============================================================
-
-        private static TextBlock Header(string text) => new()
-        {
-            Text = text,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Margin = new Thickness(0, 10, 0, 0),
-        };
-
-        /// <summary>
-        /// 生成一个文本字段。<paramref name="commit"/> 为 null 时字段只读（用于展示主键等信息）。
-        /// </summary>
-        private static UIElement Field(
-            string label, string? value, Action<string>? commit, bool multi = false, bool tall = false)
-        {
-            var box = new TextBox
-            {
-                Text = value ?? string.Empty,
-                AcceptsReturn = multi,
-                TextWrapping = multi ? TextWrapping.Wrap : TextWrapping.NoWrap,
-                IsReadOnly = commit is null,
-                Height = tall ? 120 : (multi ? 64 : double.NaN),
-                IsEnabled = commit is not null,
-            };
-
-            // MinHeight 只在多行时给。
-            // 刻意不写 `MinHeight = multi ? 56 : double.NaN`：WinUI 的 MinHeight setter
-            // 收到 NaN 会抛 ArgumentException（Height 允许 NaN 表示"自动"，Min/Max 不允许），
-            // 于是每次构建单行字段都崩 —— 点开任意书源即致命错误。
-            if (multi)
-            {
-                box.MinHeight = 56;
-            }
-
-            if (commit is not null)
-            {
-                box.TextChanged += (s, e) =>
-                {
-                    var newText = box.Text;
-                    commit(newText);
-                };
-            }
-
-            return new StackPanel
-            {
-                Spacing = 2,
-                Children =
-                {
-                    new TextBlock { Text = label, FontSize = 12, Opacity = 0.75 },
-                    box,
-                },
-            };
-        }
-
-        private static UIElement Toggle(string label, bool value, Action<object, bool> onChange)
-        {
-            var toggle = new ToggleSwitch
-            {
-                Header = label,
-                IsOn = value,
-                OnContent = "开",
-                OffContent = "关",
-            };
-
-            // ToggleSwitch 无 Click 事件，用 Toggled（切换即提交）
-            toggle.Toggled += (s, e) => onChange(toggle, toggle.IsOn);
-            return toggle;
-        }
 
         /// <summary>
         /// 生成一个规则分组的编辑表单：可选的 URL 字段 + 反射枚举出的全部字符串规则字段。
@@ -447,20 +381,22 @@ namespace Uviewer.Services.Legado
             Action<T> assignRule) where T : class
         {
             var panel = new StackPanel { Spacing = 6 };
-            panel.Children.Add(Header(title));
+            panel.Children.Add(LegadoForm.Header(title));
 
             if (urlLabel is not null && getUrl is not null && setUrl is not null)
             {
-                panel.Children.Add(Field(urlLabel, getUrl(), v => setUrl(v), multi: true));
+                panel.Children.Add(LegadoForm.Field(urlLabel, getUrl(), v => setUrl(v), multi: true));
             }
 
             var rule = ensureRule();
 
             // 反射：枚举规则对象上的全部可读可写 string 属性，一次生成完表单。
             // 模型新增字段时表单自动出现，无需改本文件。
+            // Legacy* 是 legado 旧键名的导入专用别名（迁移后即被置空），不是给用户看的字段。
             foreach (var prop in rule.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance))
             {
-                if (prop.PropertyType != typeof(string) || !prop.CanRead || !prop.CanWrite)
+                if (prop.PropertyType != typeof(string) || !prop.CanRead || !prop.CanWrite
+                    || RuleEditSpec.IsLegacyAliasProperty(prop.Name))
                 {
                     continue;
                 }
@@ -472,7 +408,7 @@ namespace Uviewer.Services.Legado
                     || p.Name.Contains("Regex", StringComparison.Ordinal)
                     || p.Name is "Init" or "Content" or "BookList" or "ChapterList";
 
-                panel.Children.Add(Field(
+                panel.Children.Add(LegadoForm.Field(
                     p.Name,
                     (string?)p.GetValue(rule),
                     v => p.SetValue(rule, v),

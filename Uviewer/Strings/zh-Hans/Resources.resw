@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <root>
   <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
     <xsd:import namespace="http://www.w3.org/XML/1998/namespace" />
@@ -731,6 +731,8 @@
   <data name="LegadoShowTitleRulesHint" xml:space="preserve"><value>控制 TXT 章节切分与目录生成，保存后立即生效</value></data>
   <data name="LegadoPurifyEnabled" xml:space="preserve"><value>替换净化（总开关）</value></data>
   <data name="LegadoPurifyEnabledHint" xml:space="preserve"><value>全局开关：关闭后所有净化规则暂停生效，各条规则配置保留</value></data>
+  <data name="TextCache" xml:space="preserve"><value>章节缓存</value></data>
+  <data name="TextCacheHint" xml:space="preserve"><value>保存当前文件的完整目录与章节分化；之后打开只净化阅读位置前后章节。再次点选删除缓存</value></data>
   <data name="LegadoSearch" xml:space="preserve"><value>搜索书籍</value></data>
   <data name="LegadoSearchHint" xml:space="preserve"><value>在所有已启用书源中按书名/作者搜索书籍</value></data>
 </root>

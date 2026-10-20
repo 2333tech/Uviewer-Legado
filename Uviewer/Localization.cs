@@ -297,6 +297,12 @@ namespace Uviewer
 
         /// <summary>替换净化总开关菜单项的悬停提示。</summary>
         public static string LegadoPurifyEnabledHint => GetString("LegadoPurifyEnabledHint");
+
+        /// <summary>章节缓存菜单项文案（设置一级菜单；点选保存/再点选删除）。</summary>
+        public static string TextCache => GetString("TextCache");
+
+        /// <summary>章节缓存菜单项的悬停提示。</summary>
+        public static string TextCacheHint => GetString("TextCacheHint");
         public static string MoreCommandsTooltip => GetString("MoreCommandsTooltip");
         public static string ToolbarCustomizationDescription => GetString("ToolbarCustomizationDescription");
         public static string ToolbarApply => GetString("ToolbarApply");

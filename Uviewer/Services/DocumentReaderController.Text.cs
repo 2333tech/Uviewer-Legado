@@ -152,12 +152,25 @@ namespace Uviewer
                 _textReaderState.SetLocalSource(file.Path);
                 // No reset here, DisplayLoadedText will handle it after using the value
 
+                // 换源前把旧文件的窗口阅读位置刷进缓存（下一步源键就变了）
+                FlushTextCachePosition();
+                ClearTextCacheWindowState();
+
 CancelAndResetGlobalTextCts();
        var token = _globalTextCts!.Token;
 
      SwitchToTextMode();
           string content = await _textDocumentLoadService.ReadLocalFileAsync(file, _settingsManager.EncodingName, token);
       if (token.IsCancellationRequested) return;
+
+     // 章节缓存命中 → 窗口模式（只净化前后章节）；未命中 → 整本净化路径
+      if (await TryOpenWithTextCacheAsync(content, file.Name, file.Path, token).ConfigureAwait(true))
+       {
+        if (token.IsCancellationRequested) return;
+         await RevealTextContentAsync(loadGeneration, token).ConfigureAwait(true);
+        SyncSidebarSelection(new ImageEntry { FilePath = file.Path, DisplayName = file.Name });
+        return;
+       }
 
     // 读取 → 渲染之间净化（受一级菜单"替换净化（总开关）"控制）。
       // 抓取阶段（整本下载）现在只落原文，净化统一在这里做；
@@ -169,6 +182,7 @@ CancelAndResetGlobalTextCts();
                 if (token.IsCancellationRequested) return;
                 await RevealTextContentAsync(loadGeneration, token);
                 SyncSidebarSelection(new ImageEntry { FilePath = file.Path, DisplayName = file.Name });
+                UpdateTextCacheMenuState();
             }
             catch (Exception ex)
             {
@@ -204,6 +218,10 @@ CancelAndResetGlobalTextCts();
                 _textReaderState.SetArchiveSource(entry.ArchiveEntryKey); // Store entry key for relative path resolution
                                                                           // No reset here, DisplayLoadedText will handle it
 
+                // 换源前把旧文件的窗口阅读位置刷进缓存
+                FlushTextCachePosition();
+                ClearTextCacheWindowState();
+
                 CancelAndResetGlobalTextCts();
                 var token = _globalTextCts!.Token;
 
@@ -211,6 +229,15 @@ SwitchToTextMode();
      string content = await _textDocumentLoadService.ReadArchiveEntryAsync(entry, _settingsManager.EncodingName, token);
 
             if (token.IsCancellationRequested) return;
+
+      // 章节缓存命中 → 窗口模式；未命中 → 整本净化路径（与本地文件同接线）
+       if (await TryOpenWithTextCacheAsync(content, entry.DisplayName, null, token).ConfigureAwait(true))
+        {
+        if (token.IsCancellationRequested) return;
+         await RevealTextContentAsync(loadGeneration, token).ConfigureAwait(true);
+        SyncSidebarSelection(entry);
+        return;
+       }
 
       // 与本地文件同一时机净化（读取 → 渲染之间，受总开关控制）
      content = PurifyTextBeforeDisplay(content);
@@ -220,6 +247,7 @@ SwitchToTextMode();
                 if (token.IsCancellationRequested) return;
                 await RevealTextContentAsync(loadGeneration, token);
                 SyncSidebarSelection(entry);
+                UpdateTextCacheMenuState();
             }
             catch (Exception ex)
             {
@@ -258,7 +286,9 @@ SwitchToTextMode();
             // 书源阅读模式除外：那��的目录来自书源本身（InstallLegadoToc 装的静态目录），
             // 若在这里换成"按正文行号切分"的目录，会把整本书的目录覆盖成
             // **当前这一章**的行目录 —— 目录从"全书章节"退化成"本章小节"。
-            if (_legadoSession is null)
+            // 章节窗口模式（TextCacheActive）同理除外：目录来自缓存（TextCacheTocProvider），
+            // 由 ShowTextCacheWindowAsync 在 DisplayLoadedText 之后安装。
+            if (_legadoSession is null && !TextCacheActive)
             {
        _tocService.SetProvider(new TextTocProvider(content, null, GetEnabledTitleRules()));
          _ = _tocService.LoadTocAsync(token);
@@ -1265,6 +1295,9 @@ SwitchToTextMode();
         internal void TextScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
         {
             UpdateTextStatusBar();
+
+            // 章节窗口模式：滚动越过窗口边界时以当前章为中心重开窗口（前后章同步净化）
+            TextCacheScrollCheck();
         }
 
         internal void TextScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
