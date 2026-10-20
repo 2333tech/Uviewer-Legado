@@ -18,7 +18,6 @@ namespace Uviewer.Services
         public Func<Task> DisplayCurrentImageAsync { get; init; } = null!;
         public Action CancelImageLoading { get; init; } = null!;
         public Action CancelTextLoading { get; init; } = null!;
-        public Action CancelExplorerThumbnailLoading { get; init; } = null!;
         public Action PrepareForImageLoad { get; init; } = null!;
         public Action ClearImageCacheForEntryListChange { get; init; } = null!;
         public Action RefreshCurrentStatusBar { get; init; } = null!;
@@ -49,7 +48,7 @@ namespace Uviewer.Services
 
         public async Task LoadImageFromFileAsync(StorageFile file, bool isInitial = false)
         {
-            CancelActiveImageWork(cancelExplorerThumbnails: false);
+            CancelActiveImageWork();
 
             if (!await CloseOpenDocumentsAsync(closeText: true))
             {
@@ -91,7 +90,7 @@ namespace Uviewer.Services
 
         public async Task LoadImagesFromFolderAsync(StorageFolder folder)
         {
-            CancelActiveImageWork(cancelExplorerThumbnails: true);
+            CancelActiveImageWork();
 
             if (!await CloseOpenDocumentsAsync(closeText: false))
             {
@@ -113,15 +112,10 @@ namespace Uviewer.Services
             }
         }
 
-        private void CancelActiveImageWork(bool cancelExplorerThumbnails)
+        private void CancelActiveImageWork()
         {
             _sevenZipExtraction.CancelExtraction();
             _handlers.CancelImageLoading();
-            if (cancelExplorerThumbnails)
-            {
-                _handlers.CancelExplorerThumbnailLoading();
-            }
-
             _preloadManager.CancelAll();
             _handlers.CancelTextLoading();
         }

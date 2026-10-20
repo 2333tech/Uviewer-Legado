@@ -4,6 +4,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:app="using:Uviewer"
+    xmlns:models="using:Uviewer.Models"
     xmlns:uc="using:Uviewer.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
@@ -132,8 +133,8 @@
                                             <PivotItem.Header>
                                                 <TextBlock x:Name="SidebarFileFavoritesHeaderText" Text="{x:Bind app:Strings.FavoritesFiles}" FontSize="14" FontWeight="SemiBold"/>
                                             </PivotItem.Header>
-                                            <ScrollViewer MaxHeight="400" 
-                                                         HorizontalScrollBarVisibility="Disabled" 
+                                            <ScrollViewer MaxHeight="400"
+                                                         HorizontalScrollBarVisibility="Disabled"
                                                          VerticalScrollBarVisibility="Auto">
                                                 <uc:BookmarkListControl x:Name="SidebarFileFavoritesList"/>
                                             </ScrollViewer>
@@ -142,8 +143,8 @@
                                             <PivotItem.Header>
                                                 <TextBlock x:Name="SidebarFolderFavoritesHeaderText" Text="{x:Bind app:Strings.FavoritesFolders}" FontSize="14" FontWeight="SemiBold"/>
                                             </PivotItem.Header>
-                                            <ScrollViewer MaxHeight="400" 
-                                                         HorizontalScrollBarVisibility="Disabled" 
+                                            <ScrollViewer MaxHeight="400"
+                                                         HorizontalScrollBarVisibility="Disabled"
                                                          VerticalScrollBarVisibility="Auto">
                                                 <uc:BookmarkListControl x:Name="SidebarFolderFavoritesList"/>
                                             </ScrollViewer>
@@ -153,14 +154,14 @@
                             </Flyout>
                         </Button.Flyout>
                     </Button>
-                    
+
                     <Button x:Name="SidebarRecentButton"
                             ToolTipService.ToolTip="{x:Bind app:Strings.RecentTooltip}" Padding="6" Margin="0,0,8,0">
                         <FontIcon Glyph="&#xE823;" FontSize="14"/>
                         <Button.Flyout>
                             <Flyout x:Name="SidebarRecentFlyout" Placement="Bottom">
-                                <ScrollViewer MaxHeight="600" Width="400" 
-                                             HorizontalScrollBarVisibility="Disabled" 
+                                <ScrollViewer MaxHeight="600" Width="400"
+                                             HorizontalScrollBarVisibility="Disabled"
                                              VerticalScrollBarVisibility="Auto">
                                         <uc:BookmarkListControl x:Name="SidebarRecentList"/>
                                 </ScrollViewer>
@@ -310,24 +311,24 @@
                               SelectionMode="Single"
                               IsItemClickEnabled="True">
                         <ListView.ItemTemplate>
-                            <DataTemplate>
+                            <DataTemplate x:DataType="models:FileItem">
                                 <Grid Padding="4,6" ColumnSpacing="8" Background="Transparent"
-                                      ToolTipService.ToolTip="{Binding ToolTipText}">
+                                      ToolTipService.ToolTip="{x:Bind ToolTipText, Mode=OneWay}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <FontIcon Glyph="{Binding Icon}" FontSize="14"
+                                    <FontIcon Glyph="{x:Bind Icon, Mode=OneWay}" FontSize="14"
                                               VerticalAlignment="Center"
-                                              Foreground="{Binding IconColor}"/>
+                                              Foreground="{x:Bind IconColor, Mode=OneWay}"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding Name}"
+                                        <TextBlock Text="{x:Bind Name, Mode=OneWay}"
                                                    FontFamily="{ThemeResource ContentControlThemeFontFamily}"
                                                    TextTrimming="CharacterEllipsis"/>
-                                        <TextBlock Text="{Binding DisplayPath}"
+                                        <TextBlock Text="{x:Bind DisplayPath, Mode=OneWay}"
                                                    FontSize="11"
-                                                   Visibility="{Binding DisplayPathVisibility}"
+                                                   Visibility="{x:Bind DisplayPathVisibility, Mode=OneWay}"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                                    FontFamily="{ThemeResource ContentControlThemeFontFamily}"
                                                    TextTrimming="CharacterEllipsis"/>
@@ -343,41 +344,41 @@
                               Visibility="Collapsed"
                               Padding="4">
                         <GridView.ItemTemplate>
-                            <DataTemplate>
-                                <Grid Width="{Binding ThumbnailItemWidth}" Height="{Binding ThumbnailItemHeight}" Padding="4" Background="Transparent" CornerRadius="4"
-                                      ToolTipService.ToolTip="{Binding ToolTipText}">
+                            <DataTemplate x:DataType="models:FileItem">
+                                <Grid Width="{x:Bind ThumbnailItemWidth, Mode=OneWay}" Height="{x:Bind ThumbnailItemHeight, Mode=OneWay}" Padding="4" Background="Transparent" CornerRadius="4"
+                                      ToolTipService.ToolTip="{x:Bind ToolTipText, Mode=OneWay}">
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="*"/>
                                         <RowDefinition Height="Auto"/>
                                     </Grid.RowDefinitions>
-                                    
+
                                     <Grid Grid.Row="0">
-                                        <FontIcon Glyph="{Binding Icon}" FontSize="{Binding ThumbnailIconSize}" Foreground="{Binding IconColor}" 
+                                        <FontIcon Glyph="{x:Bind Icon, Mode=OneWay}" FontSize="{x:Bind ThumbnailIconSize, Mode=OneWay}" Foreground="{x:Bind IconColor, Mode=OneWay}"
                                                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                  Visibility="{Binding IconVisibility}" />
-                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                               MaxWidth="{Binding ThumbnailImageSize}" MaxHeight="{Binding ThumbnailImageSize}"
-                                               Visibility="{Binding ImageThumbnailVisibility}"/>
-                                        <Grid Width="{Binding ThumbnailImageSize}" Height="{Binding ThumbnailImageSize}"
+                                                  Visibility="{x:Bind IconVisibility, Mode=OneWay}" />
+                                        <Image Source="{x:Bind Thumbnail, Mode=OneWay}" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               MaxWidth="{x:Bind ThumbnailImageSize, Mode=OneWay}" MaxHeight="{x:Bind ThumbnailImageSize, Mode=OneWay}"
+                                               Visibility="{x:Bind ImageThumbnailVisibility, Mode=OneWay}"/>
+                                        <Grid Width="{x:Bind ThumbnailImageSize, Mode=OneWay}" Height="{x:Bind ThumbnailImageSize, Mode=OneWay}"
                                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                                              Visibility="{Binding FolderThumbnailVisibility}">
-                                            <Border Width="{Binding FolderThumbnailTabWidth}"
-                                                    Height="{Binding FolderThumbnailTabHeight}"
+                                              Visibility="{x:Bind FolderThumbnailVisibility, Mode=OneWay}">
+                                            <Border Width="{x:Bind FolderThumbnailTabWidth, Mode=OneWay}"
+                                                    Height="{x:Bind FolderThumbnailTabHeight, Mode=OneWay}"
                                                     HorizontalAlignment="Left"
                                                     VerticalAlignment="Top"
-                                                    Margin="{Binding FolderThumbnailTabMargin}"
+                                                    Margin="{x:Bind FolderThumbnailTabMargin, Mode=OneWay}"
                                                     Background="#DAA520"
                                                     CornerRadius="4,4,0,0"/>
-                                            <Border Width="{Binding FolderThumbnailBodyWidth}"
-                                                    Height="{Binding FolderThumbnailBodyHeight}"
+                                            <Border Width="{x:Bind FolderThumbnailBodyWidth, Mode=OneWay}"
+                                                    Height="{x:Bind FolderThumbnailBodyHeight, Mode=OneWay}"
                                                     HorizontalAlignment="Center"
                                                     VerticalAlignment="Bottom"
                                                     Background="#FFD700"
                                                     BorderBrush="#B8860B"
                                                     BorderThickness="1"
                                                     CornerRadius="5"/>
-                                            <Border Width="{Binding FolderThumbnailInsetWidth}"
-                                                    Height="{Binding FolderThumbnailInsetHeight}"
+                                            <Border Width="{x:Bind FolderThumbnailInsetWidth, Mode=OneWay}"
+                                                    Height="{x:Bind FolderThumbnailInsetHeight, Mode=OneWay}"
                                                     HorizontalAlignment="Center"
                                                     VerticalAlignment="Bottom"
                                                     Margin="0,0,0,8"
@@ -385,10 +386,10 @@
                                                     BorderBrush="#AA8A6110"
                                                     BorderThickness="1"
                                                     CornerRadius="3">
-                                                <Image Source="{Binding Thumbnail}" Stretch="UniformToFill"/>
+                                                <Image Source="{x:Bind Thumbnail, Mode=OneWay}" Stretch="UniformToFill"/>
                                             </Border>
-                                            <Border Width="{Binding FolderThumbnailBodyWidth}"
-                                                    Height="{Binding FolderThumbnailBodyHeight}"
+                                            <Border Width="{x:Bind FolderThumbnailBodyWidth, Mode=OneWay}"
+                                                    Height="{x:Bind FolderThumbnailBodyHeight, Mode=OneWay}"
                                                     HorizontalAlignment="Center"
                                                     VerticalAlignment="Bottom"
                                                     Background="Transparent"
@@ -398,9 +399,9 @@
                                         </Grid>
                                     </Grid>
 
-                                    <TextBlock Grid.Row="1" Text="{Binding Name}" FontSize="11" 
+                                    <TextBlock Grid.Row="1" Text="{x:Bind Name, Mode=OneWay}" FontSize="11"
                                                FontFamily="{ThemeResource ContentControlThemeFontFamily}"
-                                               TextTrimming="CharacterEllipsis" HorizontalAlignment="Center" 
+                                               TextTrimming="CharacterEllipsis" HorizontalAlignment="Center"
                                                MaxLines="2" TextAlignment="Center" Margin="0,4,0,0"/>
                                 </Grid>
                             </DataTemplate>

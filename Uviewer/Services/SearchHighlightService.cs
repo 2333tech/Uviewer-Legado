@@ -279,11 +279,11 @@ namespace Uviewer.Services
             return compactText.Length > 0 && CompareInfo.IndexOf(compactText, compactQuery, SearchOptions) >= 0;
         }
 
-        public static string ExtractPdfPageText(Page page)
+        public static string ExtractPdfPageText(Page page, string? mappedText = null)
         {
             var candidates = new List<string>();
 
-            TryAddCandidate(candidates, ExtractPdfMappedText(page));
+            TryAddCandidate(candidates, mappedText ?? ExtractPdfMappedText(page));
             TryAddCandidate(candidates, ExtractContentOrderText(page));
             TryAddCandidate(candidates, ExtractPdfWordsText(page));
             TryAddCandidate(candidates, page.Text ?? string.Empty);

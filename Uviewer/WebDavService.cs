@@ -61,6 +61,7 @@ namespace Uviewer
         private WebDavClient? _webDavClient;
         private WebDavServerInfo? _currentServer;
         private readonly object _tempGate = new();
+        private readonly RemoteFileDownloadCache _downloadCache = new();
         private LeasedTempDirectory? _tempDirectory;
         private readonly List<FileStream> _tempStreams = new();
         private bool _disposed;
@@ -559,62 +560,44 @@ namespace Uviewer
         /// </summary>
         public async Task<string?> DownloadToTempFileAsync(string remotePath, CancellationToken token = default)
         {
-            if (_webDavClient == null)
+            var client = _httpClient;
+            var server = _currentServer;
+            if (client == null || server == null)
                 throw new InvalidOperationException(Strings.WebDavNotConnected);
 
             try
             {
-                var response = await _webDavClient.GetRawFile(remotePath, new GetFileParameters
-                {
-                    CancellationToken = token
-                });
+                var remoteUri = new Uri(client.BaseAddress!, remotePath);
+                var fileName = Path.GetFileName(remotePath.TrimEnd('/'));
+                var tempDir = await Task.Run(GetTempFolder, token).ConfigureAwait(false);
+                // Separate accounts as well as servers and remote paths.
+                var urlKey = $"{server.UserId}\n{remoteUri.AbsoluteUri}";
+                var stableHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(urlKey)));
+                var tempPath = Path.Combine(tempDir, stableHash, fileName);
 
-                if (!response.IsSuccessful || response.Stream == null)
-                {
-                    System.Diagnostics.Debug.WriteLine($"WebDAV download error: {response.StatusCode}");
-                    return null;
-                }
-
-                 var fileName = Path.GetFileName(remotePath.TrimEnd('/'));
-                 var tempDir = await Task.Run(GetTempFolder, token).ConfigureAwait(false);
-                 
-                 // Use stable hash based on URL to allow caching during session
-                 var urlKey = $"{_currentServer!.BaseUrl}{remotePath}";
-                 var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(urlKey));
-                 var stableHash = BitConverter.ToString(hashBytes).Replace("-", "").Substring(0, 12).ToLowerInvariant();
-                 var subDir = Path.Combine(tempDir, stableHash);
-                 var tempPath = Path.Combine(subDir, fileName);
- 
-                 if (File.Exists(tempPath))
-                 {
-                     // Check if file is not empty (simple check for failed previous downloads)
-                     var info = new FileInfo(tempPath);
-                     if (info.Length > 0)
-                     {
-                         System.Diagnostics.Debug.WriteLine($"WebDAV: Using cached file: {tempPath}");
-                         return tempPath;
-                     }
-                 }
- 
-                 using (var fileStream = CreateTempStream(tempPath, FileAccess.Write))
-                 {
-                     await response.Stream.CopyToAsync(fileStream, token);
-                 }
- 
-                 System.Diagnostics.Debug.WriteLine($"WebDAV: File downloaded to temp path: {tempPath}");
-                 return tempPath;
-             }
-             catch (OperationCanceledException)
-             {
-                 System.Diagnostics.Debug.WriteLine("WebDAV temp download canceled.");
-                 throw;
-             }
-             catch (Exception ex)
-             {
-                 System.Diagnostics.Debug.WriteLine($"WebDAV temp download exception: {ex.Message}");
-                 return null;
-             }
-         }
+                return await _downloadCache.DownloadAsync(
+                    client, remoteUri, tempPath,
+                    path => CreateTempStream(path, FileAccess.Write, FileOptions.Asynchronous),
+                    (partial, completed) =>
+                    {
+                        lock (_tempGate)
+                        {
+                            ObjectDisposedException.ThrowIf(_disposed, this);
+                            File.Move(partial, completed, overwrite: true);
+                        }
+                    }, token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                System.Diagnostics.Debug.WriteLine("WebDAV temp download canceled.");
+                throw;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"WebDAV temp download exception: {ex.Message}");
+                return null;
+            }
+        }
 
         #endregion
 
