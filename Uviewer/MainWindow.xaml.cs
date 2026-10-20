@@ -115,8 +115,8 @@ namespace Uviewer
                 _bookmarkInteractionController.UpdateFavoritesMenu(_fileFavoriteItems, _folderFavoriteItems);
                 _bookmarkInteractionController.UpdateRecentMenu(_recentItemsList);
 
-                // Clean up any stale/incomplete temp files at startup
-                _sevenZipExtraction.CleanupZeroByteTempFiles();
+                // Only reclaim folders whose owner is no longer running.
+                _sevenZipExtraction.CleanupAbandonedTempFolders();
 
                 if (!string.IsNullOrEmpty(launchFilePath))
                 {

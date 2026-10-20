@@ -15,15 +15,15 @@ namespace Uviewer.Services
 
         Task ConnectToWebDavServerAsync(string serverName, bool loadRoot);
         Task LoadWebDavFolderAsync(string remotePath, bool openFirstFile = false);
-        Task OpenWebDavFileAsync(FileItem item);
-        Task OpenWebDavArchiveAsync(FileItem item);
+        Task OpenWebDavFileAsync(FileItem item, string? initialEntryKey = null);
+        Task OpenWebDavArchiveAsync(FileItem item, string? initialEntryKey = null);
 
         void LoadExplorerFolder(string path);
         Task OpenLocalFolderAsync(string path);
         void SelectExplorerItemByName(string fileName);
         Task LoadImagesFromPdfAsync(string path);
         Task LoadImageFromFileAsync(StorageFile file);
-        Task LoadImagesFromArchiveAsync(string path);
+        Task LoadImagesFromArchiveAsync(string path, string? initialEntryKey = null);
         Task DisplayCurrentImageAsync();
 
         void SetPendingEpubPosition(int chapterIndex, int pageIndex, int blockIndex, int savedLine);

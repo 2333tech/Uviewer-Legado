@@ -67,7 +67,7 @@ namespace Uviewer.Services
             _handlers = handlers ?? throw new ArgumentNullException(nameof(handlers));
         }
 
-        public async Task LoadImagesFromArchiveAsync(string archivePath)
+        public async Task LoadImagesFromArchiveAsync(string archivePath, string? initialEntryKey = null)
         {
             int version = ++_transitionVersion;
             using var suspension = _fastNavigationService.SuspendNavigation();
@@ -77,7 +77,7 @@ namespace Uviewer.Services
             try
             {
                 if (version != _transitionVersion) return;
-                await LoadImagesFromArchiveCoreAsync(archivePath, version);
+                await LoadImagesFromArchiveCoreAsync(archivePath, version, initialEntryKey);
             }
             catch (Exception ex)
             {
@@ -98,7 +98,7 @@ namespace Uviewer.Services
             _handlers.CancelImageLoading();
         }
 
-        private async Task LoadImagesFromArchiveCoreAsync(string archivePath, int version)
+        private async Task LoadImagesFromArchiveCoreAsync(string archivePath, int version, string? initialEntryKey)
         {
             if (!await _handlers.CloseCurrentPdfAsync() || version != _transitionVersion) return;
             if (!await _handlers.CloseCurrentEpubAsync() || version != _transitionVersion) return;
@@ -111,26 +111,34 @@ namespace Uviewer.Services
                 var entries = (await _archiveSession.OpenLocalAsync(archivePath)).ToList();
                 if (version != _transitionVersion) return;
                 _handlers.SetImageEntries(entries);
-                _handlers.SetCurrentIndex(entries.Count > 0 ? 0 : -1);
+                _handlers.SetCurrentIndex(ArchiveOpenPosition.Resolve(entries, initialEntryKey));
 
                 if (entries.Count > 0)
                 {
-                    await _handlers.DisplayCurrentImageAsync();
-                    if (version != _transitionVersion ||
-                        !ReferenceEquals(entries, _handlers.GetImageEntries())) return;
-
-                    if (_archiveSession.IsSevenZipArchive)
+                    bool isSevenZip = _archiveSession.IsSevenZipArchive;
+                    if (isSevenZip)
                     {
                         var extractToken = _sevenZipExtraction.StartNewExtraction();
-                        _ = _archiveSession.ExtractSevenZipEntriesInBackgroundAsync(
+                        await _archiveSession.PrepareSevenZipImageCacheAsync(
                             archivePath,
                             entries,
                             _handlers.GetCurrentIndex,
                             _sevenZipExtraction,
                             extractToken);
+                        if (version != _transitionVersion ||
+                            !ReferenceEquals(entries, _handlers.GetImageEntries())) return;
                     }
 
-                    _ = _preloadManager.StartPreloadAsync(
+                    // The first display and its neighbors share the same batch
+                    // extraction, rather than decoding the solid prefix twice.
+                    var display = _handlers.DisplayCurrentImageAsync();
+                    if (isSevenZip) StartPreload();
+                    await display;
+                    if (version != _transitionVersion ||
+                        !ReferenceEquals(entries, _handlers.GetImageEntries())) return;
+                    if (!isSevenZip) StartPreload();
+
+                    void StartPreload() => _ = _preloadManager.StartPreloadAsync(
                         _handlers.GetCurrentIndex(),
                         _handlers.GetImageEntries(),
                         _handlers.IsPdfOpen(),

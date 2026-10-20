@@ -23,13 +23,13 @@ namespace Uviewer.Services
         public Func<CancellationToken> RestartOperation { get; init; } = null!;
         public Func<string, CancellationToken, Task<string?>> DownloadToTempFileAsync { get; init; } = null!;
         public Func<string, CancellationToken, Task<Stream?>> DownloadFileAsync { get; init; } = null!;
-        public Func<string, Task> OpenLocalArchiveAsync { get; init; } = null!;
+        public Func<string, string?, Task> OpenLocalArchiveAsync { get; init; } = null!;
         public Func<string, Task> OpenLocalPdfAsync { get; init; } = null!;
         public Func<string, string, ImageEntry?> PrepareSequentialEntries { get; init; } = null!;
         public Func<StorageFile, ImageEntry?, CancellationToken, Task> OpenEpubFileAsync { get; init; } = null!;
         public Func<Task> DisplayCurrentImageAsync { get; init; } = null!;
         public Action StartPreload { get; init; } = null!;
-        public Func<string, Stream, Task> OpenArchiveStreamAsync { get; init; } = null!;
+        public Func<string, Stream, string?, Task> OpenArchiveStreamAsync { get; init; } = null!;
         public Action<string> Log { get; init; } = _ => { };
     }
 
@@ -42,7 +42,7 @@ namespace Uviewer.Services
             _handlers = handlers ?? throw new ArgumentNullException(nameof(handlers));
         }
 
-        public async Task OpenItemAsync(FileItem item)
+        public async Task OpenItemAsync(FileItem item, string? initialEntryKey = null)
         {
             if (!IsValidWebDavItem(item)) return;
 
@@ -54,13 +54,13 @@ namespace Uviewer.Services
 
             if (item.IsArchive && !RequiresTempDownload(item))
             {
-                await OpenStreamedArchiveAsync(item);
+                await OpenStreamedArchiveAsync(item, initialEntryKey);
                 return;
             }
 
             if (item.IsArchive || item.IsImage || item.IsText || item.IsEpub || item.IsPdf)
             {
-                await OpenDownloadedFileAsync(item);
+                await OpenDownloadedFileAsync(item, initialEntryKey);
             }
         }
 
@@ -82,7 +82,7 @@ namespace Uviewer.Services
             return true;
         }
 
-        public async Task OpenDownloadedFileAsync(FileItem item)
+        public async Task OpenDownloadedFileAsync(FileItem item, string? initialEntryKey = null)
         {
             if (!IsValidWebDavItem(item)) return;
             if (!await PrepareOpenAsync(item)) return;
@@ -98,7 +98,7 @@ namespace Uviewer.Services
                     return;
                 }
 
-                await OpenDownloadedTempFileAsync(item, tempPath, token);
+                await OpenDownloadedTempFileAsync(item, tempPath, token, initialEntryKey);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
@@ -108,7 +108,7 @@ namespace Uviewer.Services
             }
         }
 
-        public async Task OpenStreamedArchiveAsync(FileItem item)
+        public async Task OpenStreamedArchiveAsync(FileItem item, string? initialEntryKey = null)
         {
             if (!IsValidWebDavItem(item)) return;
             if (!await PrepareOpenAsync(item)) return;
@@ -124,7 +124,7 @@ namespace Uviewer.Services
                     return;
                 }
 
-                await _handlers.OpenArchiveStreamAsync(item.WebDavPath!, stream);
+                await _handlers.OpenArchiveStreamAsync(item.WebDavPath!, stream, initialEntryKey);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
@@ -134,14 +134,14 @@ namespace Uviewer.Services
             }
         }
 
-        private async Task OpenDownloadedTempFileAsync(FileItem item, string tempPath, CancellationToken token)
+        private async Task OpenDownloadedTempFileAsync(FileItem item, string tempPath, CancellationToken token, string? initialEntryKey = null)
         {
             var fileKind = FileExplorerService.GetSupportedFileKind(item.WebDavPath ?? item.Name);
 
             switch (fileKind)
             {
                 case SupportedFileKind.Archive:
-                    await _handlers.OpenLocalArchiveAsync(tempPath);
+                    await _handlers.OpenLocalArchiveAsync(tempPath, initialEntryKey);
                     return;
 
                 case SupportedFileKind.Pdf:

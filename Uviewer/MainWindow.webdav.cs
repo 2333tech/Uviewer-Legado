@@ -273,14 +273,14 @@ namespace Uviewer
         /// <summary>
         /// WebDAV 일반 파일 (이미지/텍스트/epub) 열기 - 임시 파일로 다운로드 후 표시
         /// </summary>
-        private Task OpenWebDavFileAsync(FileItem item) =>
-            _webDavDocumentOpenCoordinator.OpenDownloadedFileAsync(item);
+        private Task OpenWebDavFileAsync(FileItem item, string? initialEntryKey = null) =>
+            _webDavDocumentOpenCoordinator.OpenDownloadedFileAsync(item, initialEntryKey);
 
         /// <summary>
         /// WebDAV 압축 파일 열기 - 스트리밍 다운로드 → MemoryStream → SharpCompress
         /// </summary>
-        private Task OpenWebDavArchiveAsync(FileItem item) =>
-            _webDavDocumentOpenCoordinator.OpenStreamedArchiveAsync(item);
+        private Task OpenWebDavArchiveAsync(FileItem item, string? initialEntryKey = null) =>
+            _webDavDocumentOpenCoordinator.OpenStreamedArchiveAsync(item, initialEntryKey);
 
         private ImageEntry? PrepareWebDavSequentialEntries(string webDavPath, string tempPath)
         {
@@ -308,14 +308,14 @@ namespace Uviewer
             return null;
         }
 
-        private async Task OpenWebDavArchiveStreamAsync(string webDavPath, Stream stream)
+        private async Task OpenWebDavArchiveStreamAsync(string webDavPath, Stream stream, string? initialEntryKey)
         {
             // SharpCompress needs the stream to stay alive, so do not dispose it here.
             _imageEntries = (await _archiveSession.OpenStreamAsync($"WebDAV:{webDavPath}", stream)).ToList();
 
             if (_imageEntries.Count > 0)
             {
-                _currentIndex = 0;
+                _currentIndex = ArchiveOpenPosition.Resolve(_imageEntries, initialEntryKey);
                 await _imageViewerController.DisplayCurrentImageAsync();
                 StartWebDavPreload();
             }

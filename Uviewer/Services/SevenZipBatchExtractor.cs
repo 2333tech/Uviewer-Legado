@@ -56,9 +56,9 @@ namespace Uviewer.Services
             return blocks.Values.Select(entries => entries.OrderBy(index => index).ToArray()).ToList();
         }
 
-        public void Extract(uint[] indices, Func<uint, string?> getPath, Action<uint, string> completed, CancellationToken token)
+        public void Extract(uint[] indices, Func<uint, string?> getPath, Action<uint, string> completed, CancellationToken token, Action<int>? beforeWrite = null)
         {
-            using var callback = new ExtractCallback(getPath, completed, token);
+            using var callback = new ExtractCallback(getPath, completed, token, beforeWrite);
             int result = _archive.Extract(indices, (uint)indices.Length, 0, callback);
             GC.KeepAlive(callback);
             token.ThrowIfCancellationRequested();
@@ -139,17 +139,21 @@ namespace Uviewer.Services
         {
             private readonly Stream _stream;
             private readonly CancellationToken _token;
-            public OutputStream(Stream stream, CancellationToken token) => (_stream, _token) = (stream, token);
+            private readonly Action<int>? _beforeWrite;
+            private readonly Action<Exception> _failed;
+            public OutputStream(Stream stream, CancellationToken token, Action<int>? beforeWrite, Action<Exception> failed)
+                => (_stream, _token, _beforeWrite, _failed) = (stream, token, beforeWrite, failed);
             public int Write(byte[] data, uint size, IntPtr written)
             {
                 if (_token.IsCancellationRequested) return unchecked((int)0x80004004); // E_ABORT
                 try
                 {
+                    _beforeWrite?.Invoke(checked((int)size));
                     _stream.Write(data, 0, checked((int)size));
                     if (written != IntPtr.Zero) Marshal.WriteInt32(written, checked((int)size));
                     return 0;
                 }
-                catch (Exception ex) { return Marshal.GetHRForException(ex); }
+                catch (Exception ex) { _failed(ex); return Marshal.GetHRForException(ex); }
             }
         }
 
@@ -159,13 +163,14 @@ namespace Uviewer.Services
             private readonly Func<uint, string?> _getPath;
             private readonly Action<uint, string> _completed;
             private readonly CancellationToken _token;
+            private readonly Action<int>? _beforeWrite;
             private FileStream? _output;
             private string? _path;
             private uint _index;
             public Exception? Error { get; private set; }
 
-            public ExtractCallback(Func<uint, string?> getPath, Action<uint, string> completed, CancellationToken token)
-                => (_getPath, _completed, _token) = (getPath, completed, token);
+            public ExtractCallback(Func<uint, string?> getPath, Action<uint, string> completed, CancellationToken token, Action<int>? beforeWrite)
+                => (_getPath, _completed, _token, _beforeWrite) = (getPath, completed, token, beforeWrite);
             public void SetTotal(ulong total) => _token.ThrowIfCancellationRequested();
             public void SetCompleted(ref ulong completed) => _token.ThrowIfCancellationRequested();
             public void PrepareOperation(int mode) => _token.ThrowIfCancellationRequested();
@@ -180,7 +185,7 @@ namespace Uviewer.Services
                     _path = _getPath(index);
                     if (_path == null) return 0;
                     _output = new FileStream(_path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536);
-                    stream = new OutputStream(_output, _token);
+                    stream = new OutputStream(_output, _token, _beforeWrite, ex => Error = ex);
                     return 0;
                 }
                 catch (Exception ex)
@@ -194,9 +199,9 @@ namespace Uviewer.Services
                 _output?.Dispose();
                 _output = null;
                 if (_path == null) return;
-                if (result != 0)
+                if (result != 0 || Error != null)
                 {
-                    Error = new InvalidDataException($"7z entry {_index}: extraction result {result}.");
+                    Error ??= new InvalidDataException($"7z entry {_index}: extraction result {result}.");
                     Dispose();
                     return;
                 }

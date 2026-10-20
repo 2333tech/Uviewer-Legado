@@ -11,6 +11,7 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using WebDav;
+using Uviewer.Services;
 using Windows.Security.Credentials;
 
 namespace Uviewer
@@ -52,13 +53,50 @@ namespace Uviewer
     /// <summary>
     /// WebDAV 서비스 레이어. 서버 관리, PasswordVault 암호화 저장, 비동기 파일 작업.
     /// </summary>
-    public class WebDavService : IDisposable
+    public class WebDavService : IDisposable, IAsyncDisposable
     {
         private const string VaultResourcePrefix = "Uviewer_WebDav_";
 
         private HttpClient? _httpClient;
         private WebDavClient? _webDavClient;
         private WebDavServerInfo? _currentServer;
+        private readonly object _tempGate = new();
+        private LeasedTempDirectory? _tempDirectory;
+        private readonly List<FileStream> _tempStreams = new();
+        private bool _disposed;
+
+        private string GetTempFolder()
+        {
+            lock (_tempGate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                _tempDirectory ??= LeasedTempDirectory.Create(Path.Combine(Path.GetTempPath(), "Uviewer", "WebDav"), "instance_");
+                return _tempDirectory.Folder;
+            }
+        }
+
+        private FileStream CreateTempStream(string path, FileAccess access, FileOptions options = FileOptions.None)
+        {
+            lock (_tempGate)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                var stream = new FileStream(path, FileMode.Create, access, FileShare.None, 81920, options);
+                _tempStreams.RemoveAll(previous => !previous.CanRead && !previous.CanWrite);
+                _tempStreams.Add(stream);
+                return stream;
+            }
+        }
+
+        private void CloseTempStreams()
+        {
+            foreach (var stream in _tempStreams)
+            {
+                try { stream.Dispose(); }
+                catch (IOException ex) { System.Diagnostics.Debug.WriteLine(ex); }
+            }
+            _tempStreams.Clear();
+        }
 
         public WebDavServerInfo? CurrentServer => _currentServer;
         public bool IsConnected => _webDavClient != null;
@@ -464,26 +502,33 @@ namespace Uviewer
                         if (totalRead > MemoryStreamThreshold)
                         {
                             // 임계값 초과 → 임시 파일로 전환
-                            var tempDir = Path.Combine(Path.GetTempPath(), "Uviewer", "WebDav");
-                            Directory.CreateDirectory(tempDir);
+                            var tempDir = await Task.Run(GetTempFolder, token).ConfigureAwait(false);
                             var tempPath = Path.Combine(tempDir, $"stream_{Guid.NewGuid():N}{Path.GetExtension(remotePath)}");
 
-                            var fileStream = new FileStream(tempPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 81920, FileOptions.DeleteOnClose);
-                            // MemoryStream에 이미 읽은 데이터를 파일로 복사
-                            memoryStream.Position = 0;
-                            await memoryStream.CopyToAsync(fileStream, token);
-                            await memoryStream.DisposeAsync();
-
-                            // 나머지를 파일로 계속 쓰기
-                            await fileStream.WriteAsync(buffer, 0, bytesRead, token);
-                            while ((bytesRead = await response.Stream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
+                            var fileStream = CreateTempStream(tempPath, FileAccess.ReadWrite, FileOptions.DeleteOnClose);
+                            try
                             {
-                                await fileStream.WriteAsync(buffer, 0, bytesRead, token);
-                            }
+                                // MemoryStream에 이미 읽은 데이터를 파일로 복사
+                                memoryStream.Position = 0;
+                                await memoryStream.CopyToAsync(fileStream, token);
+                                await memoryStream.DisposeAsync();
 
-                            fileStream.Position = 0;
-                            System.Diagnostics.Debug.WriteLine($"WebDAV: Large file ({totalRead} bytes) streamed to temp file.");
-                            return fileStream;
+                                // 나머지를 파일로 계속 쓰기
+                                await fileStream.WriteAsync(buffer, 0, bytesRead, token);
+                                while ((bytesRead = await response.Stream.ReadAsync(buffer, 0, buffer.Length, token)) > 0)
+                                {
+                                    await fileStream.WriteAsync(buffer, 0, bytesRead, token);
+                                }
+
+                                fileStream.Position = 0;
+                                System.Diagnostics.Debug.WriteLine($"WebDAV: Large file ({totalRead} bytes) streamed to temp file.");
+                                return fileStream;
+                            }
+                            catch
+                            {
+                                await fileStream.DisposeAsync();
+                                throw;
+                            }
                         }
 
                         await memoryStream.WriteAsync(buffer, 0, bytesRead, token);
@@ -531,15 +576,13 @@ namespace Uviewer
                 }
 
                  var fileName = Path.GetFileName(remotePath.TrimEnd('/'));
-                 var tempDir = Path.Combine(Path.GetTempPath(), "Uviewer", "WebDav");
-                 Directory.CreateDirectory(tempDir);
+                 var tempDir = await Task.Run(GetTempFolder, token).ConfigureAwait(false);
                  
                  // Use stable hash based on URL to allow caching during session
                  var urlKey = $"{_currentServer!.BaseUrl}{remotePath}";
                  var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(urlKey));
                  var stableHash = BitConverter.ToString(hashBytes).Replace("-", "").Substring(0, 12).ToLowerInvariant();
                  var subDir = Path.Combine(tempDir, stableHash);
-                 Directory.CreateDirectory(subDir);
                  var tempPath = Path.Combine(subDir, fileName);
  
                  if (File.Exists(tempPath))
@@ -553,7 +596,7 @@ namespace Uviewer
                      }
                  }
  
-                 using (var fileStream = File.Create(tempPath))
+                 using (var fileStream = CreateTempStream(tempPath, FileAccess.Write))
                  {
                      await response.Stream.CopyToAsync(fileStream, token);
                  }
@@ -578,42 +621,34 @@ namespace Uviewer
         public void Dispose()
         {
             Disconnect();
-            CleanupTempFiles();
+            lock (_tempGate)
+            {
+                _disposed = true;
+                CloseTempStreams();
+                _tempDirectory?.Dispose();
+                _tempDirectory = null;
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Disconnect();
+            LeasedTempDirectory? directory;
+            lock (_tempGate)
+            {
+                _disposed = true;
+                CloseTempStreams();
+                directory = _tempDirectory;
+                _tempDirectory = null;
+            }
+            if (directory != null) await directory.DeleteAsync().ConfigureAwait(false);
         }
 
         /// <summary>
         /// WebDAV 임시 다운로드 폴더 정리
         /// </summary>
-        // [안정성 수정] Thread.Sleep → Task.Delay로 전환하여 UI 스레드 블로킹 방지
-        public static async Task CleanupTempFilesAsync()
-        {
-            try
-            {
-                var tempDir = Path.Combine(Path.GetTempPath(), "Uviewer", "WebDav");
-                if (Directory.Exists(tempDir))
-                {
-                    for (int i = 0; i < 3; i++)
-                    {
-                        try { Directory.Delete(tempDir, recursive: true); break; }
-                        catch { await Task.Delay(100); }
-                    }
-                }
-
-                var baseTemp = Path.Combine(Path.GetTempPath(), "Uviewer");
-                if (Directory.Exists(baseTemp))
-                {
-                    try
-                    {
-                        if (!Directory.EnumerateFileSystemEntries(baseTemp).Any())
-                        {
-                            Directory.Delete(baseTemp);
-                        }
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-        }
+        public static Task CleanupTempFilesAsync() => Task.Run(() =>
+            LeasedTempDirectory.CleanupAbandoned(Path.Combine(Path.GetTempPath(), "Uviewer", "WebDav"), "*"));
 
         /// <summary>동기 래퍼 (하위 호환)</summary>
         public static void CleanupTempFiles()

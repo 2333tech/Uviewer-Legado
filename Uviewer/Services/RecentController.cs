@@ -407,11 +407,11 @@ namespace Uviewer.Services
             {
                 if (extension == ".7z")
                 {
-                    await host.OpenWebDavFileAsync(fileItem);
+                    await host.OpenWebDavFileAsync(fileItem, target.ArchiveEntryKey);
                 }
                 else
                 {
-                    await host.OpenWebDavArchiveAsync(fileItem);
+                    await host.OpenWebDavArchiveAsync(fileItem, target.ArchiveEntryKey);
                 }
 
                 await RestoreArchivePositionAsync(target, host);
@@ -475,11 +475,8 @@ namespace Uviewer.Services
                         if (!string.IsNullOrEmpty(archiveFolder) && Directory.Exists(archiveFolder))
                         {
                             host.LoadExplorerFolder(archiveFolder);
-                            if (!string.IsNullOrEmpty(target.ArchiveEntryKey))
-                            {
-                                await host.LoadImagesFromArchiveAsync(target.Path);
-                                await RestoreArchivePositionAsync(target, host);
-                            }
+                            await host.LoadImagesFromArchiveAsync(target.Path, target.ArchiveEntryKey);
+                            await RestoreArchivePositionAsync(target, host);
                         }
                     }
                     break;
@@ -501,8 +498,11 @@ namespace Uviewer.Services
                 return;
             }
 
-            host.CurrentImageIndex = entryIndex;
-            await host.DisplayCurrentImageAsync();
+            if (host.CurrentImageIndex != entryIndex)
+            {
+                host.CurrentImageIndex = entryIndex;
+                await host.DisplayCurrentImageAsync();
+            }
             if (target.ScrollOffset.HasValue)
             {
                 await host.RestoreTextScrollOffsetAsync(target.ScrollOffset.Value);

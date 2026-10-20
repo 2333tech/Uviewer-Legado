@@ -26,7 +26,7 @@ namespace Uviewer
                         RestartOperation = window._webDavState.RestartOperation,
                         DownloadToTempFileAsync = window._webDavService.DownloadToTempFileAsync,
                         DownloadFileAsync = window._webDavService.DownloadFileAsync,
-                        OpenLocalArchiveAsync = path => window._archiveDocumentController.LoadImagesFromArchiveAsync(path),
+                        OpenLocalArchiveAsync = (path, entryKey) => window._archiveDocumentController.LoadImagesFromArchiveAsync(path, entryKey),
                         OpenLocalPdfAsync = path => window._pdfDocumentController.LoadImagesFromPdfAsync(path),
                         PrepareSequentialEntries = window.PrepareWebDavSequentialEntries,
                         OpenEpubFileAsync = (file, entry, token) => window._epubReaderController.LoadEpubFileAsync(file, entry, token),

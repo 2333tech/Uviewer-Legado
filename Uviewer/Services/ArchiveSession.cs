@@ -174,7 +174,12 @@ namespace Uviewer.Services
                 // Await just this image outside the archive lock. Preloads must
                 // not queue repeated solid-block decodes ahead of the visible page.
                 string? path = await ready.WaitAsync(token).ConfigureAwait(false);
-                if (path != null) return await File.ReadAllBytesAsync(path, token).ConfigureAwait(false);
+                if (path != null)
+                {
+                    try { return await File.ReadAllBytesAsync(path, token).ConfigureAwait(false); }
+                    catch (IOException) { } // Re-read from the archive if the cache disappeared.
+                    catch (UnauthorizedAccessException) { }
+                }
             }
 
             await _lock.WaitAsync(token).ConfigureAwait(false);
@@ -245,25 +250,48 @@ namespace Uviewer.Services
             return resolvedKey == null ? null : await ReadEntryBytesCoreAsync(resolvedKey, token).ConfigureAwait(false);
         }
 
-        public async Task ExtractSevenZipEntriesInBackgroundAsync(
+        public async Task PrepareSevenZipImageCacheAsync(
             string archivePath,
             IReadOnlyList<ImageEntry> imageEntries,
             Func<int> getCurrentIndex,
             SevenZipExtractionCoordinator extraction,
             CancellationToken token)
         {
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            extraction.TrackExtraction(completion.Task);
             try
             {
-                string tempFolder = extraction.CreateTempFolder();
-
-                if (Current7zArchive == null || CurrentPath != archivePath) return;
-                var cache = new SevenZipImageCache(Current7zArchive.Entries, imageEntries, tempFolder, token);
-                _sevenZipCache?.Cancel();
-                _sevenZipCache = cache;
-                await cache.ExtractAsync(archivePath, getCurrentIndex).ConfigureAwait(false);
+                // Folder creation may wait behind startup scavenging. Keep that
+                // wait, native enumeration and cache preparation off the dispatcher.
+                string tempFolder = await extraction.CreateTempFolderAsync(token).ConfigureAwait(false);
+                SevenZipImageCache cache;
+                await _lock.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (Current7zArchive == null || CurrentPath != archivePath)
+                    {
+                        completion.TrySetResult();
+                        return;
+                    }
+                    cache = new SevenZipImageCache(Current7zArchive.Entries, imageEntries, tempFolder, token);
+                    _sevenZipCache?.Cancel();
+                    _sevenZipCache = cache;
+                }
+                finally { _lock.Release(); }
+                _ = CompleteExtractionAsync(cache.ExtractAsync(archivePath, getCurrentIndex), completion);
+                return;
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { Debug.WriteLine($"7z background extraction failed: {ex}"); }
+            completion.TrySetResult();
+        }
+
+        private static async Task CompleteExtractionAsync(Task task, TaskCompletionSource completion)
+        {
+            try { await task.ConfigureAwait(false); }
+            catch (Exception ex) { Debug.WriteLine($"7z background extraction failed: {ex}"); }
+            finally { completion.TrySetResult(); }
         }
 
         public void Dispose()
