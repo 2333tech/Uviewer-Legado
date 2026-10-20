@@ -294,6 +294,55 @@ namespace Uviewer
         }
 
         /// <summary>
+        /// 书源管理入口：图形化查看/编辑全部已导入的书源条目。
+        /// <para>对话框里的"导入 JSON"按钮会先关闭管理器再调导入，导入完成后
+        /// 重新打开管理器——这样用户能立刻看到新条目，不必手动重开。</para>
+        /// </summary>
+        internal async Task ShowBookSourceManagerAsync()
+        {
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            var dialog = new BookSourceManagerDialog(
+                RootGrid,
+                service,
+                async _ =>
+                {
+                    // 从管理器里点"导入"：关掉管理器 → 导入 → 再开回来显示新条目
+                    await ImportBookSourcesAsync().ConfigureAwait(true);
+                    await ShowBookSourceManagerAsync().ConfigureAwait(true);
+                });
+
+            await dialog.ShowAsync().ConfigureAwait(true);
+        }
+
+        /// <summary>
+        /// 导入书源 JSON（多书源数组文件，如 Sample/*.json）。
+        /// <para>导入用库侧流式实现（5MB/400+ 源峰值内存有界），结果以通知形式反馈
+        /// 新增/更新/跳过数量。导入后管理器里的内存快照自动失效，下次读取即见新数据。</para>
+        /// </summary>
+        internal async Task ImportBookSourcesAsync()
+        {
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            var importer = new BookSourceImportService(
+                service,
+                RootGrid,
+                () => GetWindowHandle(),
+                (msg, icon, color) => ShowNotification(msg, icon, color));
+
+            await importer.PickAndImportAsync().ConfigureAwait(true);
+        }
+
+        /// <summary>取主窗口句柄（FileOpenPicker 在 WinUI3 里必须绑定窗口才能正确弹出）。</summary>
+        private nint GetWindowHandle()
+        {
+            var window = AppWindow;
+            return window is null ? nint.Zero : WinRT.Interop.WindowNative.GetWindowHandle(window);
+        }
+
+        /// <summary>
         /// 静态目录提供器：书源目录在打开时已全部取回（阶段 2 的分页并行已完成），
         /// 不需要 provider 再去拉一次。
         /// </summary>

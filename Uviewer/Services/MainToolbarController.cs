@@ -17,6 +17,10 @@ namespace Uviewer.Services
         public Func<Task> SelectExternalProgramAsync { get; init; } = null!;
         /// <summary>书源搜索（阶段 5 集成）：打开书源搜索对话框。</summary>
         public Func<Task> ShowLegadoSearchAsync { get; init; } = null!;
+        /// <summary>书源管理（查看/编辑条目）。</summary>
+        public Func<Task> ShowLegadoManagerAsync { get; init; } = null!;
+        /// <summary>导入书源 JSON。</summary>
+        public Func<Task> ImportLegadoSourcesAsync { get; init; } = null!;
         public Action SaveToolbarCustomization { get; init; } = null!;
         public Func<string, Task> ApplyLanguageAsync { get; init; } = null!;
         public Action<bool> SetMatchControlDirection { get; init; } = null!;
@@ -91,6 +95,8 @@ namespace Uviewer.Services
             _toolbar.ChangeUiFontRequested += (_, _) => _handlers.ChangeUiFont();
             _toolbar.SelectExternalProgramRequested += (_, _) => RunAsync(_handlers.SelectExternalProgramAsync);
             _toolbar.LegadoSearchRequested += (_, _) => RunAsync(_handlers.ShowLegadoSearchAsync);
+            _toolbar.LegadoManageRequested += (_, _) => RunAsync(_handlers.ShowLegadoManagerAsync);
+            _toolbar.LegadoImportRequested += (_, _) => RunAsync(_handlers.ImportLegadoSourcesAsync);
             _toolbar.ToolbarCustomizationChanged += (_, _) => _handlers.SaveToolbarCustomization();
             _toolbar.LanguageSelected += (_, language) => RunAsync(() => _handlers.ApplyLanguageAsync(language));
             _toolbar.MatchControlDirectionChanged += (_, isChecked) => _handlers.SetMatchControlDirection(isChecked);

@@ -12,9 +12,9 @@ using CoreTocItem = BookSource.Core.Models.TocItem;
 namespace Uviewer.Services.Legado
 {
     /// <summary>
-    /// 书源搜索：一处搜索多个启用书源，结果按书源归组。
-    /// <para>并发策略沿用库侧 <c>SearchService.SearchAllAsync</c>（信号量限流 16，
-    /// 按输入书源顺序合并 ⇒ 与串行结果一致）；此处只做结果整形与能力标注。</para>
+    /// 书源搜索：一处搜索多个启用书源中的<b>书籍</b>（按书名/作者关键词），
+    /// 结果按书源归组。关键词经各书源的 <c>searchUrl</c> 模板插值后请求对应站点，
+    /// <b>不是</b>拿书源名去做匹配。
     /// </summary>
     public sealed class BookSourceSearchService
     {
@@ -25,13 +25,13 @@ namespace Uviewer.Services.Legado
             _service = service ?? throw new ArgumentNullException(nameof(service));
         }
 
-        /// <summary>搜索结果分组（一个书源一组，组内是该源命中的书）。</summary>
+        /// <summary>书源分组（一个书源一组，组内是该源命中的书）。</summary>
         public sealed record SearchGroup(
             string SourceName,
             string SourceUrl,
             IReadOnlyList<BookSearchHit> Hits);
 
-        /// <summary>单条搜索命中（书名/作者/详情 URL）。</summary>
+        /// <summary>单条搜索命中（书名/作者/书籍 URL + 所属书源）。</summary>
         public sealed record BookSearchHit(
             string Name,
             string Author,
@@ -40,55 +40,90 @@ namespace Uviewer.Services.Legado
             string SourceUrl);
 
         /// <summary>
-        /// 在全部启用且当前引擎可跑通的书源中搜索。
-        /// <para>结果按书源分组并丢掉空组，避免 UI 出现"某源 0 条"的噪声标题。</para>
+        /// 在全部启用书源中搜索书籍。
+        /// <para><paramref name="progress"/> 回报「已完成/总数」，UI 显示为 "X/X"。
+        /// 多源搜索常在数十秒量级（数百源 / 16 并发 / 单源 15s 超时），没有进度
+        /// 用户无法区分"正在搜"与"卡死"——这正是本功能第一版被反馈"一直搜索中"的原因之一。</para>
+        /// <para>结果<b>边搜边出</b>（Channel 流），不等全部搜完才刷列表：
+        /// 长尾源动辄十几秒，先出来的命中能立刻点开读。</para>
         /// </summary>
         public async Task<IReadOnlyList<SearchGroup>> SearchAsync(
-            string keyword, int? maxConcurrency = null, CancellationToken token = default)
+            string keyword,
+            int? maxConcurrency = null,
+            IProgress<SearchProgress>? progress = null,
+            CancellationToken token = default)
         {
-            if (string.IsNullOrWhiteSpace(keyword))
+            var sources = _service.GetSearchableSources();
+            if (string.IsNullOrWhiteSpace(keyword) || sources.Count == 0)
             {
+                progress?.Report(new SearchProgress(0, 0));
                 return Array.Empty<SearchGroup>();
             }
 
-            var sources = _service.Sources.GetEnabled()
-                .Where(s => !string.IsNullOrWhiteSpace(s.SearchUrl) && s.RuleSearch is not null)
-                .ToList();
-            if (sources.Count == 0)
-            {
-                return Array.Empty<SearchGroup>();
-            }
+            // 限流与库侧 BookSourceLimits 对齐（默认 16）。这里自己控流而不用库的
+            // SearchAllAsync，是因为要"边搜边出"——后者一次性返回全部结果，途中无中间态可展示。
+            var limit = Math.Clamp(
+                maxConcurrency ?? BookSourceLimits.DefaultConcurrency, 1, BookSourceLimits.MaxConcurrency);
+            using var sem = new SemaphoreSlim(limit, limit);
 
-            // 每源一个任务，库侧按 BookSourceLimits 限流；这里不额外串行化
-            var tasks = sources.Select(async s =>
+            var channel = System.Threading.Channels.Channel.CreateUnbounded<SearchGroup>();
+            var completed = 0;
+            progress?.Report(new SearchProgress(0, sources.Count));
+
+            var workers = sources.Select(async source =>
             {
-                var results = await SearchOneAsync(s, keyword, token).ConfigureAwait(false);
-                return (Source: s, Results: results);
+                await sem.WaitAsync(token).ConfigureAwait(false);
+                try
+                {
+                    var results = await SearchOneAsync(source, keyword, token).ConfigureAwait(false);
+
+                    // 无论命中与否都推进进度：用户关心的是"搜过几个源"，不是"找到几条"
+                    progress?.Report(new SearchProgress(Interlocked.Increment(ref completed), sources.Count));
+
+                    if (results.Count > 0)
+                    {
+                        await channel.Writer
+                            .WriteAsync(BuildGroup(source, results), token)
+                            .ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    sem.Release();
+                }
             }).ToArray();
 
-            var all = await Task.WhenAll(tasks).ConfigureAwait(false);
-
-            var groups = new List<SearchGroup>(all.Length);
-            foreach (var (source, results) in all)
+            // 汇总协程：全部 worker 结束后关闭 Channel，ReadAllAsync 随之正常结束
+            _ = Task.Run(async () =>
             {
-                if (results.Count == 0)
+                try
                 {
-                    continue;
+                    await Task.WhenAll(workers).ConfigureAwait(false);
                 }
+                finally
+                {
+                    channel.Writer.TryComplete();
+                }
+            }, token);
 
-                groups.Add(new SearchGroup(
-                    source.BookSourceName,
-                    source.BookSourceUrl,
-                    results.Select(r => new BookSearchHit(
-                        r.Name ?? string.Empty,
-                        r.Author ?? string.Empty,
-                        r.BookUrl ?? string.Empty,
-                        source.BookSourceName,
-                        source.BookSourceUrl)).ToList()));
+            var groups = new List<SearchGroup>();
+            await foreach (var group in channel.Reader.ReadAllAsync(token).ConfigureAwait(false))
+            {
+                groups.Add(group);
             }
 
             return groups;
         }
+
+        /// <summary>把库侧搜索结果整形为一个书源分组。</summary>
+        private static SearchGroup BuildGroup(BookSourceModel source, List<CoreSearchResult> results) =>
+            new(source.BookSourceName, source.BookSourceUrl,
+                results.Select(r => new BookSearchHit(
+                    r.Name ?? string.Empty,
+                    r.Author ?? string.Empty,
+                    r.BookUrl ?? string.Empty,
+                    source.BookSourceName,
+                    source.BookSourceUrl)).ToList());
 
         /// <summary>
         /// 单源搜索：书源级异常不外抛（一个源挂掉不该让整次搜索失败），
@@ -102,18 +137,21 @@ namespace Uviewer.Services.Legado
                 var search = new SearchService();
                 return await search.SearchAsync(source, keyword, 1, token).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
             {
+                // 只有"用户主动取消"才向上传播；HttpClient 超时抛的 TaskCanceledException
+                // 会走到下面的兜底（与库侧同一处理，否则单个卡住的源会炸掉整次搜索）
                 throw;
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Legado search failed for {source.BookSourceName}: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine(
+                    $"Legado search failed for {source.BookSourceName}: {ex.Message}");
                 return new List<CoreSearchResult>();
             }
         }
 
-        /// <summary>用搜索结果直接打开一本书（深链：B 类源不经搜索也能读）。</summary>
+        /// <summary>用搜索结果直接打开一本书（深链：不需再走搜索结果页）。</summary>
         public BookSourceReadingSession CreateSession(BookSearchHit hit)
         {
             var source = _service.Sources.GetByUrl(hit.SourceUrl)

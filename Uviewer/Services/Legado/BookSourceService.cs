@@ -120,22 +120,106 @@ namespace Uviewer.Services.Legado
         /// </summary>
         public void ApplyReplaceRules() => _purifier.Rules = _replaceRules.GetAll();
 
-        /// <summary>
-        /// 并发搜索全部启用书源（阶段 1）。<paramref name="maxConcurrency"/> 为 null 时用
-        /// <see cref="BookSourceLimits.DefaultConcurrency"/>（16）。
-        /// <para>前置过滤：跳过需要阶段 4 能力（java.*/WebView）的书源——它们搜索必然拿到
-        /// 空结果或错结果，混进来只会污染结果列表（能力评估见 <see cref="BookSourceCapabilities"/>）。</para>
-        /// </summary>
-        public Task<List<SearchResult>> SearchAllAsync(
-            string keyword, int? maxConcurrency = null, CancellationToken token = default)
-        {
-            var candidates = _sources.GetEnabled()
-                .Where(s => !string.IsNullOrWhiteSpace(s.SearchUrl))
-                .Where(s => !BookSourceCapabilities.ReadingNeedsStage4(s))
-                .ToList();
+/// <summary>
+    /// 并发搜索全部启用书源（阶段 1）。<paramref name="maxConcurrency"/> 为 null 时用
+    /// <see cref="BookSourceLimits.DefaultConcurrency"/>（16）。
+    /// <para>前置过滤：跳过需要阶段 4 能力（java.*/WebView）的书源——它们搜索必然拿到
+    /// 空结果或错结果，混进来只会污染结果列表（能力评估见 <see cref="BookSourceCapabilities"/>）。</para>
+    /// <para><paramref name="progress"/> 以「已完成/总数」回报，UI 需显示为 "X/X"。
+    /// 多源搜索常在数十秒量级，没有进度用户无法区分"正在搜"与"卡死"。</para>
+    /// </summary>
+    public Task<List<SearchResult>> SearchAllAsync(
+        string keyword,
+        int? maxConcurrency = null,
+        IProgress<SearchProgress>? progress = null,
+        CancellationToken token = default)
+    {
+        var candidates = GetSearchableSources();
+        return _search.SearchAllAsync(candidates, keyword, maxConcurrency, progress, token);
+    }
 
-            return _search.SearchAllAsync(candidates, keyword, maxConcurrency, token);
+    /// <summary>
+    /// 可参与搜索的书源：已启用 + 有 searchUrl/ruleSearch + 阅读链路不需阶段 4。
+    /// <para>这里只按**阅读链路**（ruleToc/ruleContent）过滤，而不是要求整源完整——
+    /// 一个源可能搜索规则用了 java.*（阶段 4 未做）但目录/正文是干净的，
+    /// 这种源仍应让用户能搜到并深链阅读，只是结果可能不准。全源严格过滤会砍掉过多可用源。</para>
+    /// </summary>
+    public List<BookSourceModel> GetSearchableSources() => _sources.GetEnabled()
+        .Where(s => !string.IsNullOrWhiteSpace(s.SearchUrl) && s.RuleSearch is not null)
+        .Where(s => !BookSourceCapabilities.ReadingNeedsStage4(s))
+        .ToList();
+
+    // ============================================================
+    // 书源管理（查看 / 编辑 / 导入 / 启停）
+    // ============================================================
+
+    /// <summary>
+    /// 从 JSON 文件导入书源（支持多书源数组，如 Sample/*.json）。
+    /// <para>走库侧流式导入（UTF-8 结构扫描 + 256 条/批合入，峰值内存有界），
+    /// 因此 5MB/400+ 源的大文件也不会把内存顶爆。返回新增/更新/跳过数量。</para>
+    /// <para>导入后<b>无需重启</b>：管理器是内存权威 + 惰性快照，下次读即见新数据。</para>
+    /// </summary>
+    public async Task<ImportResult> ImportFromFileAsync(string path, CancellationToken token = default)
+    {
+        var result = await _sources.ImportFromFileAsync(path, token).ConfigureAwait(false);
+        return result;
+    }
+
+    /// <summary>
+    /// 保存单个书源（同 URL 覆盖）。用于管理器里的"编辑后保存"。
+    /// <para>BookSource 的按主键 Upsert 语义天然是覆盖：<see cref="BookSourceManager.Upsert"/>
+    /// 对已存在的 URL 保留原插入序号，因此落盘顺序仍等于导入顺序（确定性）。</para>
+    /// </summary>
+    public void SaveSource(BookSourceModel source)
+    {
+        if (source is null || string.IsNullOrEmpty(source.BookSourceUrl))
+        {
+            throw new ArgumentException("书源缺少 bookSourceUrl，无法保存", nameof(source));
         }
+
+        _sources.Upsert(source);
+    }
+
+    /// <summary>删除书源（按 URL）。</summary>
+    public bool RemoveSource(string bookSourceUrl) => _sources.Remove(bookSourceUrl);
+
+    /// <summary>启用/禁用书源（改 Enabled 后落盘）。</summary>
+    public async Task SetSourceEnabledAsync(BookSourceModel source, bool enabled, CancellationToken token = default)
+    {
+        if (source.Enabled == enabled)
+        {
+            return;
+        }
+
+        source.Enabled = enabled;
+        _sources.Upsert(source);
+        await _sources.SaveAsync(token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 删除书源并落盘（管理器里的"删除"按钮）。
+    /// <para>同时清掉该源相关的阅读进度——书源没了，进度键（源 URL + 书籍 URL）永远不会再被读到，
+    /// 留着只是垃圾数据。</para>
+    /// </summary>
+    public async Task RemoveSourceAsync(string bookSourceUrl, CancellationToken token = default)
+    {
+        if (_sources.Remove(bookSourceUrl))
+        {
+            foreach (var p in _readingStore.Positions.Where(p => p.BookSourceUrl == bookSourceUrl).ToList())
+            {
+                _readingStore.Remove(p.BookSourceUrl, p.BookUrl);
+            }
+
+            await _sources.SaveAsync(token).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>编辑后保存单个书源并落盘（管理器"保存"按钮）。</summary>
+    public Task SaveSourceAsync(BookSourceModel source, CancellationToken token = default)
+    {
+        SaveSource(source);
+        return _sources.SaveAsync(token);
+    }
 
         /// <summary>
         /// 记录阅读进度（仅内存）。批量翻章时逐章写内存是廉价的 O(1) 操作；

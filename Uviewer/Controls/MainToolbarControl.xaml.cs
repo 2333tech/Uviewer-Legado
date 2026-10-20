@@ -21,6 +21,10 @@ namespace Uviewer.Controls
         public event EventHandler? ToolbarCustomizationChanged;
         /// <summary>书源搜索入口被点击（阶段 5 集成；由 MainWindow 订阅并打开搜索对话框）。</summary>
         public event EventHandler? LegadoSearchRequested;
+        /// <summary>书源管理入口被点击（查看/编辑已导入的书源条目）。</summary>
+        public event EventHandler? LegadoManageRequested;
+        /// <summary>导入书源 JSON 入口被点击。</summary>
+        public event EventHandler? LegadoImportRequested;
         public event EventHandler<string>? LanguageSelected;
         public event EventHandler<bool>? MatchControlDirectionChanged;
         public event EventHandler<bool>? FastNavigationChanged;
@@ -125,6 +129,8 @@ namespace Uviewer.Controls
             SelectExternalProgramMenuItem.Click += (_, _) => SelectExternalProgramRequested?.Invoke(this, EventArgs.Empty);
             CustomizeToolbarMenuItem.Click += async (_, _) => await ShowToolbarCustomizationDialogAsync();
             LegadoSearchMenuItem.Click += (_, _) => LegadoSearchRequested?.Invoke(this, EventArgs.Empty);
+            LegadoManageMenuItem.Click += (_, _) => LegadoManageRequested?.Invoke(this, EventArgs.Empty);
+            LegadoImportMenuItem.Click += (_, _) => LegadoImportRequested?.Invoke(this, EventArgs.Empty);
             LangAutoItem.Click += LanguageItem_Click;
             LangKoItem.Click += LanguageItem_Click;
             LangEnItem.Click += LanguageItem_Click;
@@ -284,6 +290,9 @@ namespace Uviewer.Controls
                 : Strings.ExternalProgramMenuWithName(System.IO.Path.GetFileName(_externalProgramPath));
             CustomizeToolbarMenuItem.Text = Strings.ToolbarCustomization;
             LegadoSearchMenuItem.Text = Strings.LegadoSearch;
+            LegadoManageMenuItem.Text = Strings.LegadoManageSources;
+            LegadoImportMenuItem.Text = Strings.LegadoImportSources;
+            ToolTipService.SetToolTip(LegadoSearchMenuItem, Strings.LegadoSearchHint);
             MatchControlDirectionMenuItem.Text = Strings.MatchControlDirection;
             FastNavigationMenuItem.Text = Strings.FastNavigation;
             ToolTipService.SetToolTip(MatchControlDirectionMenuItem, Strings.MatchControlDirectionTooltip);

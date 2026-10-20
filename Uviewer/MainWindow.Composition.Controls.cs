@@ -24,6 +24,8 @@ namespace Uviewer
                             SelectExternalProgramAsync = () => window._externalProgramSettingsController.SelectExternalProgramAsync(),
                             // Stage 5: Legado book-source search entry
                             ShowLegadoSearchAsync = () => window._documentReaderController.ShowBookSourceSearchAsync(),
+                            ShowLegadoManagerAsync = () => window._documentReaderController.ShowBookSourceManagerAsync(),
+                            ImportLegadoSourcesAsync = () => window._documentReaderController.ImportBookSourcesAsync(),
                             SaveToolbarCustomization = () => window._windowSettingsCoordinator.SaveWindowSettings(),
                             ApplyLanguageAsync = language => window._documentReaderController.ApplyLanguageSelectionAsync(language),
                             SetMatchControlDirection = isChecked =>

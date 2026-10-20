@@ -720,6 +720,8 @@
   <data name="TextOptionsHint" xml:space="preserve"><value>Applies to horizontal plain text and Aozora reading. Wrap width is limited to the window width.</value></data>
   <data name="TextHorizontalTwoColumns" xml:space="preserve"><value>Two-column horizontal view</value></data>
   <data name="TextHorizontalTwoColumnsHint" xml:space="preserve"><value>Applies to Aozora and EPUB text. Horizontal reading uses two columns when the window width is at least 1.2 times its height.</value></data>
-  <data name="LegadoSearch" xml:space="preserve"><value>Search book sources</value></data>
-  <data name="LegadoSearchHint" xml:space="preserve"><value>Search books across all enabled book sources</value></data>
+  <data name="LegadoManageSources" xml:space="preserve"><value>Manage book sources</value></data>
+  <data name="LegadoImportSources" xml:space="preserve"><value>Import book sources JSON…</value></data>
+  <data name="LegadoSearch" xml:space="preserve"><value>Search books</value></data>
+  <data name="LegadoSearchHint" xml:space="preserve"><value>Search books by title/author across enabled sources</value></data>
 </root>
