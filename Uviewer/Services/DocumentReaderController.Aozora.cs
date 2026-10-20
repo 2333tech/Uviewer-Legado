@@ -96,7 +96,7 @@ namespace Uviewer
                 _settingsManager.FontFamily,
                 GetFontWeightForFamily,
                 isVertical ? DoesVerticalImageExist : DoesAozoraImageExist,
-                isVertical && (_isSideBySideMode || CanUseAutoDoublePageForCurrentWindow),
+                isVertical && CanPairVerticalTextImages,
                 isVertical ? new Func<string, bool>(ShouldPairTextImage) : null,
                 token,
                 isVertical ? 1 : horizontalColumnCount ?? (UseHorizontalTwoColumns ? 2 : 1));
