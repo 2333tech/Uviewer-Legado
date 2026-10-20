@@ -16,11 +16,13 @@ namespace Uviewer
                 var shell = new ShellFeatureModule();
                 var document = new DocumentFeatureModule();
                 var webDav = new WebDavFeatureModule();
+                var legado = new LegadoFeatureModule();
 
                 return new MainWindowFeatureModules(
                     new IMainWindowCompositionModule[]
                     {
                         text,
+                        legado,
                         epub,
                         image,
                         shell,
@@ -64,6 +66,15 @@ namespace Uviewer
             private sealed class TextFeatureModule : IMainWindowCompositionModule
             {
                 public void Initialize(MainWindow window) => TextFeatureComposition.Initialize(window);
+            }
+
+            /// <summary>
+            /// 书源阅读（阶段 5 集成）。放在 Text 之后：书源正文复用文本渲染管线，
+            /// 依赖 <c>_documentReaderController</c> 已构造完成。
+            /// </summary>
+            private sealed class LegadoFeatureModule : IMainWindowCompositionModule
+            {
+                public void Initialize(MainWindow window) => LegadoFeatureComposition.Initialize(window);
             }
 
             private sealed class EpubFeatureModule : IMainWindowCompositionModule

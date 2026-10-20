@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Stage 5 integration tests.
+
+    These tests deliberately do NOT reference the WinUI app project (a WinUI exe
+    cannot be referenced cleanly, and its types drag in XAML activation). Instead we
+    link the two pure-logic source files that carry all the algorithmic risk in the
+    integration layer and reference the real BookSource.Core library:
+
+      * LegadoHtmlText   — chapter HTML -> plain text conversion
+      * LegadoTocAdapter — library TOC -> host TOC entry mapping
+
+    The remaining integration code (session, dialog, controller) is orchestration:
+    it is thin and is exercised by the library-side test suite.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>Uviewer.Services.Legado</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <!-- 链接宿主的纯逻辑实现（不复制代码，保证测的就是集成层真实代码） -->
+    <Compile Include="..\Uviewer\Services\Legado\LegadoHtmlText.cs" Link="Host\LegadoHtmlText.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\LegadoTocAdapter.cs" Link="Host\LegadoTocAdapter.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\BookSource.Core\BookSource.Core.csproj" />
+  </ItemGroup>
+
+</Project>

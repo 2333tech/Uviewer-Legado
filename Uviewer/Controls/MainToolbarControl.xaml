@@ -94,6 +94,12 @@
                                     <FontIcon Glyph="&#xE771;"/>
                                 </MenuFlyoutItem.Icon>
                             </MenuFlyoutItem>
+                            <!-- Stage 5: search books across all enabled book sources (Legado) -->
+                            <MenuFlyoutItem x:Name="LegadoSearchMenuItem" Text="{x:Bind app:Strings.LegadoSearch}">
+                                <MenuFlyoutItem.Icon>
+                                    <FontIcon Glyph="&#xE721;"/>
+                                </MenuFlyoutItem.Icon>
+                            </MenuFlyoutItem>
                             <MenuFlyoutSubItem x:Name="LanguageMenuItem" Text="{x:Bind app:Strings.LanguageSelection}">
                                 <MenuFlyoutSubItem.Icon>
                                     <FontIcon Glyph="&#xE909;"/>

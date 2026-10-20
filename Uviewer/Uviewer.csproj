@@ -55,6 +55,15 @@
   </ItemGroup>
 
   <!--
+    Stage 5 (Legado book-source reading) references the sibling BookSource.Core library.
+    It targets plain net10.0 (no Windows TFM), so it can be consumed from this
+    net10.0-windows project without any TFM downgrade.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\BookSource.Core\BookSource.Core.csproj" />
+  </ItemGroup>
+
+  <!--
     Defining the "Msix" ProjectCapability here allows the Single-project MSIX Packaging
     Tools extension to be activated for this project even if the Windows App SDK Nuget
     package has not yet been restored.
@@ -104,7 +113,9 @@
     <AppxBundle>Never</AppxBundle>
     <HoursBetweenUpdateChecks>0</HoursBetweenUpdateChecks>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
-    <PackageCertificateThumbprint>5CAA27D7025C66B313695ACBD2A28F00084BE89E</PackageCertificateThumbprint>
-    <GenerateTemporaryStoreCertificate>True</GenerateTemporaryStoreCertificate>
+    <PackageCertificateThumbprint></PackageCertificateThumbprint>
+    <PackageCertificateKeyFile>Uviewer_TemporaryKey.pfx</PackageCertificateKeyFile>
+    <PackageCertificatePassword>UviewerTestCert</PackageCertificatePassword>
+    <GenerateTemporaryStoreCertificate>False</GenerateTemporaryStoreCertificate>
   </PropertyGroup>
 </Project>

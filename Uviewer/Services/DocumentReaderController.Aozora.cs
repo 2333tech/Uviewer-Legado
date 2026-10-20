@@ -1410,6 +1410,13 @@ namespace Uviewer
             {
                 MainToolbar.HideTextTocFlyout();
 
+                // 书源目录优先：SourceLineNumber 在书源目录里是"章节下标"而非行号，
+                // 必须先于按行跳转的分支处理（阶段 5 集成）。
+                if (TryHandleLegadoTocClick(item))
+                {
+                    return;
+                }
+
                 if (_isEpubMode)
                 {
                     if (!string.IsNullOrEmpty(item.EpubLink))

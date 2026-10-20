@@ -15,6 +15,8 @@ namespace Uviewer.Services
         public Action ChangeColors { get; init; } = null!;
         public Action ChangeUiFont { get; init; } = null!;
         public Func<Task> SelectExternalProgramAsync { get; init; } = null!;
+        /// <summary>书源搜索（阶段 5 集成）：打开书源搜索对话框。</summary>
+        public Func<Task> ShowLegadoSearchAsync { get; init; } = null!;
         public Action SaveToolbarCustomization { get; init; } = null!;
         public Func<string, Task> ApplyLanguageAsync { get; init; } = null!;
         public Action<bool> SetMatchControlDirection { get; init; } = null!;
@@ -88,6 +90,7 @@ namespace Uviewer.Services
             _toolbar.ChangeColorsRequested += (_, _) => _handlers.ChangeColors();
             _toolbar.ChangeUiFontRequested += (_, _) => _handlers.ChangeUiFont();
             _toolbar.SelectExternalProgramRequested += (_, _) => RunAsync(_handlers.SelectExternalProgramAsync);
+            _toolbar.LegadoSearchRequested += (_, _) => RunAsync(_handlers.ShowLegadoSearchAsync);
             _toolbar.ToolbarCustomizationChanged += (_, _) => _handlers.SaveToolbarCustomization();
             _toolbar.LanguageSelected += (_, language) => RunAsync(() => _handlers.ApplyLanguageAsync(language));
             _toolbar.MatchControlDirectionChanged += (_, isChecked) => _handlers.SetMatchControlDirection(isChecked);

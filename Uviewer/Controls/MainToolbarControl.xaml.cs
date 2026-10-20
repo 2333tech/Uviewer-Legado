@@ -19,6 +19,8 @@ namespace Uviewer.Controls
         public event EventHandler? ChangeUiFontRequested;
         public event EventHandler? SelectExternalProgramRequested;
         public event EventHandler? ToolbarCustomizationChanged;
+        /// <summary>书源搜索入口被点击（阶段 5 集成；由 MainWindow 订阅并打开搜索对话框）。</summary>
+        public event EventHandler? LegadoSearchRequested;
         public event EventHandler<string>? LanguageSelected;
         public event EventHandler<bool>? MatchControlDirectionChanged;
         public event EventHandler<bool>? FastNavigationChanged;
@@ -122,6 +124,7 @@ namespace Uviewer.Controls
             ChangeUiFontMenuItem.Click += (_, _) => ChangeUiFontRequested?.Invoke(this, EventArgs.Empty);
             SelectExternalProgramMenuItem.Click += (_, _) => SelectExternalProgramRequested?.Invoke(this, EventArgs.Empty);
             CustomizeToolbarMenuItem.Click += async (_, _) => await ShowToolbarCustomizationDialogAsync();
+            LegadoSearchMenuItem.Click += (_, _) => LegadoSearchRequested?.Invoke(this, EventArgs.Empty);
             LangAutoItem.Click += LanguageItem_Click;
             LangKoItem.Click += LanguageItem_Click;
             LangEnItem.Click += LanguageItem_Click;
@@ -280,6 +283,7 @@ namespace Uviewer.Controls
                 ? Strings.ExternalProgramSettings
                 : Strings.ExternalProgramMenuWithName(System.IO.Path.GetFileName(_externalProgramPath));
             CustomizeToolbarMenuItem.Text = Strings.ToolbarCustomization;
+            LegadoSearchMenuItem.Text = Strings.LegadoSearch;
             MatchControlDirectionMenuItem.Text = Strings.MatchControlDirection;
             FastNavigationMenuItem.Text = Strings.FastNavigation;
             ToolTipService.SetToolTip(MatchControlDirectionMenuItem, Strings.MatchControlDirectionTooltip);

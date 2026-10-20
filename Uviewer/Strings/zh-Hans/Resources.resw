@@ -720,4 +720,6 @@
   <data name="TextOptionsHint" xml:space="preserve"><value>适用于纯文本和青空文库横排阅读。换行宽度不超过窗口宽度。</value></data>
   <data name="TextHorizontalTwoColumns" xml:space="preserve"><value>横向双栏视图</value></data>
   <data name="TextHorizontalTwoColumnsHint" xml:space="preserve"><value>适用于青空文库和EPUB正文。窗口宽度达到高度的1.2倍时，横向阅读使用双栏显示。</value></data>
+  <data name="LegadoSearch" xml:space="preserve"><value>搜索书源</value></data>
+  <data name="LegadoSearchHint" xml:space="preserve"><value>在所有启用的书源中搜索书籍</value></data>
 </root>

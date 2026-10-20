@@ -552,6 +552,13 @@ namespace Uviewer
             _isEpubMode = false; // Reset Epub mode
             DisableVerticalModeForImageDocument();
 
+            // 切走图片/PDF = 离开书源阅读：取消在途预取并落盘阅读进度（阶段 5 集成）。
+            // fire-and-forget：关书是清理动作，不该阻塞模式切换；异常已在内部吞掉。
+            if (IsLegadoMode)
+            {
+                _ = CloseLegadoAsync();
+            }
+
             ImageArea.Visibility = Visibility.Visible;
             TextArea.Visibility = Visibility.Collapsed;
             EpubArea.Visibility = Visibility.Collapsed;

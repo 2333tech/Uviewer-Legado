@@ -258,6 +258,12 @@ namespace Uviewer
         public static string ExternalProgramBrowseButton => GetString("ExternalProgramBrowseButton");
         public static string ExternalProgramSaveButton => GetString("ExternalProgramSaveButton");
         public static string ToolbarCustomization => GetString("ToolbarCustomization");
+
+        /// <summary>书源搜索菜单项文案（阶段 5 集成）。</summary>
+        public static string LegadoSearch => GetString("LegadoSearch");
+
+        /// <summary>书源搜索入口提示（说明会在全部启用的书源中检索）。</summary>
+        public static string LegadoSearchHint => GetString("LegadoSearchHint");
         public static string MoreCommandsTooltip => GetString("MoreCommandsTooltip");
         public static string ToolbarCustomizationDescription => GetString("ToolbarCustomizationDescription");
         public static string ToolbarApply => GetString("ToolbarApply");
