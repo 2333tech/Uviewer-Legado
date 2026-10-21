@@ -80,7 +80,7 @@ Uviewer 是一个基于 **WinUI 3 / .NET 10** 的 Windows 阅读与看图工具�
 ```bash
 dotnet build Uviewer/Uviewer.csproj -c Debug -p:Platform=x64
 dotnet test  Uviewer.Legado.Tests/Uviewer.Legado.Tests.csproj
-dotnet run --project Uviewer.Bench -c Release      # 引擎性能基准（-- p0|p1|p2|p3|p4|p5）
+dotnet run --project Uviewer.Bench -c Release      # 引擎性能基准（-- p0|p1|p2|p3|p4|p5|p6；p6 = 书源能力审计，基线落 results/stage4-audit-*.json）
 ```
 
 ## 致谢

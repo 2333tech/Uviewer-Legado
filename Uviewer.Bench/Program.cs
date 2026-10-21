@@ -30,6 +30,7 @@ static class Bench
         if (filter is null or "p3") await Phase3();
         if (filter is null or "p4") Phase4();
         if (filter is null or "p5") Phase5();
+        if (filter is null or "p6") await Phase6(sample);
     }
 
     static string FindSample()
@@ -1048,6 +1049,187 @@ static class Bench
         }
 
         throw new DirectoryNotFoundException("Sample/PerfBenchmark/text/chapters 未找到");
+    }
+
+    // ============================================================
+    // 阶段 6：书源能力审计（阶段 4-4）
+    //
+    // 对原始样本（Sample/bookSource_202610192010.json，408 条）逐源评估能力，
+    // 落一份**入库的回归基线**：Uviewer.Bench/results/stage4-audit-YYYYMMDD.json。
+    // 每源记录：缺失 API 集（全源/阅读链路）、缺失全局对象、所需层级、登录/WebView/远程库标记。
+    // 用途：① 后续阶段 4 子项落地后重跑，分档计数只许变好；② 书源管理徽标文案的数据来源与
+    //      线上口径完全一致（同走 BookSourceCapabilities）。
+    // ============================================================
+    static async Task Phase6(string sample)
+    {
+        Console.WriteLine("== 阶段 6：书源能力审计（原始条目 408 条）==");
+
+        var sources = new List<BookSourceModel>();
+        await using (var stream = File.OpenRead(sample))
+        {
+            await foreach (var s in BookSourceSerializer.EnumerateBookSourcesAsync(stream))
+            {
+                sources.Add(s);
+            }
+        }
+
+        var records = new List<AuditRecord>(sources.Count);
+        var tierHistogram = new SortedDictionary<JsApiTier, int>();
+        var readingMissingHistogram = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var allMissingHistogram = new SortedDictionary<string, int>(StringComparer.Ordinal);
+        var sw = Stopwatch.StartNew();
+
+        foreach (var s in sources)
+        {
+            var r = BookSourceCapabilities.AssessDetailed(s);
+            records.Add(new AuditRecord
+            {
+                Url = s.BookSourceUrl,
+                Name = s.BookSourceName,
+                Kind = s.BookSourceType,
+                ReadingSupported = r.ReadingSupported,
+                AllSupported = r.AllSupported,
+                RequiredTier = r.RequiredTier.ToString(),
+                MissingApis = r.MissingApis,
+                ReadingMissingApis = r.ReadingMissingApis,
+                MissingGlobals = r.MissingGlobals,
+                ReadingMissingGlobals = r.ReadingMissingGlobals,
+                NeedsLogin = r.NeedsLogin,
+                NeedsWebView = r.NeedsWebView,
+                ReadingNeedsWebView = r.ReadingNeedsWebView,
+                HasRemoteJsLib = r.HasRemoteJsLib,
+                Flags = r.Flags.ToString(),
+            });
+
+            tierHistogram[r.RequiredTier] = tierHistogram.GetValueOrDefault(r.RequiredTier) + 1;
+            foreach (var api in r.ReadingMissingApis)
+            {
+                readingMissingHistogram[api] = readingMissingHistogram.GetValueOrDefault(api) + 1;
+            }
+
+            foreach (var api in r.MissingApis)
+            {
+                allMissingHistogram[api] = allMissingHistogram.GetValueOrDefault(api) + 1;
+            }
+        }
+
+        sw.Stop();
+
+        // 搜索候选过滤口径：启用 + 有搜索规则 + 阅读链路可跑（与 GetSearchableSources 一致）
+        var searchable = sources.Count(s =>
+            s.IsEnabled
+            && !string.IsNullOrWhiteSpace(s.SearchUrl)
+            && s.RuleSearch is not null
+            && BookSourceCapabilities.AssessCached(s).ReadingSupported);
+
+        var textSources = sources.Count(s => s.BookSourceType == 0);
+        var readingOk = records.Count(r => r.ReadingSupported);
+        var allOk = records.Count(r => r.AllSupported);
+
+        Console.WriteLine($"评估耗时 {sw.Elapsed.TotalMilliseconds:F0} ms（{sources.Count} 源）");
+
+        // 缓存收益对照（4-4 新增的 AssessCached）：指纹命中时复评应接近零开销
+        var sink = 0;
+        var swCache = Stopwatch.StartNew();
+        foreach (var s in sources)
+        {
+            sink += BookSourceCapabilities.AssessCached(s).MissingApis.Count;
+        }
+
+        swCache.Stop();
+        Console.WriteLine($"缓存命中复评 {sources.Count} 源 {swCache.Elapsed.TotalMilliseconds:F2} ms（直算 {sw.Elapsed.TotalMilliseconds:F0} ms，sink={sink}）");
+
+        Console.WriteLine($"文本源 {textSources} / 阅读链路可跑 {readingOk} / 整源可跑 {allOk} / 搜索候选 {searchable}");
+        Console.WriteLine($"所需层级分布：{string.Join(", ", tierHistogram.Select(p => $"{p.Key}={p.Value}"))}");
+        Console.WriteLine("阅读链路缺口 Top10：");
+        foreach (var (api, n) in Top(readingMissingHistogram, 10))
+        {
+            Console.WriteLine($"  {api,-32} {n,4} 源");
+        }
+
+        Console.WriteLine("全源缺口 Top10：");
+        foreach (var (api, n) in Top(allMissingHistogram, 10))
+        {
+            Console.WriteLine($"  {api,-32} {n,4} 源");
+        }
+
+        // 基线落库（覆盖同名当日文件；历史日期的文件保留 = 天然的时间轴）
+        var outDir = FindResultsDir();
+        Directory.CreateDirectory(outDir);
+        var outPath = Path.Combine(outDir, $"stage4-audit-{DateTime.Now:yyyyMMdd}.json");
+        var baseline = new AuditBaseline
+        {
+            GeneratedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"),
+            Sample = Path.GetFileName(sample),
+            Total = sources.Count,
+            TextSources = textSources,
+            ReadingSupported = readingOk,
+            AllSupported = allOk,
+            Searchable = searchable,
+            TierHistogram = tierHistogram.ToDictionary(p => p.Key.ToString(), p => p.Value),
+            ReadingMissingTop = Top(readingMissingHistogram, 20).ToDictionary(p => p.api, p => p.n),
+            AllMissingTop = Top(allMissingHistogram, 20).ToDictionary(p => p.api, p => p.n),
+            Sources = records,
+        };
+        await File.WriteAllTextAsync(outPath, JsonSerializer.Serialize(baseline, new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        }), new System.Text.UTF8Encoding(false));
+
+        Console.WriteLine($"基线已写入: {outPath}");
+        Console.WriteLine();
+    }
+
+    static IEnumerable<(string api, int n)> Top(SortedDictionary<string, int> histogram, int take) =>
+        histogram.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal).Take(take).Select(p => (p.Key, p.Value));
+
+    /// <summary>从 bin 向上回溯找 <c>Uviewer.Bench/results</c>（基线必须入库，不能写到临时目录）。</summary>
+    static string FindResultsDir()
+    {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+        {
+            var candidate = Path.Combine(d.FullName, "Uviewer.Bench", "results");
+            if (Directory.Exists(candidate)) return Path.GetFullPath(candidate);
+        }
+
+        return Path.Combine(Directory.GetCurrentDirectory(), "results");
+    }
+
+    /// <summary>单源审计记录（JSON 基线的一行）。</summary>
+    sealed class AuditRecord
+    {
+        public string Url { get; set; } = "";
+        public string? Name { get; set; }
+        public int Kind { get; set; }
+        public bool ReadingSupported { get; set; }
+        public bool AllSupported { get; set; }
+        public string RequiredTier { get; set; } = "";
+        public IReadOnlyList<string> MissingApis { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<string> ReadingMissingApis { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<string> MissingGlobals { get; set; } = Array.Empty<string>();
+        public IReadOnlyList<string> ReadingMissingGlobals { get; set; } = Array.Empty<string>();
+        public bool NeedsLogin { get; set; }
+        public bool NeedsWebView { get; set; }
+        public bool ReadingNeedsWebView { get; set; }
+        public bool HasRemoteJsLib { get; set; }
+        public string Flags { get; set; } = "";
+    }
+
+    /// <summary>审计基线文档：汇总分档 + 逐源明细。</summary>
+    sealed class AuditBaseline
+    {
+        public string GeneratedAt { get; set; } = "";
+        public string Sample { get; set; } = "";
+        public int Total { get; set; }
+        public int TextSources { get; set; }
+        public int ReadingSupported { get; set; }
+        public int AllSupported { get; set; }
+        public int Searchable { get; set; }
+        public Dictionary<string, int> TierHistogram { get; set; } = new();
+        public Dictionary<string, int> ReadingMissingTop { get; set; } = new();
+        public Dictionary<string, int> AllMissingTop { get; set; } = new();
+        public List<AuditRecord> Sources { get; set; } = new();
     }
 
     static List<ReplaceRule> LoadReplaceRules(string path)

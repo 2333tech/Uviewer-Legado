@@ -236,7 +236,7 @@ namespace Uviewer.Services.Legado
 
                 _draft = Clone(source);
                 detailTitle.Text = source.BookSourceName;
-                var report = BookSourceCapabilities.AssessDetailed(source);
+                var report = BookSourceCapabilities.AssessCached(source);
                 detailSubtitle.Text = report.AllSupported
                     ? $"URL: {source.BookSourceUrl}　·　当前引擎可完整支持"
                     : $"URL: {source.BookSourceUrl}　·　⚠ {report.DescribeMissing(maxNames: 4, readingOnly: false)}";
@@ -428,8 +428,9 @@ namespace Uviewer.Services.Legado
         /// </summary>
         private UIElement BuildListItemContent(BookSourceModel source, Action<string?> refreshList)
         {
-            // 徽标按「阅读链路」判定：搜索/详情链的缺口不连坐（与搜索候选过滤同口径）
-            var report = BookSourceCapabilities.AssessDetailed(source);
+            // 徽标按「阅读链路」判定：搜索/详情链的缺口不连坐（与搜索候选过滤同口径）。
+            // 走缓存入口：列表每行都评估一次，408 源刷新时不重复扫脚本文本。
+            var report = BookSourceCapabilities.AssessCached(source);
             var supported = report.ReadingSupported;
 
             var badge = new TextBlock

@@ -245,10 +245,81 @@ public static class BookSourceCapabilities
     /// <summary>粗分类评估（兼容既有调用方；需要细节请用 <see cref="AssessDetailed"/>）。</summary>
     public static BookSourceCapability Assess(BookSourceModel source) => AssessDetailed(source).Flags;
 
+    // ── 带缓存入口（阶段 4-4）─────────────────────────────────────
+    // 评估是"反射枚举字符串字段 + 正则扫脚本调用面"，408 源全量评估一次要扫数 MB 文本。
+    // 高频调用点有三处：搜索候选过滤（每次搜索全量启用源一次）、书源管理列表刷新（每行一次）、
+    // 能力徽标悬停。书源内容在两次编辑之间不变，按（主键 + 内容指纹）缓存结果即可把重复评估降为零。
+    // 指纹覆盖 AssessDetailed 读取的全部字段（含规则属性名——同一段脚本挪到不同字段语义会变），
+    // 因此任何影响评估结果的改动都会换键，缓存永不返回过期值。
+
+    /// <summary>评估结果缓存：键 =（bookSourceUrl, 内容指纹）。报告本身只有几十字节，容量上限纯防御。</summary>
+    private static readonly ConcurrentDictionary<(string Url, int Fingerprint), SourceCapabilityReport> Cache = new();
+
+    /// <summary>缓存容量上限：超过即整体清空（编辑频繁时旧键自然失效，不值得做逐条淘汰）。</summary>
+    private const int CacheCapacity = 4096;
+
+    /// <summary>
+    /// 带（主键 + 内容指纹）缓存的完整评估：与 <see cref="AssessDetailed"/> 结果完全一致，
+    /// 重复评估同一内容的书源时零开销。UI 列表与搜索候选过滤一律走这里。
+    /// </summary>
+    public static SourceCapabilityReport AssessCached(BookSourceModel? source)
+    {
+        if (source is null)
+        {
+            return new SourceCapabilityReport { Flags = BookSourceCapability.None };
+        }
+
+        if (Cache.Count >= CacheCapacity)
+        {
+            Cache.Clear();
+        }
+
+        return Cache.GetOrAdd(
+            (source.BookSourceUrl ?? string.Empty, ComputeFingerprint(source)),
+            static (_, s) => AssessDetailed(s),
+            source);
+    }
+
+    /// <summary>
+    /// 计算内容指纹：对 <see cref="AssessDetailed"/> 实际读取的全部字符串字段
+    /// （五个规则对象的逐属性名+值，加五个顶层字段）累积哈希。
+    /// <para>属性名必须参与：同一段脚本放在 <c>FormatJs</c>（整段扫）与 <c>Init</c>
+    /// （仅带 JS 标记才扫）里评估结果不同，只哈希值会漏判这种"搬家"。</para>
+    /// </summary>
+    private static int ComputeFingerprint(BookSourceModel source)
+    {
+        var hash = new System.HashCode();
+        hash.Add(source.SearchUrl);
+        hash.Add(source.ExploreUrl);
+        hash.Add(source.LoginUrl);
+        hash.Add(source.LoginCheckJs);
+        hash.Add(source.JsLib);
+
+        foreach (var rule in new object?[]
+                 {
+                     source.RuleSearch, source.RuleExplore,
+                     source.RuleBookInfo, source.RuleToc, source.RuleContent,
+                 })
+        {
+            if (rule is null)
+            {
+                continue;
+            }
+
+            foreach (var (name, value) in EnumerateStrings(rule))
+            {
+                hash.Add(name);
+                hash.Add(value);
+            }
+        }
+
+        return hash.ToHashCode();
+    }
+
     /// <summary>便捷判定：当前引擎能否不依赖阶段 4 能力跑通整源（登录/远程库算作不能）。</summary>
     public static bool IsFullySupported(BookSourceModel source)
     {
-        var caps = Assess(source);
+        var caps = AssessCached(source).Flags;
         return caps == BookSourceCapability.None || caps == BookSourceCapability.HasJsLib;
     }
 
@@ -258,7 +329,7 @@ public static class BookSourceCapabilities
     /// 只看阅读链路，搜索/详情链的缺口不连坐——否则一个源搜索规则用了 ajax、
     /// 目录正文却是干净选择器时，用户连"搜到并打开"的机会都没有。</para>
     /// </summary>
-    public static bool ReadingNeedsStage4(BookSourceModel source) => !AssessDetailed(source).ReadingSupported;
+    public static bool ReadingNeedsStage4(BookSourceModel source) => !AssessCached(source).ReadingSupported;
 
     /// <summary>未注入的全局对象根名（按 <see cref="JsGlobalCatalog.Roots"/> 顺序，输出稳定）。</summary>
     private static List<string> UnimplementedGlobals(IReadOnlyCollection<string> used)
