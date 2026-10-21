@@ -20,6 +20,8 @@ namespace Uviewer.Services.Legado
     /// <param name="OnSuccess">成功态按钮文字色。</param>
     /// <param name="Warning">警示色（下载中/可取消）。</param>
     /// <param name="OnWarning">警示态按钮文字色。</param>
+    /// <param name="Critical">错误语义色（Win11 SystemFillColorCritical：无法访问的结果标记）。</param>
+    /// <param name="Caution">警告语义色（Win11 SystemFillColorCaution：可访问但内容有问题的标记、⚠ 徽标）。</param>
     public readonly record struct LegadoPalette(
         Brush Surface,
         Brush SurfaceBorder,
@@ -31,7 +33,9 @@ namespace Uviewer.Services.Legado
         Brush Success,
         Brush OnSuccess,
         Brush Warning,
-        Brush OnWarning);
+        Brush OnWarning,
+        Brush Critical,
+        Brush Caution);
 
     /// <summary>
     /// 弹窗配色：<b>按主题显式取值</b>，不依赖主题资源查找。
@@ -67,7 +71,10 @@ namespace Uviewer.Services.Legado
             Success: Rgb(0x0F, 0x6C, 0x3C),
             OnSuccess: Rgb(0xFF, 0xFF, 0xFF),
             Warning: Rgb(0xB4, 0x24, 0x24),
-            OnWarning: Rgb(0xFF, 0xFF, 0xFF));
+            OnWarning: Rgb(0xFF, 0xFF, 0xFF),
+            // Win11 Fluent 语义色（亮色）：Critical #C50F1F / Caution #9D5D00
+            Critical: Rgb(0xC5, 0x0F, 0x1F),
+            Caution: Rgb(0x9D, 0x5D, 0x00));
 
         // ── 暗色主题 ──────────────────────────────────────────────
         // 卡片 #383838 铺在对话框底 #2C2C2C 上，靠亮度差区分层次
@@ -82,7 +89,10 @@ namespace Uviewer.Services.Legado
             Success: Rgb(0x6C, 0xCB, 0x5F),
             OnSuccess: Rgb(0x10, 0x20, 0x10),
             Warning: Rgb(0xC4, 0x2B, 0x1C),
-            OnWarning: Rgb(0xFF, 0xFF, 0xFF));
+            OnWarning: Rgb(0xFF, 0xFF, 0xFF),
+            // Win11 Fluent 语义色（暗色）：Critical #FF99A4 / Caution #FCE100
+            Critical: Rgb(0xFF, 0x99, 0xA4),
+            Caution: Rgb(0xFC, 0xE1, 0x00));
 
         /// <summary>取指定主题的配色。</summary>
         public static LegadoPalette For(ElementTheme theme) =>

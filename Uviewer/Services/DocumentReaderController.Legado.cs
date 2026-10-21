@@ -507,7 +507,11 @@ namespace Uviewer
             await service.EnsureInitializedAsync().ConfigureAwait(true);
 
             var search = new BookSourceSearchService(service);
-            var dialog = new BookSourceSearchDialog(
+
+            // 独立窗口（非模态）：Show() 创建 Window 并激活后立即返回，主窗口不被锁定。
+            // 字体按钮复用主窗口顶栏右侧的"界面字体"选择（同一套字体选择器与全局设置，
+            // 切换字体族而非字号）；窗口内容跟随当前 UI 字体族。
+            var searchWindow = new BookSourceSearchWindow(
                 RootGrid,
                 search,
                 async hit =>
@@ -517,9 +521,11 @@ namespace Uviewer
                 async filePath =>
                 {
                     await OpenDownloadedBookAsync(filePath).ConfigureAwait(true);
-                });
+                },
+                showUiFontPickerAsync: ShowUiFontPickerDialog,
+                getUiFontFamily: () => SettingsManager.UIFontFamily);
 
-            await dialog.ShowAsync().ConfigureAwait(true);
+            searchWindow.Show();
         }
 
         // ============================================================

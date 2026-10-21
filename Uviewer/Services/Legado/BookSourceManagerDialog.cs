@@ -7,6 +7,7 @@ using Uviewer.Services.Legado.Models;
 using Uviewer.Services.Legado.BookSources;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using BookSourceModel = Uviewer.Services.Legado.Models.BookSource;
 
 namespace Uviewer.Services.Legado
@@ -239,7 +240,7 @@ namespace Uviewer.Services.Legado
                 var report = BookSourceCapabilities.AssessCached(source);
                 detailSubtitle.Text = report.AllSupported
                     ? $"URL: {source.BookSourceUrl}　·　当前引擎可完整支持"
-                    : $"URL: {source.BookSourceUrl}　·　⚠ {report.DescribeMissing(maxNames: 4, readingOnly: false)}";
+                    : $"URL: {source.BookSourceUrl}　·　注意：{report.DescribeMissing(maxNames: 4, readingOnly: false)}";
 
                 // 基本信息：书源 URL 只读（它是主键，改了等于换一条源）
                 var basic = new StackPanel { Spacing = 6 };
@@ -428,19 +429,22 @@ namespace Uviewer.Services.Legado
         /// </summary>
         private UIElement BuildListItemContent(BookSourceModel source, Action<string?> refreshList)
         {
+            // 语义色按宿主主题取（弹窗基座是宿主 RootGrid，见 ShowAsync 处的 palette）
+            var palette = LegadoTheme.For(_rootElement);
+
             // 徽标按「阅读链路」判定：搜索/详情链的缺口不连坐（与搜索候选过滤同口径）。
             // 走缓存入口：列表每行都评估一次，408 源刷新时不重复扫脚本文本。
             var report = BookSourceCapabilities.AssessCached(source);
             var supported = report.ReadingSupported;
 
+            // 徽标用 Fluent Warning 字形 + Caution 语义色（Win11 设计语言：单色字形图标 +
+            // 语义色，不用彩色 Emoji）；文字类内容一律灰度（见 LegadoTheme）。
             var badge = new TextBlock
             {
-                Text = supported ? "" : "⚠",
-
-                // ⚠ 是语义化 Emoji（表示"当前引擎读不了"），允许用彩色以示警示；
-                // 文字类内容一律灰度（见 LegadoTheme）。这里取一个在亮/暗底上都够醒目的橙。
-                Foreground = LegadoTheme.Rgb(0xE8, 0x8A, 0x00),
-                FontSize = 14,
+                Text = supported ? string.Empty : "\uE7BA",
+                FontFamily = new FontFamily("Segoe Fluent Icons"),
+                FontSize = 12,
+                Foreground = palette.Caution,
                 VerticalAlignment = VerticalAlignment.Center,
             };
             if (!supported)
