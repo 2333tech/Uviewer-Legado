@@ -1,183 +1,42 @@
-# Uviewer
+# Uviewer-Legado
 
-> Created with Vibe Coding 🚀
+> **Uviewer-Legado** = [Uviewer](https://github.com/kirinonakar/Uviewer) + **Legado 模式网络书源**。
 
 ![Uviewer Screenshot](Uviewer/Assets/screenshot.jpg)
 
-**Uviewer** is a versatile, integrated viewer for Windows that delivers a modern, high-performance experience built on **WinUI 3** and **.NET 10**. It seamlessly handles images, text, PDF and EPUB documents, offering advanced capabilities such as direct image viewing from **archives**, **side-by-side viewing modes**, and robust support for **Aozora Bunko**—complete with **vertical text rendering**. Designed for flexibility, it also features integrated **Markdown support**, smart encoding detection, and **WebDAV connectivity** to streamline your digital reading and viewing workflow.
+## 项目内容
 
-## ✨ Key Features
+Uviewer 是一个基于 **WinUI 3 / .NET 10** 的 Windows 阅读与看图工具（图片、文本、PDF、EPUB、压缩包、WebDAV，支持竖排与青空文库格式）。
 
-### 🖼️ Image & PDF Viewing
-- **Broad Format Support**: PDF, JPEG, PNG, GIF, BMP, TIFF, ICO, SVG, WebP, AVIF (AV1 Video Extension required), JXL (JPEG XL Image Extension required), **Animated WebP** and **Animated AVIF**.
-- **HDR AVIF**: Uses a bundled libavif decoder for the original 10-bit PQ (SMPTE ST 2084) signal, then renders BT.2020 or Display-P3 images through a linear FP16 scRGB path. Highlights are tone-mapped to the active monitor's peak luminance, and HDR sharpening operates on luminance instead of independently boosting RGB channels. A compatible HDR display with **Use HDR** enabled in Windows is required for true HDR output; when HDR is inactive, Uviewer automatically uses the Windows SDR decode path.
-- **High-Performance Rendering**: Powered by **Win2D** (Direct2D) for smooth zooming and panning.
-- **Smart Scaling**: Customizable zoom levels (0.1x to 10x), fit-to-window, and actual size.
-- **EXIF & Image Metadata**: Click the file name in the status bar while viewing an image to inspect EXIF details and embedded metadata such as prompts or parameters.
-- **Continuous Scrolling & Zoom Persistence**: Supports PDF-like continuous vertical scrolling for zoomed images—**perfect for reading Webtoons**. Maintains zoom level across images for a seamless viewing experience.
-- **Tools**: Sharpening filter (Right-click for settings), Side-by-Side view mode, **Auto Side-by-Side in Archive**, **Match Control Direction** (R-to-L navigation support), and Fast Navigation overlay.
+本分支在它之上集成了 **Legado（阅读 App）同构的书源引擎**：导入 legado 书源 JSON 后，可在应用内**搜索书籍 → 看详情 → 取目录 → 在线阅读 → 整本下载**，正文经「替换净化 + 标题规则」处理后交给原生阅读器排版，与本地文档共用同一套阅读界面与快捷键。
 
-### 📝 Text & Novel Viewing
-- **Advanced Text Engine**: 
-  - **Immediate loading of large text files**
-  - **Aozora Bunko format Support**: Native rendering of Ruby text (Furigana), emphasis, indentation and images.
-  - **Markdown Support**: Custom-built Markdown rendering including tables, code blocks, and inline formatting.
-  - **Smart Encoding Detection**: Automatically detects and handles various encodings (UTF-8, Unicode, **EUC-KR**, **Shift-JIS**, **Johab**).
-- **Reading Comfort**: 
-  - **Adjustable Styling**: Change font size, font family (toggle between two user-defined defaults), and background themes (Light/Beige/Dark/Custom). (Recommendation: We suggest installing and using [**Noto Sans/Serif CJK**](https://fonts.google.com/noto) for the best multilingual reading experience.)
-  - **Vertical Mode (Tategaki)**: Comprehensive support for vertical text rendering with pixel-accurate layout.
-  - **Horizontal Two-Column View**: Enable **Two-column horizontal view** in **Text Options** to display two columns in Aozora and EPUB horizontal reading, when the window width is at least 1.2 times its height.
-- **Go to Line**: Jump directly to a specific line (G).
-- **Search**: Find text in Text, EPUB, and PDF files with a compact overlay near the **G** button. Open it with **Ctrl + F** or right-click **G**, then move to previous/next matches.
-- **Table of Contents (TOC)**: Automatically extracts headings from textual documents (Markdown `#` or Aozora `［＃...］` tags) and **PDF Bookmarks** for quick navigation.
-- **Line Bookmark**: Save your reading progress (Line number) to Favorites and resume exactly where you left off.
+书源引擎随宿主一同编译（`Uviewer/Services/Legado/`），**不再有独立类库**。
 
-### 📖 EPUB Reader
-- **Full EPUB Support**: Page-based navigation with chapter tracking.
-- **Table of Contents**: Support for Navigation via TOC.
-- **Customization**: Adjustable font settings (font family/size) and background colors.
-- **Vertical Support**: View EPUBs in vertical mode
+## 与原版 Uviewer 的差异
 
+| 方面 | 原版 Uviewer | Uviewer-Legado |
+|---|---|---|
+| 内容来源 | 本地文件、压缩包、WebDAV | 增加 **legado 网络书源**（JSON 导入 / 导出 / 启停 / 编辑） |
+| 阅读链路 | 打开本地文档 | **搜索 → 详情 → 目录 → 正文 → 整本下载** |
+| 文本处理 | — | 替换净化（正则 / 字面 / `@js:`）、标题与分章规则、TXT 自动分章 |
+| 目录 | 文档内标题、PDF 书签 | 书源目录（多页跟随、倒序、`formatJs`、卷章层级） |
+| 缓存 | 文档级 | 章节级缓存（原文 + 净化文本），前后各 3 章窗口预取，净化开关可逆 |
+| 进度 | 书签 / 最近文件 | 书源**断点续读**（按书源 + 书籍 URL 记录章节与位置） |
+| 网络 | WebDAV | 书源 HTTP 抓取：每源 Cookie、GB18030/GBK 等编码探测、超时重试、Referer 防盗链 |
+| 界面 | — | 工具栏「书源」入口：书源管理、多源搜索（逐源流式渲染 + X/X 进度）、下载设置 |
+| 工程结构 | 单一应用工程 | 同上，书源引擎内嵌 `Services/Legado`（`Models` / `BookSources`）；另含 `Uviewer.Bench` 基准与 `Uviewer.Legado.Tests` 测试 |
 
-### 📂 File Management
-- **Integrated Explorer**: Sidebar with Folder/Thumbnail views for easy navigation, including adjustable thumbnail size and optional folder thumbnails.
-- **Archive Support**: Read images directly from compressed archives (`.zip`, `.rar`, `.7z`, etc.) using **SharpCompress** and **SevenZipExtractor**. Includes **Auto Side-by-Side** support for portrait images within archives.
-- **Organization**: "Favorites" and "Recent Files" management.
-- **WebDAV Support**: Read images directly from WebDAV (HTTPS) servers.
+除上述内容外，**看图、PDF、EPUB、青空模式、WebDAV、托盘、快捷键等能力与原版完全一致**（完整功能列表见[上游 README](https://github.com/kirinonakar/Uviewer)）。
 
-### 🔧 Settings
+## 构建
 
-#### 📌 Pin / Auto-Hide UI
-- **Pin Toggle**: Pin or unpin the UI (title bar, toolbar, sidebar, status bar) using the pin button or the **`** (backtick) key.
-  - **Pinned** (default): All UI elements are always visible.
-  - **Unpinned**: All UI elements are hidden. Hover over the top edge to reveal the title bar, toolbar and status bar, or hover over the left edge to reveal the sidebar. UI auto-hides after 1 second when the mouse leaves.
-
-#### ⚙️ Multiple Instances
-- **Allow Multiple Instances**: When enabled, each file opens in a new window instance.
-
-#### 🔔 Keep in System Tray
-- **Keep in System Tray**: Enable this option in the Settings menu to keep Uviewer running when the window is closed. The window is hidden in the system tray instead of terminating the process.
-- **Tray Menu**: Right-click the Uviewer tray icon and select **Open** to restore the window or **Close** to exit Uviewer completely.
-
-#### 🖼️ Image Viewing Options
-- **Auto Side-by-Side in Archive**: When enabled, the viewer automatically applies side-by-side (2-page) view for portrait-oriented images (height = width * 1.2~3) when browsing archives and EPUB, provided the window width is at least 1.2 times its height.
-
-#### 🗂️ Explorer Thumbnail Settings
-- **Thumbnail Button Settings**: Left-click the sidebar thumbnail/list toggle button (**Ctrl+3**) to toggle the sidebar between the list view and the expanded thumbnail view; right-click it to open thumbnail settings.
-  - **Thumbnail Size**: Adjust the thumbnail grid size with a slider and preview the result immediately.
-  - **Folder Thumbnails**: When enabled, folders show the first image inside the folder as their thumbnail.
-  - **Sidebar Default Width**: Set the sidebar width used in the normal (list) view.
-  - **Sidebar Expanded Width**: Set the sidebar width used by **Ctrl+3** / the thumbnail view button.
-
-#### 🎨 Image Sharpening & Upscaling
-- **Advanced Sharpening Control**: Right-click the **Sharpening (S)** button to open the settings flyout.
-  - **Upscale Factor**: Adjust the internal rendering scale for clearer details on high-resolution displays.
-  - **Sharpening Amount & Threshold**: Fine-tune the basic sharpening intensity and the edge detection threshold.
-  - **Unsharp Mask (USM)**: Apply high-quality unsharp mask sharpening with adjustable strength and radius for professional-grade results.
-
-#### 📝 Font Settings
-- **Customizable Font Toggle**: Right-click the **Font (F)** button in the text toolbar to set your two preferred fonts (default fonts - Yu Gothic Medium/Yu Mincho).
-  - **Font 1 & 2**: Choose any system font for each slot (e.g., one for Sans-serif and one for Serif).
-  - Left-clicking the **F** button (or pressing **F**) will instantly toggle between these two selections.
-
-### 🌍 Localization
-- **Multi-language Support**: Automatically detects and switches between **English**, **Korean**, **Japanese**, **Chinese (Simplified)**, **Chinese (Traditional)**, and **Vietnamese** based on system settings.
-
-### 🎨 Global Theme & Design
-- **Dark & Light Mode**: Seamlessly switch between dark and light themes for the entire interface.
-- **Modern Windows Integration**: Features an extended title bar with modern styling, similar to Windows 11 system apps like Explorer and Settings.
-- **Unified Aesthetics**: All UI components, including the custom title bar and status bar, dynamically sync with the selected system theme.
-
-## 🛠️ System Requirements
-- **OS**: Windows 10 (Version 19041+) or Windows 11.
-- **Runtime**: .NET 10.0.
-- **Framework**: Windows App SDK 2.2.0.
-- **HDR Viewing (optional)**: HDR-capable display with HDR enabled under **Windows Settings → System → Display → HDR**. HDR AVIF decoding uses the bundled libavif runtime.
-
-## ⌨️ Keyboard Shortcuts
-
-| Key | Context | Action |
-|-----|---------|--------|
-| **← / →** | Image | Previous / Next Image |
-| | Text | Previous / Next Page |
-| **↑ / ↓** | Global | Previous / Next File |
-| **Home / End** | Image / Archive | First / Last Image |
-| | Text / PDF | First / Last Page |
-| | EPUB | Previous / Next Chapter |
-| **Backspace** | Global | Go to Parent Folder |
-| **Esc** | Global | Close Window / Exit Fullscreen |
-| **F10** | Global | Toggle Maximize / Restore |
-| **F11** | Global | Toggle Fullscreen |
-| **`** | Global | Toggle Pin (Auto-Hide UI) |
-| **D** | Global | Toggle Dark/Light Mode |
-| **T** | Global | Toggle Always on Top |
-| **Ctrl + O** | Global | Open File |
-| **Ctrl + B** | Global | Toggle Sidebar |
-| **Ctrl + 3** | Global | Toggle Sidebar Width (configurable in Thumbnail Settings) + Thumbnail Mode |
-| **Ctrl + S** | Global | Add to Favorites |
-| **Ctrl + F** | Text / EPUB / PDF | Open Search |
-| **+ / -**  | Global | Zoom In/Out / Font Size Up/Down (-/= also works) |
-| |  | Blocked in Side-by-Side (2 page) mode |
-| **0**  | Global | Fit to Window |
-| **1**  | Global | Zoom Actual Size (Fit to width in PDF) |
-| **G** | Text/EPUB | Go to Line (Right-click for search)|
-| | PDF | Go to Page (Right-click for search)|
-| **Space** | Image / EPUB | Toggle 2-Page View (Side-by-Side) |
-| **V** | Text / EPUB | Toggle Vertical Mode (Tategaki) |
-| **S** | Image | Toggle Sharpening (Right-click for settings) |
-| **A** | Text | Toggle Simple text / Advanced rendering (Aozora, Markdown) mode |
-| **B** | Text | Change Background Theme |
-| **F** | Text | Toggle Default Fonts (Right-click for settings) |
-
-## Mouse & Touch Navigation
-- **Click/Touch Left Side**: Previous Page / Image
-- **Click/Touch Right Side**: Next Page / Image
-- **Ctrl + Mouse Wheel**: Zoom In/Out (panning with mouse right click and drag)
-- **Ctrl + Mouse Drag**: Text selection and clipboard copy
-- **Pinch Zoom**: Support for pinch-to-zoom gestures on touchpads and touchscreens.
-- **Control Direction Match**: When enabled in Side-by-Side mode (←), controls automatically invert to match the visual page progression.
-  - Note: For images only. EPUBs always follow the standard text flow (horizontal/vertical).
-
-## 🚀 Installation
-
-### 📥 Download
-You can download the latest version from the [Releases Page](https://github.com/kirinonakar/Uviewer/releases).
-Unzip the file and run `Uviewer.exe`.
-
-- [Microsoft Store](https://apps.microsoft.com/detail/9N6DL9Q4S6FK?hl=ko-kr&gl=KR&ocid=pdpshare)
-
-
-### From Source
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/kirinonakar/Uviewer.git
-   cd Uviewer
-   ```
-2. Open `Uviewer.slnx` in **Visual Studio 2022**.
-   - Required workloads: **.NET Desktop Development**.
-   - Required extension: **Windows App SDK**.
-3. Build and Run:
-   - Select `x64`.
-   - Press **F5**.
-
-### Build via Command Line
 ```bash
-dotnet build -c Release --self-contained true
+dotnet build Uviewer/Uviewer.csproj -c Debug -p:Platform=x64
+dotnet test  Uviewer.Legado.Tests/Uviewer.Legado.Tests.csproj
+dotnet run --project Uviewer.Bench -c Release      # 引擎性能基准（-- p0|p1|p2|p3|p4）
 ```
 
-## 🏗️ Architecture
-- **WinUI 3**: Modern UI framework.
-- **Win2D**: Hardware-accelerated 2D graphics for images.
-- **Windows.Data.Pdf**: Integrated OS-level PDF rendering.
-- **PdfPig**: Used for parsing PDF tables of contents.
-- **SharpCompress**: Archive extraction for ZIP, RAR, etc.
-- **SevenZipExtractor**: High-performance extraction for `.7z` archives using native **7z.dll** (located in the `Libs` directory).
+## 致谢
 
-## 📝 License
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
-### Third-Party Licenses
-- **7-Zip (7z.dll)**: Licensed under the **GNU LGPL**. For more information, please visit [www.7-zip.org](https://www.7-zip.org).
-
-## 👤 Author
-**kirinonakar** - [kirinonakar](https://github.com/kirinonakar)
+- 上游原项目：**Uviewer** by [kirinonakar](https://github.com/kirinonakar)
+- 书源规则语义对齐：**legado**（阅读）与 **reader**
