@@ -2,7 +2,9 @@
 
 > 在开源阅读看图工具 [Uviewer](https://github.com/kirinonakar/Uviewer) 的基础上，内置一套与 **Legado（阅读 App）同构的网络书源引擎**，让 Windows 桌面端也能"导入书源 → 搜书 → 在线阅读 → 整本下载"。
 
-![Uviewer Screenshot](Uviewer/Assets/screenshot.jpg)
+![Uviewer Screenshot1](Uviewer/Assets/UviewerLegado1.png)
+
+![Screenshot2](Uviewer/Assets/UviewerLegado2.png)
 
 ---
 
@@ -23,7 +25,7 @@
 
 - **书源管理**：导入 / 导出 / 启停 / 编辑 legado 书源 JSON，徽标标注每个源的能力缺口；
 - **多源搜索**：独立非模态窗口，逐源流式渲染结果；点选条目即插队优先加载，
-  左侧展开**书籍简介**，右侧直接预览**第一章正文**；
+  左侧下方展开**书籍简介**，右侧直接预览**第一章正文**；
 - **在线阅读**：详情 → 目录 → 正文全链路，正文经「替换净化 + 标题规则」处理后交给原生分页画布排版；
 - **整本下载**：章节并发下载、每源限速（`concurrentRate`）、失败章占位、零正文判失败。
 
