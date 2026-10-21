@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
-using BookSource.Core.Models;
-using BookSource.Core.Services;
-using TitleRule = BookSource.Core.Models.TitleRule;
-using ReplaceRule = BookSource.Core.Models.ReplaceRule;
+using Uviewer.Services.Legado.Models;
+using Uviewer.Services.Legado.BookSources;
+using TitleRule = Uviewer.Services.Legado.Models.TitleRule;
+using ReplaceRule = Uviewer.Services.Legado.Models.ReplaceRule;
 
 namespace Uviewer.Services.Legado
 {
@@ -96,9 +96,10 @@ namespace Uviewer.Services.Legado
     /// </summary>
     internal static class TextCacheLogic
     {
-        /// <summary>规范化换行（CRLF/CR → LF），与 <see cref="TextTocBuilder"/> 的行号语义对齐。</summary>
-        public static string NormalizeNewlines(string text) =>
-            text.Replace("\r\n", "\n").Replace('\r', '\n');
+        /// <summary>规范化换行（CRLF/CR → LF），与 <see cref="TextTocBuilder"/> 的行号语义对齐。
+        /// <para>实现转调 <see cref="TextNormalization.ToLf"/>（全应用唯一实现）；
+        /// 读盘入口已归一，这里是幂等的第二道保险（缓存里也可能存着旧的 CRLF 原文）。</para></summary>
+        public static string NormalizeNewlines(string text) => TextNormalization.ToLf(text);
 
         /// <summary>源键：本地文件走全路径；压缩包条目走「包路径\u0001条目键」。</summary>
         public static string ComputeSourceKey(string? filePath, string? archivePath, string? entryKey)

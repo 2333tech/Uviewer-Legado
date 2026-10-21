@@ -1,0 +1,43 @@
+{
+  "bookSourceUrl": "https://example.com",
+  "bookSourceName": "示例书源",
+  "bookSourceGroup": "测试",
+  "bookSourceType": 0,
+  "enabled": true,
+  "concurrentRate": "0",
+  "header": "{\"User-Agent\":\"Mozilla/5.0\"}",
+  "searchUrl": "https://example.com/search?key={{key}}&page={{page}}",
+  "ruleSearch": {
+    "bookList": "class.book-item",
+    "name": "class.name@text",
+    "author": "class.author@text",
+    "bookUrl": "class.name@href",
+    "coverUrl": "class.cover@src",
+    "intro": "class.intro@text",
+    "lastChapter": "class.last@text",
+    "kind": "class.kind@text",
+    "wordCount": "class.wc@text",
+    "updateTime": "class.time@text"
+  },
+  "ruleBookInfo": {
+    "init": "",
+    "name": "class.title@text",
+    "author": "class.author@text",
+    "intro": "id.intro@text",
+    "coverUrl": "class.cover@src",
+    "tocUrl": "class.toc@href",
+    "lastChapter": "class.last@text"
+  },
+  "ruleToc": {
+    "chapterList": "class.chapter-list@li",
+    "chapterName": "class.chapter@text",
+    "chapterUrl": "class.chapter@href",
+    "nextTocUrl": "class.next@href"
+  },
+  "ruleContent": {
+    "content": "id.content@html",
+    "title": "class.chapter-title@text",
+    "nextContentUrl": "class.next-chapter@href",
+    "imageStyle": "full"
+  }
+}

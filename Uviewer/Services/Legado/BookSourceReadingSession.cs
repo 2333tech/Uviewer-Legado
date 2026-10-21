@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using BookSource.Core.Models;
-using BookSource.Core.Services.BookSources;
-using BookSourceModel = BookSource.Core.Models.BookSource;
-using CoreChapterContent = BookSource.Core.Models.ChapterContent;
-using CoreTocItem = BookSource.Core.Models.TocItem;
+using Uviewer.Services.Legado.Models;
+using Uviewer.Services.Legado.BookSources;
+using BookSourceModel = Uviewer.Services.Legado.Models.BookSource;
+using CoreChapterContent = Uviewer.Services.Legado.Models.ChapterContent;
+using CoreTocItem = Uviewer.Services.Legado.Models.TocItem;
 
 namespace Uviewer.Services.Legado
 {
@@ -251,7 +251,7 @@ namespace Uviewer.Services.Legado
         /// <c>GetContentsAsync</c>，中间一章失败就会让后面所有章名错位一格。</para>
         /// <para>并发度固定 8：整本下载是长时间后台任务，比搜索更保守，避免把站点压太狠。</para>
         /// </summary>
-        public Task<BookSource.Core.Models.ChapterContent?[]> FetchContentsAsync(
+        public Task<Uviewer.Services.Legado.Models.ChapterContent?[]> FetchContentsAsync(
             IReadOnlyList<CoreTocItem> chapters, CancellationToken token = default) =>
             _service.Engine.GetContentsIndexedAsync(
                 _source, chapters, _bookUrl, BatchFetchConcurrency, null, token);
@@ -596,7 +596,7 @@ namespace Uviewer.Services.Legado
 
         /// <summary>打开结果。</summary>
         public sealed record OpenResult(
-            BookSource.Core.Models.BookInfo? Info,
+            Uviewer.Services.Legado.Models.BookInfo? Info,
             IReadOnlyList<CoreTocItem> Chapters,
             int StartIndex);
     }

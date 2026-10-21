@@ -139,7 +139,8 @@ namespace Uviewer.Services
 
         private static List<SearchableLine> BuildTextLines(string content)
         {
-            var lines = content.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+            // 搜索命中行号与阅读进度/目录共用同一套行坐标（LF），故统一走全应用归一实现
+            var lines = Uviewer.Services.Legado.BookSources.TextNormalization.ToLf(content).Split('\n');
             var result = new List<SearchableLine>(lines.Length);
 
             for (int i = 0; i < lines.Length; i++)

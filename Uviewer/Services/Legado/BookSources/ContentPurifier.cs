@@ -1,0 +1,335 @@
+using System.Collections.Concurrent;
+using System.Text.RegularExpressions;
+using Uviewer.Services.Legado.Models;
+
+namespace Uviewer.Services.Legado.BookSources;
+
+/// <summary>
+/// 阶段 3 正文净化管线（对标 reader frontend <c>stores/reader.ts</c> 的 <c>applyReplaceRules</c>，
+/// 逐分支同构移植；legado <c>ContentProcessor</c> 为第二参照）。
+/// <para>reader 的应用顺序（本类严格遵循）：</para>
+/// ① 空文本 → 空串；② 书籍关闭 useReplaceRule → 原文返回；
+/// ③ 过滤 isEnabled 且 scope 匹配当前书籍的规则；④ 按 order **稳定排序**；
+/// ⑤ 逐规则应用：isRegex → global+multiline 正则替换；否则字面替换；
+/// ⑥ 单条规则异常（非法正则/替换超时）→ 跳过该规则，不影响其余（reader try/catch per rule）。
+/// <para>与 reader 的有意偏差（均记录在案）：</para>
+/// <list type="bullet">
+/// <item>空 pattern 规则跳过（legado 语义）——reader(JS) 不跳过，空正则会向每处插入 replacement，
+/// 而 .NET 字面替换对空 oldValue 的行为与 JS 不一致，跳过是唯一确定行为；</item>
+/// <item>正则带 3000ms 匹配超时（legado getValidTimeoutMillisecond 默认值，reader/JS 无此保护）——
+/// 防止灾难性回溯把 UI 线程挂死；超时按"跳过该规则"处理。</item>
+/// <item><b>入口统一换行归一</b>（CRLF/CR → LF，见 <see cref="TextNormalization"/>）：
+/// reader/legado 的正文天生是 LF，而我们读到的 TXT 常常是 CRLF（Windows 编辑器 / 下载落盘）。
+/// 不归一的话 <c>$</c> 收尾的分支全部静默失效、<c>[^\n…]</c> 类又会吃掉 <c>\r</c>——
+/// 同一份规则在两端表现不同，是"规则在 legado 正常、在这里不对"的头号原因。</item>
+/// </list>
+/// <para><b>@js: 替换（legado 语义，阶段 3 补齐）</b>：isRegex 规则的 replacement 以 <c>@js:</c> 开头时，
+/// 对正则的<b>每个匹配</b>用 Jint 求值脚本（<c>result</c> = 匹配串），completion 值作为替换内容
+/// （对标 legado <c>RegexExtensions.replace</c> 的 isJs 分支）。求值异常 ⇒ 整条规则跳过。
+/// 字面（isRegex=false）规则不评估 <c>@js:</c>——legado 字面分支走 stdlib replace 同样不评估，
+/// reader 的 <c>replaceAll</c> 亦然；把 <c>@js:</c> 当字面量插入是两端的一致行为。</para>
+/// <para>性能架构（优化后，务必保持）：</para>
+/// <list type="bullet">
+/// <item>编译快照不可变：<see cref="Rules"/> 指向新列表才重建（引用比较），之后零分配读；
+/// 并行批量正文时所有章节共享同一快照，无线程间可变状态；</item>
+/// <item>正则编译走有界缓存（Multiline + 超时选项），同一 pattern 跨章节只编译一次；</item>
+/// <item>快路径：无规则 / 未启用 / 空文本 → 原样返回（零分配）。</item>
+/// </list>
+/// </summary>
+public sealed class ContentPurifier
+{
+    /// <summary>legado 默认单规则超时（毫秒）；reader/JS 无超时保护，这里作为安全网引入。</summary>
+    private const int DefaultTimeoutMillisecond = 3000;
+
+    /// <summary>
+    /// 正则编译缓存上限。与 <see cref="RuleAnalyzer.GetRegex"/> 的正则缓存**分开**：
+    /// 那里是 legado 行内 ## 规则（Singleline），这里是用户替换规则（Multiline + 超时），
+    /// 选项不同不能共用缓存。
+    /// </summary>
+    private const int RegexCacheLimit = 512;
+
+    private static readonly ConcurrentDictionary<string, Regex?> RegexCache =
+        new(StringComparer.Ordinal);
+
+    /// <summary>最近一次编译的源列表引用（引用比较判重，省掉逐条比对）。</summary>
+    private IReadOnlyList<ReplaceRule>? _compiledFrom;
+
+    /// <summary>不可变编译快照：已过滤禁用/空 pattern、已按 order 稳定排序、正则已编译。</summary>
+    private volatile CompiledRule[]? _compiled;
+
+    /// <summary>重建快照的短锁（仅列表引用变化时参与，读路径无锁）。</summary>
+    private readonly object _buildGate = new();
+
+    /// <summary>
+    /// 宿主注入的规则列表（通常是 <see cref="ReplaceRuleManager.GetAll"/> 的快照）。
+    /// 指向新列表实例时下次 Apply 自动重建编译快照；置 null = 无规则（管线空转）。
+    /// </summary>
+    public IReadOnlyList<ReplaceRule>? Rules { get; set; }
+
+    /// <summary>是否存在可用规则（不含重建开销；无规则时批量路径可整体跳过净化）。</summary>
+    public bool HasRules
+    {
+        get
+        {
+            var compiled = EnsureCompiled();
+            return compiled is { Length: > 0 };
+        }
+    }
+
+    /// <summary>
+    /// 应用净化管线（对标 applyReplaceRules，步骤见类型注释）。
+    /// </summary>
+    /// <param name="text">待净化正文（HTML 文本）。</param>
+    /// <param name="ctx">书籍上下文（scope 匹配 + useReplaceRule 开关）。</param>
+    public string Apply(string text, in PurifyContext ctx)
+    {
+        // ① 空文本 → 空串（reader: if (!text) return ''）
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
+        // ② 书籍显式关闭净化 → 原文返回（reader: useReplaceRule === false 早退；
+        // null/true = 启用，可空语义见 PurifyContext 注释）
+        if (ctx.UseReplaceRule is false)
+        {
+            return text;
+        }
+
+        // ③+④ 取编译快照（已过滤启用/非空 pattern、已按 order 稳定排序）
+        var rules = EnsureCompiled();
+        if (rules is null || rules.Length == 0)
+        {
+            // 快路径：无规则 → 零分配返回
+            return text;
+        }
+
+        // ③.5 换行符归一（CRLF/CR → LF），**必须先于任何规则**。
+        // 原因：替换规则的作者（legado / reader 生态）一律假设文本是 LF——
+        //   · .NET 的 `$` 只在 `\n` 之前成立，`^ab$` 对 "ab\r\n" **匹配不到**
+        //     ⇒ 所有"...$"收尾的分支在本库上会静默失效；
+        //   · 否定字符类 `[^\n…]` 会把 `\r` 当普通字符吃掉
+        //     ⇒ 替换后行尾结构被改写（典型表现：行首缩进被整块替换成装饰符）。
+        // 归一放在快照之后：无规则时保持"原样返回"的零开销契约。
+        text = TextNormalization.ToLf(text);
+
+        // ⑤+⑥ 逐规则应用：scope 过滤 + 替换 + 单规则异常跳过
+        foreach (var rule in rules)
+        {
+            if (!ScopeMatches(rule, in ctx))
+            {
+                continue;
+            }
+
+            try
+            {
+                text = rule.JsScript is { } js
+                    // @js: 形态：逐匹配求值（MatchEvaluator 的返回值按字面量使用，
+                    // 不经 $1/$& 展开——legado 用 quoteReplacementJs 达到同样效果）
+                    ? rule.Regex!.Replace(text, m => ReplaceJsEvaluator.Evaluate(js, m.Value))
+                    : rule.Regex is not null
+                        ? rule.Regex.Replace(text, rule.Replacement)
+                        : text.Replace(rule.Pattern, rule.Replacement);
+            }
+            catch (RegexMatchTimeoutException)
+            {
+                // 灾难性回溯：跳过该规则（legado 超时停用 + 报错，这里不停用只跳过，
+                // 停用需要持久化，属于 UI 层决策）
+            }
+            catch (ArgumentException)
+            {
+                // 替换串非法等：跳过该规则（reader 的 catch 分支等价行为）
+            }
+            catch (Exception)
+            {
+                // @js: 求值异常（脚本语法错误 / 运行期错误）：整条规则跳过、文本不被部分改写
+                // （legado：异常使整个 replace 调用失败，mContent 保持原值；reader：try/catch 包住整条规则）
+            }
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// 取编译快照（惰性重建 + 短锁双重检查）。
+    /// <para>失效判定用**列表引用比较**（宿主每次变更都换新列表实例，如 ReplaceRuleManager
+    /// 的快照语义）；重建步骤：① 过滤 isEnabled 且 pattern 非空（legado：空 pattern 跳过）；
+    /// ② 按 order 稳定排序（LINQ OrderBy 稳定，同值保持存储顺序 = reader V8 sort 稳定性）；
+    /// ③ 逐条编译：isRegex → 进正则缓存（非法 pattern → 丢弃该规则，reader 的
+    /// try/catch 等价于"永不生效"）；字面 → 记录 pattern。</para>
+    /// </summary>
+    private CompiledRule[] EnsureCompiled()
+    {
+        var source = Rules;
+        var compiled = _compiled;
+        // 快路径：快照有效且源列表未换（volatile 读 _compiled 保证可见先行的 _compiledFrom 写）
+        if (compiled is not null && ReferenceEquals(_compiledFrom, source))
+        {
+            return compiled;
+        }
+
+        lock (_buildGate)
+        {
+            // 双重检查：等锁期间可能已被其他线程重建
+            if (_compiled is not null && ReferenceEquals(_compiledFrom, source))
+            {
+                return _compiled;
+            }
+
+            CompiledRule[] built;
+            if (source is null || source.Count == 0)
+            {
+                // 无规则：记空数组（管线空转的快路径），同时记录源引用以便下次换列表能识别
+                built = Array.Empty<CompiledRule>();
+            }
+            else
+            {
+                var list = new List<CompiledRule>(source.Count);
+                foreach (var rule in source
+                    .Where(r => r.IsEnabled && !string.IsNullOrEmpty(r.Pattern))
+                    .OrderBy(r => r.Order))
+                {
+                    if (rule.IsRegex)
+                    {
+                        var regex = GetRegex(rule.Pattern);
+                        if (regex is null)
+                        {
+                            // 非法正则：丢弃（reader 在应用时 try/catch 跳过，效果等价）
+                            continue;
+                        }
+
+                        list.Add(new CompiledRule(
+                            rule,
+                            regex,
+                            null,
+                            rule.Replacement,
+                            // @js: 形态：预取脚本文本（去前缀）。仅正则分支评估（legado 语义）
+                            ReplaceJsEvaluator.IsJs(rule.Replacement) ? ReplaceJsEvaluator.ScriptOf(rule.Replacement) : null));
+                    }
+                    else
+                    {
+                        list.Add(new CompiledRule(rule, null, rule.Pattern, rule.Replacement));
+                    }
+                }
+
+                built = list.ToArray();
+            }
+
+            // 先写源引用再写快照（volatile 写 = 释放语义，读侧见快照必见源引用）
+            _compiledFrom = source;
+            _compiled = built;
+            return built;
+        }
+    }
+
+    /// <summary>
+    /// scope 匹配（对标 reader matchRuleScope，逐分支一致）：
+    /// ① 空或 '*' → 全部书籍命中；
+    /// ② "source:&lt;x&gt;" → x 等于书源 URL；
+    /// ③ "book:&lt;x&gt;" → x 等于书籍 URL；
+    /// ④ "&lt;name&gt;[;&lt;bookUrl&gt;]" → 第一段为 '*' 或书名，第二段（存在则）为书籍 URL。
+    /// 无当前书籍（ctx 标识为空）时，②③④ 自然不命中（与 reader <c>!currentBook → false</c> 一致）。
+    /// </summary>
+    private static bool ScopeMatches(CompiledRule rule, in PurifyContext ctx)
+    {
+        var scope = (rule.Scope ?? string.Empty).Trim();
+        if (scope.Length == 0 || scope == "*")
+        {
+            return true;
+        }
+
+        if (scope.StartsWith("source:", StringComparison.Ordinal))
+        {
+            return string.Equals(scope.Substring(7), ctx.Origin, StringComparison.Ordinal);
+        }
+
+        if (scope.StartsWith("book:", StringComparison.Ordinal))
+        {
+            return string.Equals(scope.Substring(5), ctx.BookUrl, StringComparison.Ordinal);
+        }
+
+        // "name[;bookUrl]"：第一段管书名，第二段（可选）管书籍 URL
+        var parts = scope.Split(';');
+        if (parts[0] != "*" && !string.Equals(parts[0], ctx.BookName, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return parts.Length == 1 || string.Equals(parts[1], ctx.BookUrl, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 取（缓存）用户替换规则的正则：global+multiline（reader 的 'gm' 标志，
+    /// Multiline 让 ^/$ 匹配行边界——JS 'm' 同义）+ 3000ms 匹配超时。
+    /// 非法 pattern 返回 null（调用方丢弃该规则）。
+    /// </summary>
+    private static Regex? GetRegex(string pattern)
+    {
+        if (RegexCache.TryGetValue(pattern, out var cached))
+        {
+            return cached;
+        }
+
+        Regex? compiled;
+        try
+        {
+            compiled = new Regex(
+                pattern,
+                RegexOptions.Multiline,
+                TimeSpan.FromMilliseconds(DefaultTimeoutMillisecond));
+        }
+        catch
+        {
+            // 非法正则：缓存 null 防止反复编译同一坏 pattern
+            compiled = null;
+        }
+
+        if (RegexCache.Count < RegexCacheLimit)
+        {
+            RegexCache[pattern] = compiled;
+        }
+
+        return compiled;
+    }
+
+    /// <summary>
+    /// 编译后的规则（不可变）：正则与字面二选一（<see cref="Regex"/> 非空 = 正则规则）。
+    /// scope 匹配在应用时按 ctx 逐次判定（依赖书籍上下文，无法预编译）。
+    /// </summary>
+    private sealed class CompiledRule
+    {
+        public CompiledRule(
+            ReplaceRule rule, Regex? regex, string? literalPattern, string replacement, string? jsScript = null)
+        {
+            Rule = rule;
+            Regex = regex;
+            LiteralPattern = literalPattern;
+            Replacement = replacement;
+            JsScript = jsScript;
+        }
+
+        /// <summary>源规则（取 Scope）。</summary>
+        public ReplaceRule Rule { get; }
+
+        /// <summary>正则形态的编译产物（null = 字面规则）。</summary>
+        public Regex? Regex { get; }
+
+        /// <summary>字面形态的 pattern（null = 正则规则）。</summary>
+        public string? LiteralPattern { get; }
+
+        /// <summary>替换内容。</summary>
+        public string Replacement { get; }
+
+        /// <summary>
+        /// <c>@js:</c> 形态的脚本（已去前缀；null = 普通替换）。
+        /// 非 null 时 <see cref="Apply"/> 走逐匹配 JS 求值分支（见 <see cref="ReplaceJsEvaluator"/>）。
+        /// </summary>
+        public string? JsScript { get; }
+
+        /// <summary>作用域原文（大小写敏感比较，见 ScopeMatches）。</summary>
+        public string? Scope => Rule.Scope;
+
+        /// <summary>字面规则的匹配 pattern（<see cref="Apply"/> 直接用）。</summary>
+        public string Pattern => LiteralPattern ?? string.Empty;
+    }
+}

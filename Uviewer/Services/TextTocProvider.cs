@@ -4,7 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Uviewer.Models;
 using Uviewer.Services.Legado;
-using TitleRule = BookSource.Core.Models.TitleRule;
+using TitleRule = Uviewer.Services.Legado.Models.TitleRule;
 
 namespace Uviewer.Services
 {

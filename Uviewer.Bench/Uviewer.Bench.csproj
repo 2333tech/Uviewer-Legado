@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    书源引擎性能基准（耗时 + GC 分配）。刻意链接宿主源码而非引用 WinUI 工程。
+    用法：dotnet run (project Uviewer&#92;Uviewer.Bench) -c Release 可接过滤参数 p0/p1/p2/p3。
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Uviewer.Bench</RootNamespace>
+    <Optimize>true</Optimize>
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\Models\*.cs" LinkBase="Engine\Models" />
+    <Compile Include="..\Uviewer\Services\Legado\BookSources\*.cs" LinkBase="Engine\Engine" />
+    <Compile Include="..\Uviewer\Services\Legado\TextTocBuilder.cs" Link="Host\TextTocBuilder.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\TextCacheModels.cs" Link="Host\TextCacheModels.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\TextCacheStore.cs" Link="Host\TextCacheStore.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\SearchRelevance.cs" Link="Host\SearchRelevance.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\LegadoHtmlText.cs" Link="Host\LegadoHtmlText.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\RuleEditSpec.cs" Link="Host\RuleEditSpec.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\DownloadPathRules.cs" Link="Host\DownloadPathRules.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HtmlAgilityPack" Version="1.13.1" />
+    <PackageReference Include="HtmlAgilityPack.CssSelectors" Version="1.0.2" />
+    <PackageReference Include="Jint" Version="3.1.2" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="9.0.0" NoWarn="NU1510" />
+  </ItemGroup>
+
+</Project>

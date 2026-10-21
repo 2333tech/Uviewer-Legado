@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using BookSource.Core.Models;
-using BookSource.Core.Services.BookSources;
-using BookSourceModel = BookSource.Core.Models.BookSource;
-using CoreSearchResult = BookSource.Core.Models.SearchResult;
-using CoreTocItem = BookSource.Core.Models.TocItem;
+using Uviewer.Services.Legado.Models;
+using Uviewer.Services.Legado.BookSources;
+using BookSourceModel = Uviewer.Services.Legado.Models.BookSource;
+using CoreSearchResult = Uviewer.Services.Legado.Models.SearchResult;
+using CoreTocItem = Uviewer.Services.Legado.Models.TocItem;
 
 namespace Uviewer.Services.Legado
 {

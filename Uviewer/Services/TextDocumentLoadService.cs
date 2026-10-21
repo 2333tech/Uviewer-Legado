@@ -57,7 +57,10 @@ namespace Uviewer.Services
         private static string Decode(byte[] bytes, string encodingName)
         {
             Encoding encoding = TextEncodingService.GetTextEncoding(bytes, encodingName);
-            return encoding.GetString(bytes);
+            // 读入即归一换行（CRLF/CR → LF）：全应用（分章 / 标题规则 / 替换净化 / 章节缓存 /
+            // 搜索行号 / 阅读进度）都假定 LF。在这里归一一次，下游不必各自兼容两种换行，
+            // 也不会出现"正文是 CRLF、章节缓存坐标是 LF"的错位。
+            return Uviewer.Services.Legado.BookSources.TextNormalization.ToLf(encoding.GetString(bytes));
         }
     }
 }

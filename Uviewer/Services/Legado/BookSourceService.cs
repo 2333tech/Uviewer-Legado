@@ -4,15 +4,14 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using BookSource.Core.Models;
-using BookSource.Core.Services;
-using BookSource.Core.Services.BookSources;
-using BookSourceModel = BookSource.Core.Models.BookSource;
+using Uviewer.Services.Legado.Models;
+using Uviewer.Services.Legado.BookSources;
+using BookSourceModel = Uviewer.Services.Legado.Models.BookSource;
 
 namespace Uviewer.Services.Legado
 {
     /// <summary>
-    /// 书源功能门面（阶段 5 集成入口）：把 <c>BookSource.Core</c> 的四个独立存储/引擎
+    /// 书源功能门面（阶段 5 集成入口）：把 <c>Uviewer.Services.Legado</c> 的四个独立存储/引擎
     /// 聚合成阅读器可直接使用的单一服务，并负责它们的生命周期与线程安全。
     ///
     /// <para><b>组成</b>：
@@ -46,6 +45,14 @@ namespace Uviewer.Services.Legado
         /// 这样"临时全局暂停"不会破坏用户逐条的配置，重新打开总开关即刻恢复。</para>
         /// </summary>
         private volatile bool _purifyEnabled = true;
+
+        /// <summary>
+        /// 整本下载的落盘目录（用户级，持久化到 <c>legadoSettings.json</c> 的
+        /// <c>downloadDirectory</c>）。默认 = Windows 的"下载"文件夹
+        /// （<c>%USERPROFILE%\Downloads</c>）——这是用户对"下载"的最自然预期，
+        /// 也免去第一次用书源下载时去翻 <c>%LocalAppData%</c> 这种隐藏目录。
+        /// </summary>
+        private volatile string _downloadDirectory = DefaultDownloadDirectory;
 
         /// <summary>总开关等 Legado 侧设置的落盘路径。</summary>
         private readonly string _settingsPath;
@@ -207,10 +214,44 @@ namespace Uviewer.Services.Legado
         }
 
         // ============================================================
-        // Legado 侧设置持久化（目前只有替换净化总开关）
+        // Legado 侧设置持久化（替换净化总开关 + 整本下载目录）
         // ============================================================
 
-        /// <summary>读回 Legado 侧设置。文件不存在 = 用默认值（总开关开）。</summary>
+        /// <summary>
+        /// Windows 默认的"下载"文件夹（<c>%USERPROFILE%\Downloads</c>）。
+        /// <para>实现在 <see cref="DownloadPathRules"/>（纯逻辑、可被集成测试链接），
+        /// 本属性只是给服务层与 UI 一个方便入口。</para>
+        /// </summary>
+        public static string DefaultDownloadDirectory => DownloadPathRules.DefaultDirectory;
+
+        /// <summary>
+        /// 校验并规范化用户输入的下载目录。详见 <see cref="DownloadPathRules.Normalize"/>。
+        /// </summary>
+        /// <exception cref="ArgumentException">路径为空、非法或指向一个文件。</exception>
+        public static string NormalizeDownloadDirectory(string? path) => DownloadPathRules.Normalize(path);
+
+        /// <summary>整本下载的落盘目录（默认 <see cref="DefaultDownloadDirectory"/>）。</summary>
+        public string DownloadDirectory => _downloadDirectory;
+
+        /// <summary>
+        /// 设置下载目录并落盘。返回规范化后的路径（UI 可直接回填文本框）。
+        /// <para>只做配置，不创建目录：路径可能指向尚未存在的文件夹，
+        /// 等到真正下载时（<c>BookSourceDownloadService</c>）才 <c>CreateDirectory</c>。</para>
+        /// </summary>
+        public async Task<string> SetDownloadDirectoryAsync(string path, CancellationToken token = default)
+        {
+            var normalized = NormalizeDownloadDirectory(path);
+            if (string.Equals(normalized, _downloadDirectory, StringComparison.OrdinalIgnoreCase))
+            {
+                return _downloadDirectory;
+            }
+
+            _downloadDirectory = normalized;
+            await SaveSettingsAsync(token).ConfigureAwait(false);
+            return _downloadDirectory;
+        }
+
+        /// <summary>读回 Legado 侧设置。文件不存在 = 用默认值（总开关开 + 默认下载目录）。</summary>
         private void LoadSettings()
         {
             try
@@ -218,6 +259,7 @@ namespace Uviewer.Services.Legado
                 if (!File.Exists(_settingsPath))
                 {
                     _purifyEnabled = true;
+                    _downloadDirectory = DefaultDownloadDirectory;
                     return;
                 }
 
@@ -233,12 +275,20 @@ namespace Uviewer.Services.Legado
                 {
                     _purifyEnabled = false;
                 }
+
+                // 下载目录：缺失/空/非法 → 保持默认值（配置被手改坏不该让下载不可用）
+                if (doc.RootElement.TryGetProperty("downloadDirectory", out var dir) &&
+                    dir.ValueKind == System.Text.Json.JsonValueKind.String)
+                {
+                    _downloadDirectory = DownloadPathRules.Resolve(dir.GetString());
+                }
             }
             catch (Exception ex)
             {
                 // 设置文件损坏：回落到默认值，不阻断启动
                 System.Diagnostics.Debug.WriteLine($"Load legado settings failed: {ex.Message}");
                 _purifyEnabled = true;
+                _downloadDirectory = DefaultDownloadDirectory;
             }
         }
 
@@ -254,7 +304,11 @@ namespace Uviewer.Services.Legado
                 }
 
                 var temp = _settingsPath + ".tmp";
-                var json = $"{{\r\n  \"purifyEnabled\": {(_purifyEnabled ? "true" : "false")}\r\n}}";
+                // 配置文件也统一 LF：Windows 上 Path/JSON 本身不敏感，但统一换行能避免
+                // "同一份配置在不同来源（Android 导出 / 本机写入）之间逐字节 diff"的噪音。
+                // 路径用 JsonSerializer.Serialize 转义（反斜杠必须成对），不手拼字符串。
+                var dirJson = System.Text.Json.JsonSerializer.Serialize(_downloadDirectory ?? string.Empty);
+                var json = $"{{\n  \"purifyEnabled\": {(_purifyEnabled ? "true" : "false")},\n  \"downloadDirectory\": {dirJson}\n}}\n";
                 await File.WriteAllTextAsync(temp, json, token).ConfigureAwait(false);
                 File.Move(temp, _settingsPath, overwrite: true);
             }

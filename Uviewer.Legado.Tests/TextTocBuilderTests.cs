@@ -1,7 +1,7 @@
-using BookSource.Core.Models;
+using Uviewer.Services.Legado.Models;
 using Uviewer.Services.Legado;
 using Xunit;
-using TitleRule = BookSource.Core.Models.TitleRule;
+using TitleRule = Uviewer.Services.Legado.Models.TitleRule;
 
 namespace Uviewer.Legado.Tests;
 

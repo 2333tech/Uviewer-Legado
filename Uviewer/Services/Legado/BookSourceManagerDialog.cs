@@ -3,12 +3,11 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
-using BookSource.Core.Models;
-using BookSource.Core.Services;
-using BookSource.Core.Services.BookSources;
+using Uviewer.Services.Legado.Models;
+using Uviewer.Services.Legado.BookSources;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using BookSourceModel = BookSource.Core.Models.BookSource;
+using BookSourceModel = Uviewer.Services.Legado.Models.BookSource;
 
 namespace Uviewer.Services.Legado
 {

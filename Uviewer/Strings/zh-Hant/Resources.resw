@@ -722,6 +722,8 @@
   <data name="TextHorizontalTwoColumnsHint" xml:space="preserve"><value>適用於青空文庫和EPUB內文。視窗寬度達到高度的1.2倍時，橫向閱讀使用雙欄顯示。</value></data>
   <data name="LegadoManageSources" xml:space="preserve"><value>書源管理</value></data>
   <data name="LegadoImportSources" xml:space="preserve"><value>匯入書源 JSON…</value></data>
+  <data name="LegadoDownloadSettings" xml:space="preserve"><value>下載設定…</value></data>
+  <data name="LegadoDownloadSettingsHint" xml:space="preserve"><value>設定整本下載的儲存目錄（預設：使用者「下載」資料夾）</value></data>
   <data name="LegadoManageSourcesHint" xml:space="preserve"><value>書源、淨化規則與標題規則的統一入口</value></data>
   <data name="LegadoImportReplaceRules" xml:space="preserve"><value>匯入淨化規則 JSON…</value></data>
   <data name="LegadoShowReplaceRules" xml:space="preserve"><value>檢視 / 開關淨化規則</value></data>

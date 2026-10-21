@@ -1,7 +1,7 @@
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
-using BookSource.Core.Services;
-using TitleRule = BookSource.Core.Models.TitleRule;
+using Uviewer.Services.Legado.BookSources;
+using TitleRule = Uviewer.Services.Legado.Models.TitleRule;
 
 namespace Uviewer.Services.Legado
 {
@@ -40,7 +40,8 @@ namespace Uviewer.Services.Legado
                 return list;
             }
 
-            var rawLines = content.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+            // 全应用同源的换行归一：标题规则按行整行匹配，行尾残留 \r 会让 `…$` 规则全部失效
+            var rawLines = Uviewer.Services.Legado.BookSources.TextNormalization.ToLf(content).Split('\n');
 
             for (var i = 0; i < rawLines.Length; i++)
             {

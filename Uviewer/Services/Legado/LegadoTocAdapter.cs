@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using CoreTocItem = BookSource.Core.Models.TocItem;
+using CoreTocItem = Uviewer.Services.Legado.Models.TocItem;
 
 namespace Uviewer.Services.Legado
 {

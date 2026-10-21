@@ -15,6 +15,8 @@
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
     <Nullable>enable</Nullable>
+    <!-- 引擎源码迁入本工程后沿用原有的隐式 using 约定（System / LINQ / IO / Tasks 等）。 -->
+    <ImplicitUsings>enable</ImplicitUsings>
     <WindowsPackageType>MSIX</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <AppxSymbolPackageEnabled>false</AppxSymbolPackageEnabled>
@@ -55,12 +57,25 @@
   </ItemGroup>
 
   <!--
-    Stage 5 (Legado book-source reading) references the sibling BookSource.Core library.
-    It targets plain net10.0 (no Windows TFM), so it can be consumed from this
-    net10.0-windows project without any TFM downgrade.
+    书源引擎已从独立类库 BookSource.Core 整体迁移进本工程：
+      Services/Legado/Models/   → 书源/规则的纯数据模型
+      Services/Legado/Engine/   → 规则引擎、选择器、抓取、净化、存储、分章
+    因此不再有 ProjectReference，引擎所需的 NuGet 依赖在此直接声明。
   -->
   <ItemGroup>
-    <ProjectReference Include="..\..\BookSource.Core\BookSource.Core.csproj" />
+    <!-- CSS 选择器支持（HtmlAgilityPack 本体不含 QuerySelector，由该官方 companion 提供） -->
+    <PackageReference Include="HtmlAgilityPack.CssSelectors" Version="1.0.2" />
+    <!-- legado 书源 js 规则（@js: / <js>）求值 -->
+    <PackageReference Include="Jint" Version="3.1.2" />
+    <!-- 中文站点 GB18030/GBK/GB2312 解码必需：net10 默认只内置 UTF-8/16/32、ASCII、Latin1，
+         缺该包时 Encoding.GetEncoding("GB18030") 直接抛 ArgumentException（响应会静默按 UTF-8 解成乱码）。
+         NU1510 只是"该包不会被裁剪"的提示，与功能无关，故按包级抑制。 -->
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="9.0.0" NoWarn="NU1510" />
+  </ItemGroup>
+
+  <!-- 引擎单元测试工程直接链接本源代码，故需可见 internal 成员。 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Uviewer.Legado.Tests" />
   </ItemGroup>
 
   <!--

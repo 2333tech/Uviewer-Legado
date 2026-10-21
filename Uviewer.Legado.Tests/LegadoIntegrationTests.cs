@@ -1,8 +1,8 @@
-using BookSource.Core.Models;
+using Uviewer.Services.Legado.Models;
 using System.Linq;
 using Uviewer.Services.Legado;
 using Xunit;
-using CoreTocItem = BookSource.Core.Models.TocItem;
+using CoreTocItem = Uviewer.Services.Legado.Models.TocItem;
 
 namespace Uviewer.Services.Legado.Tests;
 
@@ -207,7 +207,7 @@ public class LegadoTocAdapterTests
               {"id":"/c/4","title":"第四章"}
             ]}
             """;
-        var source = new BookSource.Core.Models.BookSource
+        var source = new Uviewer.Services.Legado.Models.BookSource
         {
             BookSourceUrl = "https://api.example.com",
             RuleToc = new TocRule
@@ -218,7 +218,7 @@ public class LegadoTocAdapterTests
             },
         };
 
-        var (chapters, _) = new BookSource.Core.Services.BookSources.RuleEngine()
+        var (chapters, _) = new Uviewer.Services.Legado.BookSources.RuleEngine()
             .ParseTocPage(source, json, "https://api.example.com");
 
         // 无名章节在上游就被剔除

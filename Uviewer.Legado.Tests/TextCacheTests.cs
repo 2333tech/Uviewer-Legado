@@ -3,11 +3,11 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using BookSource.Core.Models;
+using Uviewer.Services.Legado.Models;
 using Uviewer.Services.Legado;
 using Xunit;
-using TitleRule = BookSource.Core.Models.TitleRule;
-using ReplaceRule = BookSource.Core.Models.ReplaceRule;
+using TitleRule = Uviewer.Services.Legado.Models.TitleRule;
+using ReplaceRule = Uviewer.Services.Legado.Models.ReplaceRule;
 
 namespace Uviewer.Services.Legado.Tests
 {

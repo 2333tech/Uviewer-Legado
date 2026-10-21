@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using BookSource.Core.Models;
+using Uviewer.Services.Legado.Models;
 using Xunit;
-using ReplaceRule = BookSource.Core.Models.ReplaceRule;
-using TitleRule = BookSource.Core.Models.TitleRule;
+using ReplaceRule = Uviewer.Services.Legado.Models.ReplaceRule;
+using TitleRule = Uviewer.Services.Legado.Models.TitleRule;
 
 namespace Uviewer.Services.Legado
 {

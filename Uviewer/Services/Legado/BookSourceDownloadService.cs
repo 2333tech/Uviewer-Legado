@@ -6,10 +6,10 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using BookSource.Core.Models;
-using BookSource.Core.Services.BookSources;
-using BookSourceModel = BookSource.Core.Models.BookSource;
-using CoreTocItem = BookSource.Core.Models.TocItem;
+using Uviewer.Services.Legado.Models;
+using Uviewer.Services.Legado.BookSources;
+using BookSourceModel = Uviewer.Services.Legado.Models.BookSource;
+using CoreTocItem = Uviewer.Services.Legado.Models.TocItem;
 
 namespace Uviewer.Services.Legado
 {
@@ -44,7 +44,9 @@ namespace Uviewer.Services.Legado
         private const int FetchConcurrency = 8;
 
         private readonly BookSourceService _service;
-        private readonly string _downloadDir;
+
+        /// <summary>构造时显式指定的目录（null = 跟随服务侧配置，每次下载时现取）。</summary>
+        private readonly string? _downloadDirOverride;
 
         /// <summary>下载进度（一次回调一个快照；UI 直接取字段渲染）。</summary>
         public sealed record DownloadProgress(
@@ -63,17 +65,29 @@ namespace Uviewer.Services.Legado
         public BookSourceDownloadService(BookSourceService service, string? downloadDirectory = null)
         {
             _service = service ?? throw new ArgumentNullException(nameof(service));
-
-            // 默认落在书源数据目录旁的 books/ 子目录（与 booksources.json 同级，便于整体备份/清理）
-            _downloadDir = string.IsNullOrWhiteSpace(downloadDirectory)
-                ? Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "Uviewer", "books")
-                : downloadDirectory!;
+            _downloadDirOverride = string.IsNullOrWhiteSpace(downloadDirectory) ? null : downloadDirectory;
         }
 
-        /// <summary>下载目录（不存在时首次下载才创建）。</summary>
-        public string DownloadDirectory => _downloadDir;
+        /// <summary>
+        /// 下载目录：显式传入优先，否则<b>每次现取</b>服务侧配置
+        /// （设置菜单 →「书源管理」→「下载设置」可改，默认 Windows 的"下载"文件夹）。
+        /// <para>不缓存到字段：长驻对象（如搜索对话框）里的旧快照会让"改了目录却还下到老地方"。</para>
+        /// </summary>
+        public string DownloadDirectory
+        {
+            get
+            {
+                if (_downloadDirOverride is not null)
+                {
+                    return _downloadDirOverride;
+                }
+
+                var configured = _service.DownloadDirectory;
+                return string.IsNullOrWhiteSpace(configured)
+                    ? BookSourceService.DefaultDownloadDirectory
+                    : configured;
+            }
+        }
 
         /// <summary>
         /// 下载整本书。进度经 <paramref name="progress"/> 回报（工作线程触发）。
@@ -119,10 +133,12 @@ namespace Uviewer.Services.Legado
                     "没有可下载的章节（目录为空或全部为卷标题）");
             }
 
-            Directory.CreateDirectory(_downloadDir);
+            // 目录在本次下载内固定：中途改设置（另一处 UI）不该让同一次下载分落两处
+            var dir = DownloadDirectory;
+            Directory.CreateDirectory(dir);
 
             var bookName = string.IsNullOrWhiteSpace(session.BookName) ? "未命名书籍" : session.BookName;
-            var path = BuildFilePath(bookName, session.BookUrl);
+            var path = BuildFilePath(dir, bookName, session.BookUrl);
             var tmpPath = path + ".part";
 
             var total = targets.Count;
@@ -196,12 +212,15 @@ namespace Uviewer.Services.Legado
             }
         }
 
-        /// <summary>文件头：书名 / 书源 / 章节数（纯文本，兼容任何阅读器）。</summary>
+        /// <summary>文件头：书名 / 书源 / 章节数（纯文本，兼容任何阅读器）。
+        /// <para><b>一律 LF</b>：不要用 <see cref="Environment.NewLine"/>——那会让文件头是 CRLF、
+        /// 正文是 LF，同一份文件混排两种换行。混排会让"以 $ 收尾"的净化/标题规则分支在
+        /// 部分行上静默失效，也让阅读进度的行号在两种换行间漂移。</para></summary>
         private static string BuildHeader(string bookName, string sourceName, int chapterCount) =>
-            $"{bookName}{Environment.NewLine}" +
-            $"作者或来源：{sourceName}{Environment.NewLine}" +
-            $"共 {chapterCount.ToString(CultureInfo.InvariantCulture)} 章{Environment.NewLine}" +
-            new string('=', 32) + Environment.NewLine + Environment.NewLine;
+            $"{bookName}\n" +
+            $"作者或来源：{sourceName}\n" +
+            $"共 {chapterCount.ToString(CultureInfo.InvariantCulture)} 章\n" +
+            new string('=', 32) + "\n\n";
 
         /// <summary>
         /// 单章文本：章名单独一行 + 空行 + 正文。
@@ -223,20 +242,20 @@ namespace Uviewer.Services.Legado
                 name = $"第 {ordinal.ToString(CultureInfo.InvariantCulture)} 章";
             }
 
-            return Environment.NewLine + name + Environment.NewLine +
-                   new string('-', 32) + Environment.NewLine + Environment.NewLine +
-                   body + Environment.NewLine;
+            return "\n" + name + "\n" +
+                   new string('-', 32) + "\n\n" +
+                   Uviewer.Services.Legado.BookSources.TextNormalization.ToLf(body) + "\n";
         }
 
         /// <summary>
         /// 目标文件名：书名 + 书源 URL 短哈希（同名不同源不互相覆盖）。
         /// 书名里的非法文件名字符统一替换为 '_'，并限长避免超 255 字节路径上限。
         /// </summary>
-        private string BuildFilePath(string bookName, string bookUrl)
+        private static string BuildFilePath(string directory, string bookName, string bookUrl)
         {
             var safe = Sanitize(bookName, 60);
             var hash = ShortHash(bookUrl);
-            return Path.Combine(_downloadDir, $"{safe}_{hash}.txt");
+            return Path.Combine(directory, $"{safe}_{hash}.txt");
         }
 
         private static string Sanitize(string name, int maxLength)

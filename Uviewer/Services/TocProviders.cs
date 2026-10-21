@@ -6,11 +6,11 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using BookSource.Core.Services;
+using Uviewer.Services.Legado.BookSources;
 using Uviewer.Models;
-// 注意：BookSource.Core.Models 里也有 TocItem，直接 using 该命名空间会让本文件的
+// 注意：Uviewer.Services.Legado.Models 里也有 TocItem，直接 using 该命名空间会让本文件的
 // TocItem 变成二义（CS0104）。这里只显式引入真正需要的标题规则类型。
-using TitleRule = BookSource.Core.Models.TitleRule;
+using TitleRule = Uviewer.Services.Legado.Models.TitleRule;
 
 namespace Uviewer.Services
 {

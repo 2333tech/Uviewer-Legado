@@ -1,24 +1,23 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Stage 5 integration tests.
+    书源引擎 + 阶段 5 集成层测试（合并后的单一测试工程）。
 
-    These tests deliberately do NOT reference the WinUI app project (a WinUI exe
-    cannot be referenced cleanly, and its types drag in XAML activation). Instead we
-    link the two pure-logic source files that carry all the algorithmic risk in the
-    integration layer and reference the real BookSource.Core library:
+    刻意不引用 WinUI 应用工程（WinUI exe 无法被干净引用，其类型还会拖入 XAML 激活）。
+    改为「链接宿主的纯逻辑源文件」编译进本测试程序集：
+      * Services/Legado/Models/  整目录  —— 书源/规则数据模型
+      * Services/Legado/Engine/  整目录  —— 规则引擎、选择器、抓取、净化、存储
+      * Services/Legado/ 下若干纯逻辑单文件 —— HTML→文本、目录适配、分章、缓存、评分
+    这样测的就是宿主真实代码，不需要额外类库，也不复制实现。
 
-      * LegadoHtmlText   — chapter HTML -> plain text conversion
-      * LegadoTocAdapter — library TOC -> host TOC entry mapping
-
-    The remaining integration code (session, dialog, controller) is orchestration:
-    it is thin and is exercised by the library-side test suite.
+    其余集成代码（会话/对话框/控制器）是编排层，薄且由 XAML 承载，不在此列。
   -->
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
     <IsPackable>false</IsPackable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <RootNamespace>Uviewer.Services.Legado</RootNamespace>
@@ -26,7 +25,10 @@
 
   <ItemGroup>
     <Compile Include="*.cs" />
-    <!-- 链接宿主的纯逻辑实现（不复制代码，保证测的就是集成层真实代码） -->
+    <!-- 引擎（整目录链接，新增文件自动纳入测试） -->
+    <Compile Include="..\Uviewer\Services\Legado\Models\*.cs" LinkBase="Engine\Models" />
+    <Compile Include="..\Uviewer\Services\Legado\BookSources\*.cs" LinkBase="Engine\Engine" />
+    <!-- 宿主的纯逻辑实现（不复制代码，保证测的就是集成层真实代码） -->
     <Compile Include="..\Uviewer\Services\Legado\LegadoHtmlText.cs" Link="Host\LegadoHtmlText.cs" />
     <Compile Include="..\Uviewer\Services\Legado\LegadoTocAdapter.cs" Link="Host\LegadoTocAdapter.cs" />
     <!-- 分章/目录生成：TextTocBuilder（纯逻辑，不依赖 WinUI，可直接链接） -->
@@ -38,16 +40,23 @@
     <Compile Include="..\Uviewer\Services\Legado\TextCacheStore.cs" Link="Host\TextCacheStore.cs" />
     <!-- 搜索结果相关性评分（纯逻辑：书名/作者分档打分，零 WinUI 依赖） -->
     <Compile Include="..\Uviewer\Services\Legado\SearchRelevance.cs" Link="Host\SearchRelevance.cs" />
+    <!-- 下载目录规则：默认值/校验/规范化（纯逻辑，零 WinUI 依赖） -->
+    <Compile Include="..\Uviewer\Services\Legado\DownloadPathRules.cs" Link="Host\DownloadPathRules.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- 引擎源码直接编译进本程序集，故需引擎自身的依赖 -->
+    <PackageReference Include="HtmlAgilityPack" Version="1.13.1" />
+    <PackageReference Include="HtmlAgilityPack.CssSelectors" Version="1.0.2" />
+    <PackageReference Include="Jint" Version="3.1.2" />
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="9.0.0" NoWarn="NU1510" />
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\BookSource.Core\BookSource.Core.csproj" />
+    <None Include="SampleBookSource.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

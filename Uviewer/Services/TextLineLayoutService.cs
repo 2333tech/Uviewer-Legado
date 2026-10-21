@@ -30,7 +30,8 @@ namespace Uviewer.Services
         {
             if (maxLineLength <= 0)
             {
-                return content.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+                // 与全应用同源的换行归一（CRLF/CR → LF）
+                return Uviewer.Services.Legado.BookSources.TextNormalization.ToLf(content).Split('\n');
             }
 
             var lines = new List<string>();

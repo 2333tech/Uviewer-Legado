@@ -271,6 +271,12 @@ namespace Uviewer
         /// <summary>导入书源 JSON 菜单项文案。</summary>
         public static string LegadoImportSources => GetString("LegadoImportSources");
 
+        /// <summary>下载设置菜单项文案（整本下载的保存目录）。</summary>
+        public static string LegadoDownloadSettings => GetString("LegadoDownloadSettings");
+
+        /// <summary>下载设置菜单项的悬停提示。</summary>
+        public static string LegadoDownloadSettingsHint => GetString("LegadoDownloadSettingsHint");
+
         /// <summary>书源管理二级菜单的悬停提示（概括其下含哪些能力）。</summary>
         public static string LegadoManageSourcesHint => GetString("LegadoManageSourcesHint");
 

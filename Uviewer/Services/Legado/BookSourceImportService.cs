@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using BookSource.Core.Services;
+using Uviewer.Services.Legado.BookSources;
 using Microsoft.UI.Xaml;
 using Windows.Storage.Pickers;
 using WinRT.Interop;

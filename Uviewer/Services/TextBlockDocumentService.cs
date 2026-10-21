@@ -68,7 +68,7 @@ namespace Uviewer.Services
             else
             {
                 string prepared = AozoraParserService.PreprocessAozoraBold(window.Text);
-                var lines = prepared.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+                var lines = Uviewer.Services.Legado.BookSources.TextNormalization.ToLf(prepared).Split('\n');
                 result = (AozoraParserService.ParseAozoraLines(lines, window.StartLine, baseFontSize), lines.Length);
             }
 

@@ -4,7 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using BookSource.Core.Services.BookSources;
+using Uviewer.Services.Legado.BookSources;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
 using Uviewer.Models;
 using Uviewer.Services;
 using Uviewer.Services.Legado;
@@ -56,11 +58,11 @@ namespace Uviewer
         /// <para>存储可能尚未加载（BookSources 首次访问才构造），故这里容忍未初始化状态：
         /// 返回空列表时 <c>TextTocProvider</c> 会退回到内置标记识别，功能不受影响。</para>
         /// </summary>
-        internal List<BookSource.Core.Models.TitleRule> GetEnabledTitleRules()
+        internal List<Uviewer.Services.Legado.Models.TitleRule> GetEnabledTitleRules()
         {
             var service = _bookSourceService;
             return service is null || !service.IsInitialized
-                ? new List<BookSource.Core.Models.TitleRule>()
+                ? new List<Uviewer.Services.Legado.Models.TitleRule>()
                 : service.TitleRules.GetEnabledOrdered();
         }
 
@@ -170,8 +172,8 @@ namespace Uviewer
 
             ShowNotification($"正在打开《{source.BookSourceName}》…", "\uE8F1", "Gray");
 
-            BookSource.Core.Models.BookInfo? info = null;
-            IReadOnlyList<BookSource.Core.Models.TocItem> chapters = Array.Empty<BookSource.Core.Models.TocItem>();
+            Uviewer.Services.Legado.Models.BookInfo? info = null;
+            IReadOnlyList<Uviewer.Services.Legado.Models.TocItem> chapters = Array.Empty<Uviewer.Services.Legado.Models.TocItem>();
             try
             {
                 var opened = await session.OpenAsync(token).ConfigureAwait(true);
@@ -347,7 +349,7 @@ namespace Uviewer
         // 目录接线
         // ============================================================
 
-        private void InstallLegadoToc(IReadOnlyList<BookSource.Core.Models.TocItem> chapters)
+        private void InstallLegadoToc(IReadOnlyList<Uviewer.Services.Legado.Models.TocItem> chapters)
         {
             // 库侧目录 → 中立条目 → 宿主 TocItem（SourceLineNumber 复用为章节下标）
             _legadoTocItems = LegadoTocAdapter.Adapt(chapters)
@@ -445,9 +447,9 @@ namespace Uviewer
             await service.EnsureInitializedAsync().ConfigureAwait(true);
 
             var rules = new ReplaceRuleService(service, RootGrid, GetWindowHandle, NotifyFromRuleService);
-            var dialog = new RuleManagerDialog<BookSource.Core.Models.ReplaceRule>(
+            var dialog = new RuleManagerDialog<Uviewer.Services.Legado.Models.ReplaceRule>(
                 RootGrid,
-                new RuleManagerConfig<BookSource.Core.Models.ReplaceRule>
+                new RuleManagerConfig<Uviewer.Services.Legado.Models.ReplaceRule>
                 {
                     DialogTitle = "替换净化规则管理",
                     ItemNoun = "净化规则",
@@ -498,9 +500,9 @@ namespace Uviewer
                 service, RootGrid, GetWindowHandle, NotifyFromRuleService,
                 () => RefreshTextTocFromTitleRulesAsync());
 
-            var dialog = new RuleManagerDialog<BookSource.Core.Models.TitleRule>(
+            var dialog = new RuleManagerDialog<Uviewer.Services.Legado.Models.TitleRule>(
                 RootGrid,
-                new RuleManagerConfig<BookSource.Core.Models.TitleRule>
+                new RuleManagerConfig<Uviewer.Services.Legado.Models.TitleRule>
                 {
                     DialogTitle = "标题 / 章节划分规则管理",
                     ItemNoun = "标题规则",
@@ -699,6 +701,161 @@ namespace Uviewer
                 (msg, icon, color) => ShowNotification(msg, icon, color));
 
             await importer.PickAndImportAsync().ConfigureAwait(true);
+        }
+
+        /// <summary>
+        /// 整本下载的目录设置（设置 →「书源管理」→「下载设置」）。
+        /// <para>布局：说明文字 + 一行「完整路径文本框 | 浏览…」+ 校验提示。宽度给足 560，
+        /// 因为 <c>D:\Books\Legado\Nihongo\...</c> 这类路径一屏能看完比省空间重要。</para>
+        /// <para><b>浏览按钮复用 <see cref="JsonPicker.PickFolderAsync"/></b>：与「导入书源 JSON」
+        /// 走同一套 <c>InitializeWithWindow</c> 绑定与错误提示——句柄来源、失败行为只有一份定义。</para>
+        /// <para><b>保存语义</b>：只在点「保存」时落盘（与外部程序路径设置一致），
+        /// 取消/关闭不留痕迹；落盘前用 <see cref="BookSourceService.NormalizeDownloadDirectory"/>
+        /// 校验，非法输入让对话框留在原地而不是先关再报错。</para>
+        /// </summary>
+        internal async Task ShowDownloadSettingsAsync()
+        {
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            const double DesiredContentWidth = 560;
+
+            var palette = LegadoTheme.For(RootGrid);
+
+            var input = new TextBox
+            {
+                Text = service.DownloadDirectory,
+                PlaceholderText = @"例如 D:\Books",
+                TextWrapping = TextWrapping.NoWrap,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+
+                // 纵向拉伸：与右侧"浏览"按钮同高，由 Grid 行高统一决定（不硬编高度值）
+                VerticalAlignment = VerticalAlignment.Stretch,
+            };
+
+            // 按钮沿用项目默认 Button 样式（对话框内的"导入/保存/删除"都是默认样式，
+            // 不用强调色/工具栏样式），只把内边距改成纯横向并给最小宽度。
+            var browseButton = new Button
+            {
+                Content = "浏览…",
+                Padding = new Thickness(16, 0, 16, 0),
+                MinWidth = 88,
+                VerticalAlignment = VerticalAlignment.Stretch,
+            };
+            Grid.SetColumn(browseButton, 1);
+
+            var pathRow = new Grid { ColumnSpacing = 8 };
+            pathRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            pathRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            pathRow.Children.Add(input);
+            pathRow.Children.Add(browseButton);
+
+            var error = new TextBlock
+            {
+                Visibility = Visibility.Collapsed,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 12,
+
+                // 文字色必须灰度（见 LegadoTheme 注释），警示语义靠前置 ⚠ 图形
+                Foreground = palette.TextSecondary,
+            };
+
+            browseButton.Click += async (_, _) =>
+            {
+                var picked = await JsonPicker
+                    .PickFolderAsync(() => GetWindowHandle(), (msg, icon, color) => ShowNotification(msg, icon, color), input.Text)
+                    .ConfigureAwait(true);
+
+                if (picked is null)
+                {
+                    return;   // 用户取消（失败原因已由 picker 提示）
+                }
+
+                input.Text = picked;
+                error.Visibility = Visibility.Collapsed;
+            };
+
+            input.TextChanged += (_, _) => error.Visibility = Visibility.Collapsed;
+
+            bool TryValidate(out string message)
+            {
+                try
+                {
+                    input.Text = BookSourceService.NormalizeDownloadDirectory(input.Text);
+                    message = string.Empty;
+                    return true;
+                }
+                catch (ArgumentException ex)
+                {
+                    message = $"⚠ {ex.Message}";
+                    return false;
+                }
+            }
+
+            var panel = new StackPanel
+            {
+                Spacing = 8,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "整本下载的书籍会保存到此目录（目录不存在时在首次下载时自动创建）。"
+                             + $"默认：{BookSourceService.DefaultDownloadDirectory}",
+                        TextWrapping = TextWrapping.Wrap,
+                        FontSize = 12,
+                        Foreground = palette.TextSecondary,
+                    },
+                    pathRow,
+                    error,
+                },
+            };
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = RootGrid.XamlRoot,
+                RequestedTheme = RootGrid.ActualTheme,
+                Title = "下载设置",
+                Content = panel,
+                PrimaryButtonText = "保存",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+
+            // 尺寸走资源键（属性无效），内容矮就矮着
+            LegadoDialogLayout.Fit(dialog, RootGrid, DesiredContentWidth, preferredContentHeight: 240);
+
+            dialog.PrimaryButtonClick += (_, args) =>
+            {
+                if (TryValidate(out var message))
+                {
+                    return;
+                }
+
+                error.Text = message;
+                error.Visibility = Visibility.Visible;
+                input.Focus(FocusState.Programmatic);
+                args.Cancel = true;   // 非法路径不关闭对话框
+            };
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            string saved;
+            try
+            {
+                saved = await service.SetDownloadDirectoryAsync(input.Text).ConfigureAwait(true);
+            }
+            catch (ArgumentException ex)
+            {
+                ShowNotification(ex.Message, "\uE783", "Red");
+                return;
+            }
+
+            ShowNotification($"下载目录已设为：{saved}", "\uE73E", "Green");
         }
 
         /// <summary>

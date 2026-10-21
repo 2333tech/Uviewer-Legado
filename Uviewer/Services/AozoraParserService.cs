@@ -30,7 +30,8 @@ namespace Uviewer.Services
         public static (List<AozoraBindingModel> Blocks, int SourceLineCount) ParseAozoraContent(string text, double baseFontSize)
         {
             text = PreprocessAozoraBold(text);
-            var lines = text.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+            // 行号是全应用的公共坐标（目录/进度/搜索），换行归一必须与其它模块同源
+            var lines = Uviewer.Services.Legado.BookSources.TextNormalization.ToLf(text).Split('\n');
             var blocks = ParseAozoraLines(lines, 1, baseFontSize);
             return (blocks, lines.Length);
         }

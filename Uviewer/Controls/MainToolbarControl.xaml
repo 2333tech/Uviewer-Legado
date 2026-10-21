@@ -115,6 +115,12 @@
                                         <FontIcon Glyph="&#xE896;"/>
                                     </MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
+                                <!-- 整本下载的落盘目录（书源能力，与导入同级） -->
+                                <MenuFlyoutItem x:Name="LegadoDownloadSettingsMenuItem" Text="{x:Bind app:Strings.LegadoDownloadSettings}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE838;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
                                 <MenuFlyoutSeparator/>
                                 <MenuFlyoutItem x:Name="LegadoImportReplaceRulesMenuItem" Text="{x:Bind app:Strings.LegadoImportReplaceRules}">
                                     <MenuFlyoutItem.Icon>

@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using Uviewer.Services.Legado.BookSources;
 
 namespace Uviewer.Services.Legado
 {
@@ -51,7 +52,9 @@ namespace Uviewer.Services.Legado
             }
 
             // ① 先统一换行符（后面所有正则都假定只有 \n）
-            var s = html.Replace("\r\n", "\n").Replace('\r', '\n');
+            // 与全应用共用同一实现（Uviewer.Services.Legado.BookSources.TextNormalization），
+            // 避免"这里认 CRLF、那里不认"的分歧。
+            var s = TextNormalization.ToLf(html);
 
             // ② 去 script/style
             s = RxScript.Replace(s, string.Empty);

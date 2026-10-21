@@ -722,6 +722,8 @@
   <data name="TextHorizontalTwoColumnsHint" xml:space="preserve"><value>青空文庫とEPUBの本文に適用されます。ウィンドウの幅が高さの1.2倍以上の場合、横書きを2段で表示します。</value></data>
   <data name="LegadoManageSources" xml:space="preserve"><value>SID を管理</value></data>
   <data name="LegadoImportSources" xml:space="preserve"><value>SID JSON をインポート…</value></data>
+  <data name="LegadoDownloadSettings" xml:space="preserve"><value>ダウンロード設定…</value></data>
+  <data name="LegadoDownloadSettingsHint" xml:space="preserve"><value>書籍全体のダウンロード先フォルダーを設定します（既定：ユーザーの「ダウンロード」フォルダー）</value></data>
   <data name="LegadoManageSourcesHint" xml:space="preserve"><value>書籍ソース・浄化ルール・タイトル规则的まとめての管理</value></data>
   <data name="LegadoImportReplaceRules" xml:space="preserve"><value>浄化ルール JSON をインポート…</value></data>
   <data name="LegadoShowReplaceRules" xml:space="preserve"><value>浄化ルールを表示 / 切り替え</value></data>
