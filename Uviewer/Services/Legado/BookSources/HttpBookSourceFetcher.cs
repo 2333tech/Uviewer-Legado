@@ -10,16 +10,17 @@ namespace Uviewer.Services.Legado.BookSources;
 /// <para>设计要点：</para>
 /// <list type="bullet">
 /// <item>共享静态 <see cref="HttpClient"/>（连接池复用；进程级单例，勿 dispose）；</item>
-/// <item>Cookie 由每源容器手动管理（不放进 Handler，避免跨源串味，reader source_session 语义）；</item>
+/// <item><b>Cookie 由注入的 <see cref="ISourceCookieStore"/> 统一管理</b>（阶段 4-3 修 D3）：
+/// 不再是本实例的私有字典——同一书源的搜索/目录/正文/<c>java.ajax</c> 共用同一份 Cookie；</item>
 /// <item>字符集三级探测：Content-Type → HTML meta（仅扫前 4KB）→ 书源 charset → UTF-8，
 /// 因此 GB18030/GBK 中文站点不会乱码（reader 用 encoding_rs，行为一致）；</item>
 /// <item>重试：最多 3 次尝试、仅 5xx 重试、200ms×(n+1) 线性退避（reader fetcher.rs:237/256）；</item>
 /// <item>逐字节读取响应体：编码未知时不能先按 UTF-8 解码（否则 GBK 会变成替换字符后再也无法还原）。</item>
 /// </list>
-/// <para>线程安全：<see cref="HttpClient"/> 本身线程安全；Cookie 容器按源加锁；
+/// <para>线程安全：<see cref="HttpClient"/> 本身线程安全；Cookie 容器由仓库按源串行化；
 /// <see cref="MethodCache"/> 为并发字典。</para>
 /// </summary>
-public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IDisposable
+public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IRichResponseFetcher, IDisposable
 {
     /// <summary>reader app/config.rs:31 默认 15s。</summary>
     public const int DefaultTimeoutSeconds = 15;
@@ -61,20 +62,49 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IDisposable
     private static readonly ConcurrentDictionary<string, HttpMethod> MethodCache =
         new(StringComparer.Ordinal);
 
-    /// <summary>每源 Cookie 容器（reader source_session：每源一个 jar）。</summary>
-    private readonly ConcurrentDictionary<string, CookieContainer> _cookies = new(StringComparer.Ordinal);
+    /// <summary>
+    /// Cookie 仓库（阶段 4-3）：同一书源的所有取数实现/脚本共用同一份。
+    /// <para>默认 <see cref="SourceCookieStore.Memory"/>（纯内存）：单测不写用户目录；
+    /// 生产由 <c>LegadoRuntime</c> 注入带 <see cref="SourceStateStore"/> 的实例，Cookie 跨重启保留。</para>
+    /// </summary>
+    private readonly ISourceCookieStore _cookies;
 
     /// <summary>默认超时（可被 spec.TimeoutSeconds 覆盖）。</summary>
     public TimeSpan Timeout { get; init; } = TimeSpan.FromSeconds(DefaultTimeoutSeconds);
 
+    /// <param name="cookies">Cookie 仓库（可选；默认纯内存实例）。</param>
+    public HttpBookSourceFetcher(ISourceCookieStore? cookies = null) =>
+        _cookies = cookies ?? SourceCookieStore.Memory;
+
+    /// <summary>当前使用的 Cookie 仓库（诊断/接线校验用）。</summary>
+    public ISourceCookieStore Cookies => _cookies;
+
     /// <summary>
-    /// 抓取文本（对标 reader fetcher::fetch）。步骤：
-    /// ① 计算重试上限与超时（spec 优先，否则实例默认）；
-    /// ② 每次尝试：关联取消源 + CancelAfter 超时；
-    /// ③ 发请求；④ 5xx 且还有重试额度 → 线性退避后重试（4xx 直接返回，不重试）；
-    /// ⑤ 解码响应体 + 保存 Cookie；⑥ 取消/网络异常且还有额度 → 退避重试。
+    /// 抓取文本（对标 reader fetcher::fetch）。步骤见 <see cref="FetchDetailedAsync"/>；
+    /// 本重载只丢弃状态码/响应头（普通取数不需要富响应，零额外开销）。
     /// </summary>
     public async Task<(string Content, string BaseUrl)> FetchAsync(
+        string url,
+        RequestSpec? spec = null,
+        string? sourceKey = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await FetchDetailedAsync(url, spec, sourceKey, cancellationToken).ConfigureAwait(false);
+        return (response.Content, response.BaseUrl);
+    }
+
+    /// <summary>
+    /// 抓取并返回富响应（阶段 4-3，供 <c>java.getStrResponse/connect/post/ajaxAll</c> 用）。
+    /// <para>步骤：</para>
+    /// <list type="number">
+    /// <item>计算重试上限与超时（spec 优先，否则实例默认）；</item>
+    /// <item>每次尝试：关联取消源 + CancelAfter 超时；</item>
+    /// <item>发请求；5xx 且还有重试额度 → 线性退避后重试（4xx 直接返回，不重试）；</item>
+    /// <item>解码响应体 + 把 <c>Set-Cookie</c> 交给 Cookie 仓库；</item>
+    /// <item>取消/网络异常且还有额度 → 退避重试；耗尽 → 异常上抛（由调用方决定回退策略）。</item>
+    /// </list>
+    /// </summary>
+    public async Task<FetchResponse> FetchDetailedAsync(
         string url,
         RequestSpec? spec = null,
         string? sourceKey = null,
@@ -110,8 +140,12 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IDisposable
                 }
 
                 var (text, finalUrl) = await DecodeAsync(response, spec?.Charset, request.RequestUri).ConfigureAwait(false);
-                SaveCookies(response, sourceKey, request.RequestUri);
-                return (text, finalUrl ?? url);
+                CaptureCookies(response, sourceKey, request.RequestUri);
+                return new FetchResponse(
+                    text,
+                    finalUrl ?? url,
+                    (int)response.StatusCode,
+                    CollectResponseHeaders(response));
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < maxRetries)
             {
@@ -191,10 +225,11 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IDisposable
     /// 构造请求（对标 reader build_request）。步骤：
     /// ① 方法（默认 GET）；② 书源请求头（名为 proxy 的头被抽出当代理，不作为请求头发送——
     ///    阶段 4 代理管道消费，这里先跳过）；③ 缺省补 UA（书源自定义 UA 优先）；
-    /// ④ 图片请求缺省补 Accept；⑤ 附加每源 Cookie；
+    /// ④ 图片请求缺省补 Accept；⑤ 附加该源 Cookie（书源自带 Cookie 头优先）；
     /// ⑥ 有 body 时按 NeedsFormEncode 判定 Content-Type（表单 / JSON，书源自带头优先）。
+    /// <para>internal 仅为了让测试能断言"Cookie 确实来自共享仓库"（测试工程链接源码编译）。</para>
     /// </summary>
-    private HttpRequestMessage BuildRequest(string url, RequestSpec? spec, string? sourceKey, bool isImage)
+    internal HttpRequestMessage BuildRequest(string url, RequestSpec? spec, string? sourceKey, bool isImage)
     {
         var request = new HttpRequestMessage(ResolveMethod(spec?.Method), url);
 
@@ -324,8 +359,9 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IDisposable
     }
 
     /// <summary>
-    /// 附加每源 Cookie：从该源的容器取当前请求 URL 的 Cookie 头（容器按源加锁）。
-    /// 无 sourceKey 或无容器 → 不加（首次请求尚无 Cookie）。
+    /// 附加该源 Cookie：从共享仓库取当前请求 URL 的 Cookie 头。
+    /// <para><b>书源自带 Cookie 头时以书源为准</b>（不追加第二个 Cookie 头——HTTP 会把它当两行，
+    /// 多数服务器只认第一行；书源显式写 Cookie 往往是"绕过登录"的确定性做法）。</para>
     /// </summary>
     private void ApplyCookies(HttpRequestMessage request, string? sourceKey)
     {
@@ -334,17 +370,12 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IDisposable
             return;
         }
 
-        if (!_cookies.TryGetValue(sourceKey, out var jar))
+        if (request.Headers.Contains("Cookie"))
         {
             return;
         }
 
-        string header;
-        lock (jar)
-        {
-            header = jar.GetCookieHeader(request.RequestUri);
-        }
-
+        var header = _cookies.GetCookieHeader(sourceKey, request.RequestUri.ToString());
         if (header.Length > 0)
         {
             request.Headers.TryAddWithoutValidation("Cookie", header);
@@ -352,9 +383,11 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IDisposable
     }
 
     /// <summary>
-    /// 保存响应 Set-Cookie 到每源容器（按源加锁；单个非法 Cookie 不影响其它）。
+    /// 把响应 <c>Set-Cookie</c> 交给共享仓库（按真实 HTTP 语义：Domain/Path/过期/Max-Age=0 删除）。
+    /// <para>阶段 4-3 起不再有"本实例私有容器"：写进仓库后，搜索链/阅读链/<c>java.ajax</c>
+    /// 的下一跳都能立即读到（这正是 D3 会话割裂的修复点）。</para>
     /// </summary>
-    private void SaveCookies(HttpResponseMessage response, string? sourceKey, Uri? requestUri)
+    private void CaptureCookies(HttpResponseMessage response, string? sourceKey, Uri? requestUri)
     {
         if (string.IsNullOrEmpty(sourceKey) || requestUri is null
             || !response.Headers.TryGetValues("Set-Cookie", out var values))
@@ -362,21 +395,24 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IDisposable
             return;
         }
 
-        var jar = _cookies.GetOrAdd(sourceKey, _ => new CookieContainer());
-        lock (jar)
+        _cookies.CaptureSetCookie(sourceKey, requestUri.ToString(), values);
+    }
+
+    /// <summary>收集响应头（名小写，多值用 ", " 合并）——给 <c>java.getStrResponse().headers()</c> 用。</summary>
+    private static IReadOnlyDictionary<string, string> CollectResponseHeaders(HttpResponseMessage response)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (name, values) in response.Headers)
         {
-            foreach (var value in values)
-            {
-                try
-                {
-                    jar.SetCookies(requestUri, value);
-                }
-                catch (CookieException)
-                {
-                    // 单个非法 Set-Cookie 不影响其它
-                }
-            }
+            headers[name.ToLowerInvariant()] = string.Join(", ", values);
         }
+
+        foreach (var (name, values) in response.Content.Headers)
+        {
+            headers[name.ToLowerInvariant()] = string.Join(", ", values);
+        }
+
+        return headers;
     }
 
     /// <summary>线性退避：200ms×(attempt+1)（reader fetcher.rs:237/256）。取消时静默结束。</summary>

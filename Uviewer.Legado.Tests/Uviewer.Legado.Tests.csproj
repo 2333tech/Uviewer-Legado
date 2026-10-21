@@ -31,6 +31,9 @@
     <!-- 宿主的纯逻辑实现（不复制代码，保证测的就是集成层真实代码） -->
     <Compile Include="..\Uviewer\Services\Legado\LegadoHtmlText.cs" Link="Host\LegadoHtmlText.cs" />
     <Compile Include="..\Uviewer\Services\Legado\LegadoTocAdapter.cs" Link="Host\LegadoTocAdapter.cs" />
+    <!-- 书源门面（阶段 4-3 验收："同一 BookSourceService 下搜索与阅读共享 Cookie"）。
+         它零 WinUI 依赖，链接进来测的才是真实接线，而不是复制一份假服务。 -->
+    <Compile Include="..\Uviewer\Services\Legado\BookSourceService.cs" Link="Host\BookSourceService.cs" />
     <!-- 分章/目录生成：TextTocBuilder（纯逻辑，不依赖 WinUI，可直接链接） -->
     <Compile Include="..\Uviewer\Services\Legado\TextTocBuilder.cs" Link="Host\TextTocBuilder.cs" />
     <!-- 规则编辑规格：字段顺序/标签/克隆/默认值/校验（纯逻辑，不依赖 WinUI） -->

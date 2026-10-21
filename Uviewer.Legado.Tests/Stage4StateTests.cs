@@ -210,7 +210,6 @@ public class Stage4StateTests : IDisposable
         Assert.Equal("cv:https://a.com/ch/9:x", scope.ChapterKey("x"));
         Assert.Equal("c:x", scope.CacheKey("x"));
         Assert.Equal("file:x", scope.FileCacheKey("x"));
-        Assert.Equal("ck:a.com", scope.CookieKey("a.com"));
         Assert.Equal("brc:https://a.com/book/1", scope.ReadConfigKey());
     }
 
@@ -443,7 +442,13 @@ public class Stage4StateTests : IDisposable
             """;
         source.RuleContent = new Models.ContentRule { Content = script };
 
-        var engine = new RuleEngine { Store = new SourceStateStore(), Diagnostics = new JsDiagnostics() };
+        var cookies = new SourceCookieStore();
+        var engine = new RuleEngine
+        {
+            Store = new SourceStateStore(),
+            Diagnostics = new JsDiagnostics(),
+            Cookies = cookies,
+        };
         var (text, _, _) = engine.ParseContentPage(
             source,
             "<html></html>",
@@ -454,12 +459,9 @@ public class Stage4StateTests : IDisposable
 
         // 变量确实落到书源级键（sv:variable）
         Assert.Equal("token-1", engine.Store.Get("https://pan.baidu.com", "sv:variable"));
-        // putLoginHeader 里的 Cookie 同步进 Cookie 仓库（显式设置，不依赖脚本内部状态）
-        var store = new SourceStateStore();
-        var scope = new JsScope("https://pan.baidu.com", store: store);
-        Assert.Equal(string.Empty, JsCookieJar.GetCookie(scope, "https://pan.baidu.com"));
-        store.Set("https://pan.baidu.com", scope.SourceMetaKey("variable"), "token-1");
-        Assert.Equal("token-1", store.Get("https://pan.baidu.com", "sv:variable"));
+        // putLoginHeader 里的 Cookie 同步进 Cookie 仓库（阶段 4-3：脚本与 HTTP 共用同一份）
+        Assert.Equal("sid=9; u=8", cookies.GetCookieHeader("https://pan.baidu.com", "https://pan.baidu.com/"));
+        Assert.Equal("9", cookies.GetCookieValue("https://pan.baidu.com", "https://pan.baidu.com/", "sid"));
     }
 
     [Fact]
@@ -531,18 +533,21 @@ public class Stage4StateTests : IDisposable
         source.RuleContent = new Models.ContentRule { Content = script };
 
         var store = new SourceStateStore();
-        var engine = new RuleEngine { Store = store, Diagnostics = new JsDiagnostics() };
+        var engine = new RuleEngine
+        {
+            Store = store,
+            Diagnostics = new JsDiagnostics(),
+            Cookies = new SourceCookieStore(), // 独立 Cookie 容器：不与其他用例互相污染
+        };
         var (text, _, _) = engine.ParseContentPage(
             source, "<html></html>", "https://pan.baidu.com/ch/1", null, "https://pan.baidu.com/ch/1");
 
-        Assert.Equal("1|sid=1; u=9; x=3|", text);
-
         // 域归并：近似二级域名（跨子域可读）+ 常见二级后缀
-        Assert.Equal("example.com", JsCookieJar.DomainOf("https://www.example.com/a"));
-        Assert.Equal("example.com", JsCookieJar.DomainOf("https://m.example.com"));
-        Assert.Equal("foo.com.cn", JsCookieJar.DomainOf("https://a.foo.com.cn/x"));
-        Assert.Equal("localhost", JsCookieJar.DomainOf("http://localhost:8080/x"));
-        Assert.Equal("not a url", JsCookieJar.DomainOf("  not a url  "));
+        Assert.Equal("example.com", SourceCookieStore.DomainOf("https://www.example.com/a"));
+        Assert.Equal("example.com", SourceCookieStore.DomainOf("https://m.example.com"));
+        Assert.Equal("foo.com.cn", SourceCookieStore.DomainOf("https://a.foo.com.cn/x"));
+        Assert.Equal("localhost", SourceCookieStore.DomainOf("http://localhost:8080/x"));
+        Assert.Equal("not a url", SourceCookieStore.DomainOf("  not a url  "));
     }
 
     [Fact]

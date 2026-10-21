@@ -53,19 +53,30 @@ public sealed class BookSourceEngine
     /// </summary>
     private readonly ContentPurifier? _purifier;
 
+    /// <summary>
+    /// Cookie 仓库（阶段 4-3）：与本引擎所有取数请求、<c>java.ajax</c>、脚本 <c>cookie.*</c> 共用。
+    /// <para>默认进程级内存实例；生产由 <see cref="LegadoRuntime"/> 注入（落盘 + 跨链共享）。</para>
+    /// </summary>
+    private readonly ISourceCookieStore _cookies;
+
     /// <param name="fetcher">取数实现（默认 HTTP）。</param>
     /// <param name="purifier">净化管线（可选；宿主通常持 ReplaceRuleManager，规则变更时把
     /// 新快照赋给 <see cref="ContentPurifier.Rules"/> 即可，引擎无需重建）。</param>
     /// <param name="store">JS 状态仓库（可选；默认内存态，生产传入按数据目录构造的持久实例）。</param>
+    /// <param name="cookies">Cookie 仓库（可选；默认进程级内存实例，生产传入运行时的共享实例）。</param>
     public BookSourceEngine(
         IBookSourceFetcher? fetcher = null,
         ContentPurifier? purifier = null,
-        SourceStateStore? store = null)
+        SourceStateStore? store = null,
+        ISourceCookieStore? cookies = null)
     {
         _fetcher = fetcher ?? new HttpBookSourceFetcher();
         _purifier = purifier;
         _store = store ?? SourceStateStore.InMemory;
+        _cookies = cookies ?? SourceCookieStore.Memory;
         _engine.Store = _store;
+        _engine.Fetcher = _fetcher;
+        _engine.Cookies = _cookies;
     }
 
     // ==================== 详情 ====================
@@ -546,7 +557,8 @@ public sealed class BookSourceEngine
     /// 抓取书源页面（详情/目录/正文共用）。要点：
     /// ① URL 同样要过 analyze_request 编译（可能带 ,{json} 选项，如 POST 目录页）；
     /// ② 请求地址用 absolute_url（去 query+fragment）；③ 最终 URL 回退请求 URL
-    /// （重定向后的地址用于相对地址解析，fetcher 必须返回它）。
+    /// （重定向后的地址用于相对地址解析，fetcher 必须返回它）；
+    /// ④ 带上书源限速（<see cref="RequestSpec.ConcurrentRate"/>），由 <see cref="RateLimitedFetcher"/> 消费。
     /// </summary>
     private async Task<(string Body, string FinalUrl)> FetchSourceAsync(
         BookSourceModel source, string url, CancellationToken cancellationToken)
@@ -558,6 +570,9 @@ public sealed class BookSourceEngine
         {
             return (string.Empty, url);
         }
+
+        // 阶段 4-3：限速随请求走（同一书源的搜索/目录/正文/java.ajax 共用一把闸门）
+        spec = spec with { ConcurrentRate = source.ConcurrentRate };
 
         var (body, finalUrl) = await _fetcher
             .FetchAsync(requestUrl, spec, source.BookSourceUrl, cancellationToken).ConfigureAwait(false);
@@ -629,6 +644,8 @@ public sealed class BookSourceEngine
     {
         var engine = pool.TryTake(out var taken) ? taken : new RuleEngine();
         engine.Store = _store;
+        engine.Fetcher = _fetcher;
+        engine.Cookies = _cookies;
         return engine;
     }
 

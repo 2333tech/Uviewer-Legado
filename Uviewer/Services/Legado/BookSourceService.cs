@@ -39,11 +39,17 @@ namespace Uviewer.Services.Legado
         private readonly BookSourceEngine _engine;
 
         /// <summary>
-        /// 书源 JS 状态仓库（阶段 4-2）：<c>java.put/get</c>、<c>source/book/cache/cookie</c> 的落点。
+        /// 书源 JS 状态仓库（阶段 4-2）：<c>java.put/get</c>、<c>source/book/chapter/cache</c> 的落点。
         /// <para>目录 = <c>&lt;数据目录&gt;\legado\sources\&lt;sha1(书源URL)&gt;.json</c>。
         /// 引擎与搜索服务共用同一实例，故"搜索/目录链写的变量，阅读链读得到"。</para>
         /// </summary>
         private readonly SourceStateStore _jsStateStore;
+
+        /// <summary>
+        /// 取数运行时组合根（阶段 4-3）：唯一取数管线 + 共享 Cookie + 共享 JS 状态。
+        /// <para>引擎/搜索/JS 同步桥全部从它派生，修掉 D3（搜索与阅读各持一套 Cookie）。</para>
+        /// </summary>
+        private readonly LegadoRuntime _runtime;
 
         /// <summary>
         /// 替换净化总开关（用户级，持久化到 <c>legadoSettings.json</c>）。
@@ -71,7 +77,14 @@ namespace Uviewer.Services.Legado
 
         private int _disposed;
 
-        public BookSourceService(string? dataDirectory = null)
+        /// <summary>
+        /// 建服务。
+        /// </summary>
+        /// <param name="dataDirectory">数据目录（默认 <c>%LocalAppData%\Uviewer</c>）。</param>
+        /// <param name="runtime">运行时组合根（可选；测试可注入带替身 fetcher 的运行时，
+        /// 使搜索/阅读/JS 同步桥走同一条离线取数管线）。</param>
+        // EN: Optional runtime allows tests to inject a fake fetch pipeline; production builds one per service.
+        public BookSourceService(string? dataDirectory = null, LegadoRuntime? runtime = null)
         {
             var dir = string.IsNullOrWhiteSpace(dataDirectory)
                 ? Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Uviewer"
@@ -83,16 +96,18 @@ namespace Uviewer.Services.Legado
             _readingStore = new BookSourceReadingStore(Path.Combine(dir, "readingProgress.json"));
             _settingsPath = Path.Combine(dir, "legadoSettings.json");
 
+            // 阶段 4-3：运行时组合根（唯一取数管线 + 共享 Cookie + 共享 JS 状态）。
+            // 状态目录随数据目录：<数据目录>\legado\sources。
+            _runtime = runtime ?? LegadoRuntime.CreateDefault(dir);
+            _jsStateStore = _runtime.State;
+
             // 引擎在构造时就绑定净化器实例：净化器的规则列表可在加载后整体替换
             //（ContentPurifier 内部按引用比较失效编译快照），无需重建引擎。
-            // 阶段 4-2：JS 状态仓库随数据目录走（<数据目录>\legado\sources），引擎与搜索共用同一实例，
-            // 这样"搜索链写下的变量 → 阅读链读得到"，且重启后仍在。
-            _jsStateStore = new SourceStateStore(Path.Combine(dir, "legado", "sources"));
-            _engine = new BookSourceEngine(purifier: _purifier, store: _jsStateStore);
+            _engine = _runtime.CreateEngine(_purifier);
 
-            // 搜索服务自建引擎池：每次搜索新建 RuleEngine（Jint 非线程安全），
-            // 并发度由 BookSourceLimits 控制。
-            _search = new SearchService(store: _jsStateStore);
+            // 搜索服务与引擎共用同一条取数管线：每次搜索内部新建 RuleEngine（Jint 非线程安全），
+            // 但 Cookie/限速/状态是同一份 —— 这正是 D3 的修复点。
+            _search = _runtime.CreateSearchService();
         }
 
         /// <summary>书源管理（导入/查询/启停）。</summary>
@@ -120,6 +135,13 @@ namespace Uviewer.Services.Legado
         /// <summary>书源 JS 状态仓库（阶段 4-2；退出登录/清理书源状态时使用）。</summary>
         // EN: Per-source JS state store (variables, cookies, cache) backed by files on disk.
         public SourceStateStore JsStateStore => _jsStateStore;
+
+        /// <summary>
+        /// Cookie 仓库（阶段 4-3）：脚本 / 搜索 / 阅读 / <c>java.ajax</c> 共用同一份。
+        /// 界面侧的"退出登录"应调 <c>Cookies.Clear(sourceUrl)</c> + <c>JsStateStore.Clear(sourceUrl)</c>。
+        /// </summary>
+        // EN: Single per-source cookie jar shared by search, reading and java.ajax (D3 fix).
+        public ISourceCookieStore Cookies => _runtime.Cookies;
 
         /// <summary>是否已初始化（UI 据此决定是否显示"加载中"）。</summary>
         public bool IsInitialized { get; private set; }
@@ -547,6 +569,16 @@ namespace Uviewer.Services.Legado
             catch
             {
                 // 释放期不抛：读进度丢失不影响本次会话的阅读
+            }
+
+            // 阶段 4-3：释放运行时（只释放它自己创建的 HTTP 客户端；注入的替身由调用方负责）
+            try
+            {
+                _runtime.Dispose();
+            }
+            catch
+            {
+                // 释放期不抛
             }
 
             return ValueTask.CompletedTask;

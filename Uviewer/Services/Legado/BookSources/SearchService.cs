@@ -17,10 +17,17 @@ public sealed class SearchService
     /// <summary>脚本状态仓库（阶段 4-2）：搜索链里 <c>source.getVariable</c>/<c>java.put</c> 的落点。</summary>
     private readonly SourceStateStore _store;
 
-    public SearchService(IBookSourceFetcher? fetcher = null, SourceStateStore? store = null)
+    /// <summary>Cookie 仓库（阶段 4-3）：与阅读链/静态请求共用，登录态才能贯通。</summary>
+    private readonly ISourceCookieStore _cookies;
+
+    public SearchService(
+        IBookSourceFetcher? fetcher = null,
+        SourceStateStore? store = null,
+        ISourceCookieStore? cookies = null)
     {
         _fetcher = fetcher ?? new HttpBookSourceFetcher();
         _store = store ?? SourceStateStore.InMemory;
+        _cookies = cookies ?? SourceCookieStore.Memory;
     }
 
     /// <summary>
@@ -50,10 +57,18 @@ public sealed class SearchService
             return new List<SearchResult>();
         }
 
+        // 阶段 4-3：限速随请求走（与阅读链共用同一把书源闸门）
+        spec = spec with { ConcurrentRate = source.ConcurrentRate };
+
         var (content, baseUrl) = await _fetcher
             .FetchAsync(url, spec, source.BookSourceUrl, cancellationToken).ConfigureAwait(false);
 
-        return new RuleEngine { Store = _store }.SearchBooks(source, content, baseUrl);
+        return new RuleEngine
+        {
+            Store = _store,
+            Fetcher = _fetcher,
+            Cookies = _cookies,
+        }.SearchBooks(source, content, baseUrl);
     }
 
     /// <summary>

@@ -31,6 +31,15 @@ public sealed record RequestSpec
     /// <summary>单请求超时（秒）。null 表示沿用客户端默认（reader 默认 15s）。</summary>
     public int? TimeoutSeconds { get; init; }
 
+    /// <summary>
+    /// 书源限速配置（原样携带 <see cref="Models.BookSource.ConcurrentRate"/>：
+    /// <c>"N"</c> = 串行 + 最小间隔 N 毫秒；<c>"N/M"</c> = 每 M 毫秒窗口最多 N 次）。
+    /// <para>由调用方（引擎/搜索/JS 同步桥）在编译 spec 时填入；<see cref="RateLimitedFetcher"/>
+    /// 消费。放在 spec 而不是 fetcher 注册表里：限速是<b>每请求</b>的属性，
+    /// 这样并行链路不会把 A 源的限速错配到 B 源。</para>
+    /// </summary>
+    public string? ConcurrentRate { get; init; }
+
     // 以下为阶段 4（WebView / 服务端代理）预留：先随 spec 解析出来，暂不消费。
 
     /// <summary>是否需要 WebView 渲染（选项块 webView: true）。</summary>

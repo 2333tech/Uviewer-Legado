@@ -94,6 +94,17 @@ internal sealed class JsBridge
     private static readonly string[] GlobalNames = { "source", "book", "chapter", "cache", "cookie", "html" };
 
     /// <summary>
+    /// 同步网络原语的会话（阶段 4-3）：记录"上一次响应"（<c>java.getStrResponse()</c> 语义），
+    /// 换链（scope 变化）时自动清空。
+    /// </summary>
+    private readonly JsNetworkSession _network = new();
+
+    // 本次脚本的 result/baseUrl：网络原语在"没有真实响应"时用它兜底构造 StrResponse。
+    // 重入（java.getString）会临时覆盖，外层随后不再读取这两个字段（只影响兜底语义）。
+    private string _currentValue = string.Empty;
+    private string _currentBaseUrl = string.Empty;
+
+    /// <summary>
     /// 执行脚本。<paramref name="globals"/> 用于注入额外全局变量（如 formatJs 的 index/title/chapter）。
     /// <para>步骤：① 取引擎（重入 → 临时引擎）；② 绑定 result/baseUrl/java 及 globals；
     /// ③ Evaluate；④ 结果转字符串（null → 空串）；⑤ 异常时**返回原始 value**
@@ -132,6 +143,8 @@ internal sealed class JsBridge
                 engine.SetValue("result", value);
                 engine.SetValue("baseUrl", baseUrl);
                 engine.SetValue("java", EnsureJava(engine));
+                _currentValue = value;
+                _currentBaseUrl = baseUrl;
 
                 // ②a 全局对象（source/book/chapter/cache/cookie/html）：有作用域才注入。
                 //     同一 Scope 只绑一次（见 EnsureGlobals）。
@@ -261,8 +274,10 @@ internal sealed class JsBridge
             switch (info.Status)
             {
                 case JsApiStatus.Implemented:
-                    // lang 是命名空间对象：循环里先占位，下面用真实对象覆盖
-                    java.FastSetDataProperty(info.Name, CreateFunction(engine, info.Name, args => InvokeImplemented(info.Name, args)));
+                    // lang 是命名空间对象：循环里先占位，下面用真实对象覆盖。
+                    // 传 engine：网络原语要构造 StrResponse JS 对象，而函数闭包只在建 java 对象时拿到引擎。
+                    java.FastSetDataProperty(info.Name, CreateFunction(
+                        engine, info.Name, args => InvokeImplemented(engine, info.Name, args)));
                     break;
                 case JsApiStatus.Stub:
                     java.FastSetDataProperty(info.Name, CreateFunction(engine, info.Name, args => InvokeStub(info.Name, args)));
@@ -319,7 +334,7 @@ internal sealed class JsBridge
     }
 
     /// <summary>已实现原语的运行时派发（需要访问 Bridge 状态的走这里，其余交给 <see cref="JsPureApi"/>）。</summary>
-    private object? InvokeImplemented(string name, object?[] args)
+    private object? InvokeImplemented(Engine engine, string name, object?[] args)
     {
         switch (name)
         {
@@ -373,6 +388,24 @@ internal sealed class JsBridge
             case "toast":
             case "longToast":
                 Diagnostics.RecordToast(SourceKey, Field, JsContextObjects.FormatArgs(args));
+                return null;
+
+            // 阶段 4-3：同步网络原语（ajax/post/connect/head/ajaxAll/ajaxTestAll/getStrResponse）。
+            // 统一交给 JsNetworkSession：它复用注入的取数管线（限速 + 共享 Cookie），
+            // 并记录"上一次响应"供无参 getStrResponse 使用。
+            case "ajax":
+            case "post":
+            case "connect":
+            case "head":
+            case "ajaxAll":
+            case "ajaxTestAll":
+            case "getStrResponse":
+                if (Scope is { } networkScope)
+                {
+                    return _network.Invoke(engine, networkScope, name, args, _currentValue, _currentBaseUrl);
+                }
+
+                Diagnostics.RecordMissingApi(SourceKey, Field, name + "(无解析作用域)");
                 return null;
 
             default:

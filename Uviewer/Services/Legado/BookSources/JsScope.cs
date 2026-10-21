@@ -118,13 +118,17 @@ public sealed class JsScope
     /// <param name="chapterUrl">当前章节 URL（<c>chapter.*</c> 变量的作用域键；搜索/详情链为 null）。</param>
     /// <param name="store">状态仓库（默认进程级内存实例）。</param>
     /// <param name="diagnostics">诊断接收器（默认进程级单例）。</param>
+    /// <param name="fetcher">同步网络原语的取数管线（阶段 4-3；null = <c>java.ajax</c> 不可用）。</param>
+    /// <param name="cookies">Cookie 仓库（阶段 4-3；null = 进程级内存实例）。</param>
     public JsScope(
         string? sourceKey,
         BookSourceModel? source = null,
         JsBookState? book = null,
         string? chapterUrl = null,
         SourceStateStore? store = null,
-        JsDiagnostics? diagnostics = null)
+        JsDiagnostics? diagnostics = null,
+        IBookSourceFetcher? fetcher = null,
+        ISourceCookieStore? cookies = null)
     {
         SourceKey = sourceKey ?? string.Empty;
         StorageKey = SourceStateStore.Normalize(sourceKey);
@@ -133,6 +137,8 @@ public sealed class JsScope
         ChapterUrl = string.IsNullOrWhiteSpace(chapterUrl) ? null : chapterUrl;
         Store = store ?? SourceStateStore.InMemory;
         Diagnostics = diagnostics ?? JsDiagnostics.Shared;
+        Fetcher = fetcher;
+        Cookies = cookies ?? SourceCookieStore.Memory;
     }
 
     /// <summary>书源主键（原样，用于 <c>source.key</c> 返回值与诊断归组）。</summary>
@@ -156,6 +162,17 @@ public sealed class JsScope
     /// <summary>诊断接收器。</summary>
     public JsDiagnostics Diagnostics { get; }
 
+    /// <summary>
+    /// 同步网络原语的取数管线（阶段 4-3）：<c>java.ajax/post/connect/head/ajaxAll</c> 用它。
+    /// <para>null = 未接线（纯脚本单测）：原语只记诊断并返回空，不会假装成功。</para>
+    /// </summary>
+    public IBookSourceFetcher? Fetcher { get; }
+
+    /// <summary>
+    /// Cookie 仓库（阶段 4-3）：<c>cookie.*</c>、<c>java.getCookie</c> 与 HTTP 静态请求共用同一份。
+    /// </summary>
+    public ISourceCookieStore Cookies { get; }
+
     // ==================== 键命名空间 ====================
 
     /// <summary>书源级元数据键（<c>variable</c> / <c>loginInfo</c> / <c>loginHeader</c>）。</summary>
@@ -175,9 +192,6 @@ public sealed class JsScope
 
     /// <summary><c>cache.getFile/putFile</c> 的键（与普通缓存分开，对齐 reader 的 <c>file:</c> 前缀）。</summary>
     public string FileCacheKey(string key) => "file:" + key;
-
-    /// <summary><c>cookie.*</c> 的键（按近似二级域名归并，见 <see cref="JsCookieJar.DomainOf"/>）。</summary>
-    public string CookieKey(string domain) => "ck:" + domain;
 
     /// <summary><c>book.setUseReplaceRule</c> 的键（按书，对齐 reader 的 <c>brc:</c> 前缀）。</summary>
     public string ReadConfigKey() => "brc:" + (Book?.BookUrl ?? string.Empty);

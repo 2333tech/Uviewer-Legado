@@ -383,9 +383,9 @@ internal static class JsContextObjects
     // ============================================================
 
     /// <summary>
-    /// <c>cookie</c>：Cookie 仓库的门面。4-2 的落点是 <see cref="SourceStateStore"/> 的 <c>ck:</c> 键
-    /// （按近似二级域名归并，跨子域可读）；阶段 4-3 引入 HTTP 会话后，由 <see cref="JsCookieJar"/>
-    /// 换成真正的 CookieContainer 视图，脚本侧行为不变。
+    /// <c>cookie</c>：Cookie 仓库的门面。阶段 4-3 起全部委托给 <see cref="ISourceCookieStore"/>：
+    /// 与静态 HTTP 请求、<c>java.ajax</c> 共用同一份容器（每源一个 CookieContainer，
+    /// 按近似二级域名归并 → 跨子域可读），脚本侧写法与 legado 一致。
     /// </summary>
     private static JsValue BuildCookie(Engine engine, JsScope scope, JsErrorSink sink, Action<string> missing)
     {
@@ -675,100 +675,48 @@ internal static class JsContextObjects
         }
     }
 }
-
 /// <summary>
-/// 脚本侧 Cookie 仓库（<c>cookie.*</c> 与 <c>java.getCookie</c> 共用）。
+/// 脚本侧 Cookie 门面（<c>cookie.*</c> 与 <c>java.getCookie</c> 共用）。
 ///
-/// <para><b>落点</b>：<see cref="SourceStateStore"/> 的 <c>ck:&lt;domain&gt;</c> 键，值是原始的
-/// <c>name=value; name2=value2</c> 串（与 HTTP 的 Cookie 头同形态，可直接写进请求头）。</para>
+/// <para><b>阶段 4-3 起不再自带存储</b>：全部委托给注入的 <see cref="ISourceCookieStore"/>
+/// （生产是 <see cref="SourceCookieStore"/>，按源一个 <see cref="System.Net.CookieContainer"/>，
+/// 与静态 HTTP 请求、<c>java.ajax</c> 共用同一份）。这样"脚本 setCookie 的登录态"能被下一次
+/// 普通取数立即带上，反之亦然 —— 这正是方案里 D3（会话割裂）要消灭的东西。</para>
 ///
-/// <para><b>域归并</b>：legado 用 <c>NetworkUtils.getSubDomain</c>（二级域名）做键，
-/// 这样 <c>www.qidian.com</c> 登录后 <c>m.qidian.com</c> 也能读到。这里用"主机名末两段 +
-/// 常见二级后缀表"近似（不引入公共后缀库）：<c>a.b.com.cn</c> → <c>b.com.cn</c>。
-/// 阶段 4-3 接入真实 CookieContainer 后，本类改为容器视图，脚本侧无需改动。</para>
+/// <para>域归并（legado <c>getSubDomain</c> 语义）由 <see cref="SourceCookieStore.DomainOf"/> 负责：
+/// <c>www.a.com</c> 写入的 Cookie 在 <c>m.a.com</c> 也读得到。</para>
 /// </summary>
 internal static class JsCookieJar
 {
-    /// <summary>常见"二级公共后缀"（末两段是它时再往前取一段）。</summary>
-    private static readonly string[] TwoLevelSuffixes =
-    {
-        "com.cn", "net.cn", "org.cn", "gov.cn", "edu.cn", "com.tw", "com.hk",
-        "co.uk", "org.uk", "co.jp", "ne.jp", "com.au", "com.sg",
-    };
-
     /// <summary>取 <paramref name="url"/> 的 Cookie 串（不存在返回空串，对齐 legado）。</summary>
     public static string GetCookie(JsScope scope, string url) =>
-        scope.Read(scope.CookieKey(DomainOf(url))) ?? string.Empty;
+        scope.Cookies.GetCookieHeader(scope.SourceKey, url);
 
     /// <summary>取 Cookie 串里某个键的值（legado <c>CookieStore.getKey</c>）；不存在返回空串。</summary>
-    public static string GetKey(JsScope scope, string url, string key)
-    {
-        if (string.IsNullOrEmpty(key))
-        {
-            return string.Empty;
-        }
-
-        var raw = GetCookie(scope, url);
-        if (raw.Length == 0)
-        {
-            return string.Empty;
-        }
-
-        foreach (var pair in raw.Split(';'))
-        {
-            var separator = pair.IndexOf('=');
-            if (separator <= 0)
-            {
-                continue;
-            }
-
-            if (string.Equals(pair.AsSpan(0, separator).Trim().ToString(), key, StringComparison.Ordinal))
-            {
-                return pair.AsSpan(separator + 1).Trim().ToString();
-            }
-        }
-
-        return string.Empty;
-    }
+    public static string GetKey(JsScope scope, string url, string key) =>
+        scope.Cookies.GetCookieValue(scope.SourceKey, url, key);
 
     /// <summary>写 Cookie（覆盖该域）。返回是否写入成功。</summary>
-    public static bool SetCookie(JsScope scope, string url, string? cookie)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            return false;
-        }
-
-        return scope.Write(scope.CookieKey(DomainOf(url)), cookie ?? string.Empty);
-    }
+    public static bool SetCookie(JsScope scope, string url, string? cookie) =>
+        scope.Cookies.SetCookieHeader(scope.SourceKey, url, cookie ?? string.Empty);
 
     /// <summary>合并写 Cookie（同名键以新值为准，对齐 legado <c>replaceCookie</c>）。</summary>
     public static void ReplaceCookie(JsScope scope, string url, string? cookie)
     {
-        if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(cookie))
+        if (!string.IsNullOrWhiteSpace(url) && !string.IsNullOrWhiteSpace(cookie))
         {
-            return;
+            scope.Cookies.ReplaceCookieHeader(scope.SourceKey, url, cookie);
         }
-
-        var domain = DomainOf(url);
-        var merged = MergeCookie(scope.Read(scope.CookieKey(domain)), cookie);
-        scope.Write(scope.CookieKey(domain), merged);
     }
 
     /// <summary>删 Cookie（返回是否真删掉了东西）。</summary>
-    public static bool RemoveCookie(JsScope scope, string url)
-    {
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            return false;
-        }
-
-        return scope.Delete(scope.CookieKey(DomainOf(url)));
-    }
+    public static bool RemoveCookie(JsScope scope, string url) =>
+        scope.Cookies.RemoveCookie(scope.SourceKey, url);
 
     /// <summary>
     /// 从登录请求头 JSON 里抽出 <c>Cookie</c> 并写入 Cookie 仓库
-    /// （legado <c>putLoginHeader</c> 的行为：登录头里的 Cookie 必须能被 <c>cookie.getKey</c> 读到）。
+    /// （legado <c>putLoginHeader</c> 的行为：登录头里的 Cookie 必须能被普通取数与
+    /// <c>cookie.getKey</c> 读到）。
     /// </summary>
     public static void MergeCookieHeader(JsScope scope, string sourceUrl, string? headerJson)
     {
@@ -802,90 +750,5 @@ internal static class JsCookieJar
         {
             // 登录头不是合法 JSON：忽略（不能因为登录信息格式不对就中断脚本）
         }
-    }
-
-    /// <summary>近似二级域名（Cookie 归并键）。</summary>
-    public static string DomainOf(string? url)
-    {
-        var text = (url ?? string.Empty).Trim();
-        if (text.Length == 0)
-        {
-            return string.Empty;
-        }
-
-        if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || string.IsNullOrEmpty(uri.Host))
-        {
-            // 不是绝对 URL（或就是域名本身）：去协议/路径后按主机处理
-            return text.TrimEnd('/').ToLowerInvariant();
-        }
-
-        var host = uri.Host.ToLowerInvariant();
-        var labels = host.Split('.');
-        if (labels.Length <= 2)
-        {
-            return host;
-        }
-
-        var lastTwo = labels[^2] + "." + labels[^1];
-        foreach (var suffix in TwoLevelSuffixes)
-        {
-            if (string.Equals(lastTwo, suffix, StringComparison.Ordinal) && labels.Length >= 3)
-            {
-                return labels[^3] + "." + lastTwo;
-            }
-        }
-
-        return lastTwo;
-    }
-
-    /// <summary>合并两段 Cookie 串（分号分隔；后者同名覆盖，顺序保留先出现的键）。</summary>
-    private static string MergeCookie(string? existing, string incoming)
-    {
-        var map = new List<KeyValuePair<string, string>>();
-        var index = new Dictionary<string, int>(StringComparer.Ordinal);
-
-        void Append(string raw)
-        {
-            foreach (var pair in raw.Split(';'))
-            {
-                var separator = pair.IndexOf('=');
-                if (separator <= 0)
-                {
-                    continue;
-                }
-
-                var name = pair.AsSpan(0, separator).Trim().ToString();
-                var value = pair.AsSpan(separator + 1).Trim().ToString();
-                if (index.TryGetValue(name, out var position))
-                {
-                    map[position] = new KeyValuePair<string, string>(name, value);
-                }
-                else
-                {
-                    index[name] = map.Count;
-                    map.Add(new KeyValuePair<string, string>(name, value));
-                }
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(existing))
-        {
-            Append(existing);
-        }
-
-        Append(incoming);
-
-        var sb = new StringBuilder();
-        foreach (var pair in map)
-        {
-            if (sb.Length > 0)
-            {
-                sb.Append("; ");
-            }
-
-            sb.Append(pair.Key).Append('=').Append(pair.Value);
-        }
-
-        return sb.ToString();
     }
 }

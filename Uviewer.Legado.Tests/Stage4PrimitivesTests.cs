@@ -41,16 +41,17 @@ public class Stage4PrimitivesTests
     [Fact]
     public void Catalog_Tiers_And_Status_Are_Consistent()
     {
-        // 已实现的原语不允许再出现在 MissingNames 里
-        Assert.Empty(JsApiCatalog.MissingNames(new[] { "getString", "put", "get", "md5Encode", "timeFormat" }));
+        // 已实现的原语不允许再出现在 MissingNames 里（4-3 起含网络族）
+        Assert.Empty(JsApiCatalog.MissingNames(
+            new[] { "getString", "put", "get", "md5Encode", "timeFormat", "ajax", "post", "connect", "head", "ajaxAll" }));
 
         // 未实现的必须出现在 MissingNames
-        Assert.Equal(new[] { "ajax" }, JsApiCatalog.MissingNames(new[] { "ajax", "getString" }));
+        Assert.Equal(new[] { "getStringList" }, JsApiCatalog.MissingNames(new[] { "getStringList", "getString" }));
 
         // RequiredTier = 未实现原语里的最高层
         Assert.Equal(JsApiTier.Pure, JsApiCatalog.RequiredTier(new[] { "getString", "md5Encode" }));
-        Assert.Equal(JsApiTier.Network, JsApiCatalog.RequiredTier(new[] { "getString", "ajax" }));
-        Assert.Equal(JsApiTier.Browser, JsApiCatalog.RequiredTier(new[] { "ajax", "startBrowser" }));
+        Assert.Equal(JsApiTier.Rule, JsApiCatalog.RequiredTier(new[] { "getString", "getStringList" }));
+        Assert.Equal(JsApiTier.Browser, JsApiCatalog.RequiredTier(new[] { "getStringList", "startBrowser" }));
 
         // 未登记名字按 Browser（最保守）处理
         Assert.Equal(JsApiTier.Browser, JsApiCatalog.TierOf("neverHeardOfIt"));
@@ -175,10 +176,11 @@ public class Stage4PrimitivesTests
     {
         using var scope = new BridgeScope();
 
-        scope.Run("java.ajax('https://example.com/a')");
+        // getStringList 仍是桩（阶段 4-5 的 T2 任务）；ajax 在 4-3 已成真实实现。
+        scope.Run("java.getStringList('x')");
 
         var entry = Assert.Single(scope.Diagnostics.Snapshot(), e => e.Kind == JsDiagnosticKind.StubCalled);
-        Assert.Equal("ajax", entry.Detail);
+        Assert.Equal("getStringList", entry.Detail);
     }
 
     [Fact]
@@ -237,8 +239,9 @@ public class Stage4PrimitivesTests
     public async Task Capabilities_Raw_Sample_Baseline()
     {
         // 这条是全量基线：口径再变时会立刻红，逼你同步文档与 ROI 数字。
-        // 2026-10-21（4-2 落地后）实测值写在这里：全局对象 source/book/cache/cookie 注入后
-        // 阅读链路可跑 304 → 321（+17，与方案 §0 的 ROI 预测一致），html 不再参与判定。
+        // 2026-10-21（4-3 落地后）实测值写在这里：T1 网络原语（ajax/post/connect/head/ajaxAll/
+        // getStringList 之外的网络族）实现后，阅读链路可跑 321 → 348（+27，方案预测 +31 的
+        // 差值来自"既缺 ajax 又缺 T2/T4"的源），整源 258 → 330。
         var all = await SampleData.AllAsync();
         Assert.Equal(408, all.Count);
 
@@ -271,21 +274,21 @@ public class Stage4PrimitivesTests
             }
         }
 
-        Assert.Equal(321, readingOk);
-        Assert.Equal(258, allOk);
-        Assert.Equal(87, needsStage4);
+        Assert.Equal(348, readingOk);
+        Assert.Equal(330, allOk);
+        Assert.Equal(60, needsStage4);
 
-        // 阅读链路 Top 缺口（阶段 4 后续步骤的 ROI 依据）
+        // 阅读链路 Top 缺口（阶段 4 后续步骤的 ROI 依据；4-3 后 ajax 已不在列）
         var top = missingApiHistogram.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal)
             .Take(5).Select(p => p.Key).ToArray();
-        Assert.Equal(new[] { "ajax", "startBrowser", "getElements", "aesBase64DecodeToString", "getStringList" }, top);
+        Assert.Equal(new[] { "startBrowser", "getElements", "aesBase64DecodeToString", "getStringList", "refreshTocUrl" }, top);
     }
 
-    /// <summary>阅读链路当前可跑的原始条目数（2026-10-21，4-2 落地后；4-1 为 304）。</summary>
-    private const int ExpectedReadingOk = 321;
+    /// <summary>阅读链路当前可跑的原始条目数（2026-10-21，4-3 落地后；4-2 为 321、4-1 为 304）。</summary>
+    private const int ExpectedReadingOk = 348;
 
-    /// <summary>整源（含搜索/详情链）当前可跑的原始条目数（4-2 落地后；4-1 为 237）。</summary>
-    private const int ExpectedAllOk = 258;
+    /// <summary>整源（含搜索/详情链）当前可跑的原始条目数（4-3 落地后；4-2 为 258、4-1 为 237）。</summary>
+    private const int ExpectedAllOk = 330;
 
     // ============================================================
     // 辅助

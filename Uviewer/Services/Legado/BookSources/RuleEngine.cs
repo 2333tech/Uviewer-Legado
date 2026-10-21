@@ -58,6 +58,20 @@ public sealed class RuleEngine
     public SourceStateStore Store { get; set; } = SourceStateStore.InMemory;
 
     /// <summary>
+    /// 同步网络原语的取数管线（阶段 4-3）：<c>java.ajax/post/connect/head/ajaxAll</c> 用。
+    /// <para>默认 null = 未接线（纯脚本单测）：原语记诊断并返回空，不会假装成功。
+    /// <see cref="BookSourceEngine"/> / <see cref="SearchService"/> 在构造时注入同一条管线
+    /// （生产是 <see cref="RateLimitedFetcher"/> 套 HTTP），从而与静态请求共享 Cookie（D3）。</para>
+    /// </summary>
+    public IBookSourceFetcher? Fetcher { get; set; }
+
+    /// <summary>
+    /// Cookie 仓库（阶段 4-3）：<c>cookie.*</c>/<c>java.getCookie</c> 与取数管线共用。
+    /// <para>默认进程级内存实例（单测隔离）；生产由宿主注入 <see cref="SourceCookieStore"/>。</para>
+    /// </summary>
+    public ISourceCookieStore Cookies { get; set; } = SourceCookieStore.Memory;
+
+    /// <summary>
     /// 记录"当前在跑哪个书源的哪条链"（诊断归组用），并装配本链的 JS 作用域。
     /// <para>链名固定为 search / bookInfo / toc / content：粒度到链而不是到字段，
     /// 因为 <see cref="RunJs"/> 是唯一出口，逐字段传参会把签名污染到十几处。</para>
@@ -77,7 +91,9 @@ public sealed class RuleEngine
             book,
             chapterUrl,
             Store,
-            _js.Diagnostics);
+            _js.Diagnostics,
+            Fetcher,
+            Cookies);
     }
 
     // 模板正则常量：每次展开 {{...}} 都会用到，缓存并预编译。

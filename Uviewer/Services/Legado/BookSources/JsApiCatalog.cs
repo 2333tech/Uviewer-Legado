@@ -181,15 +181,17 @@ public static class JsApiCatalog
             ("util", JsApiTier.Pure, JsApiStatus.Missing, "java.util 命名空间（UUID/Base64/List…）"),
             ("security", JsApiTier.Pure, JsApiStatus.Missing, "java.security 命名空间（MessageDigest/SecureRandom…）"),
 
-            // ── T1 网络 ─────────────────────────────────────────────────────────
-            ("ajax", JsApiTier.Network, JsApiStatus.Stub, "同步取文本（当前恒空串）"),
-            ("ajaxJson", JsApiTier.Network, JsApiStatus.Stub, "同步取 JSON（当前恒 {}）"),
-            ("ajaxAll", JsApiTier.Network, JsApiStatus.Missing, "并发取多个 URL"),
-            ("ajaxTestAll", JsApiTier.Network, JsApiStatus.Missing, "并发探测可用 URL"),
-            ("post", JsApiTier.Network, JsApiStatus.Missing, "同步 POST"),
-            ("head", JsApiTier.Network, JsApiStatus.Missing, "HTTP HEAD 请求"),
-            ("connect", JsApiTier.Network, JsApiStatus.Missing, "自定义请求（method/headers/body）"),
-            ("getStrResponse", JsApiTier.Network, JsApiStatus.Missing, "返回 StrResponse 对象（含 body/url/cookie）"),
+            // ── T1 网络：4-3 已实现（同步桥，复用取数管线：限速 + 共享 Cookie） ─────────
+            ("ajax", JsApiTier.Network, JsApiStatus.Implemented,
+                "同步取文本（含 ,{json} 选项块；失败返回空串并记诊断）"),
+            ("ajaxJson", JsApiTier.Network, JsApiStatus.Stub, "非 legado 正式 API（样本无调用），保持空 {}"),
+            ("ajaxAll", JsApiTier.Network, JsApiStatus.Implemented, "串行取多个 URL，返回 Array<StrResponse>"),
+            ("ajaxTestAll", JsApiTier.Network, JsApiStatus.Implemented, "同上 + 单请求超时（毫秒）"),
+            ("post", JsApiTier.Network, JsApiStatus.Implemented, "同步 POST，返回 StrResponse（body()/code()/…）"),
+            ("head", JsApiTier.Network, JsApiStatus.Implemented, "同步 HEAD，返回 StrResponse"),
+            ("connect", JsApiTier.Network, JsApiStatus.Implemented, "自定义请求（选项块 method/headers/body），返回 StrResponse"),
+            ("getStrResponse", JsApiTier.Network, JsApiStatus.Implemented,
+                "返回 StrResponse（无参 = 本链最近一次响应）"),
 
             // ── T2 规则回灌 ─────────────────────────────────────────────────────
             ("getString", JsApiTier.Rule, JsApiStatus.Implemented, "对当前 result 跑规则求值"),

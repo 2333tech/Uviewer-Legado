@@ -25,7 +25,7 @@ namespace Uviewer.Services.Legado.BookSources;
 /// <item><c>bv:&lt;bookUrl&gt;:*</c>：书籍变量（<c>book.putVariable</c> / <c>java.put</c> 无章节时）；</item>
 /// <item><c>cv:&lt;chapterUrl&gt;:*</c>：章节变量（<c>chapter.putVariable</c> / 正文链的 <c>java.put</c>）；</item>
 /// <item><c>c:*</c> / <c>file:*</c>：<c>cache.*</c>；</item>
-/// <item><c>ck:&lt;domain&gt;</c>：<c>cookie.*</c> 的 Cookie 串；</item>
+/// <item>（Cookie 不在本仓库：阶段 4-3 起由 <see cref="SourceCookieStore"/> 用同一仓库的 `cookies` 键存快照；</item>
 /// <item><c>brc:&lt;bookUrl&gt;</c>：<c>book.setUseReplaceRule</c> 的阅读配置。</item>
 /// </list>
 ///

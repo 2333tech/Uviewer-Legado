@@ -25,6 +25,9 @@ public enum JsDiagnosticKind
 
     /// <summary>状态仓库读写失败/被拒（阶段 4-2：值超长、键数超限、磁盘不可写）。</summary>
     StateError,
+
+    /// <summary>同步网络原语阻塞过久（阶段 4-3：单个 <c>java.ajax</c> 超过 2s，界面可提示"慢源"）。</summary>
+    SlowNetwork,
 }
 
 /// <summary>一条诊断（同源/同字段/同类/同细节会聚合成 <see cref="Count"/> 次）。</summary>
@@ -93,6 +96,14 @@ public sealed class JsDiagnostics
     /// </summary>
     public void RecordStateError(string? sourceKey, string? field, string detail, string? sample = null) =>
         Record(sourceKey, field, JsDiagnosticKind.StateError, detail, sample);
+
+    /// <summary>
+    /// 记录一次"同步网络原语阻塞过久"（阶段 4-3）。
+    /// <para>同一源同一原语的多次慢调用会聚合计数，<see cref="JsDiagnosticEntry.Sample"/> 保留
+    /// 首次耗时（毫秒）文本，便于判断"慢源"还是"网络抖动"。</para>
+    /// </summary>
+    public void RecordSlowNetwork(string? sourceKey, string? field, string api, long elapsedMs) =>
+        Record(sourceKey, field, JsDiagnosticKind.SlowNetwork, api, elapsedMs + "ms");
 
     /// <summary>取快照（按次数降序；界面/测试用，调用频率低）。</summary>
     public IReadOnlyList<JsDiagnosticEntry> Snapshot()
