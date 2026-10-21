@@ -98,6 +98,7 @@ namespace Uviewer
                 _isHiddenToTray = true;
                 RefreshMultiInstanceState();
                 _explorerSidebarController.ClearFilter(focusInput: false);
+                _explorerSidebarController.ClearSelection();
                 _trayDocumentReleaseTask = ReleaseDocumentAfterHidingToTrayAsync(savePositionTask);
                 return true;
             }

@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -46,6 +48,28 @@ namespace Uviewer.Services
     public sealed class DocumentSearchService
     {
         private const long EpubChapterSortStride = 1_000_000L;
+        private PdfTextCache _pdfCache = new();
+
+        private sealed record PdfPageText(string MappedText, string FallbackText);
+        private sealed record PdfCacheKey(string Path, long Length, long ModifiedTicks, string PasswordHash);
+
+        private sealed class PdfTextCache
+        {
+            public readonly SemaphoreSlim Gate = new(1);
+            public readonly Dictionary<int, PdfPageText> Pages = new();
+            public PdfCacheKey? Key;
+            public int PageCount;
+            public long Bytes;
+
+            public void Add(int index, PdfPageText text)
+            {
+                long bytes = 128L + ((long)text.MappedText.Length + text.FallbackText.Length) * sizeof(char);
+                // Keep a stable working set: LRU eviction would thrash on every full-document scan.
+                if (Pages.Count >= 2048 || Bytes + bytes > 16 * 1024 * 1024) return;
+                Pages.Add(index, text);
+                Bytes += bytes;
+            }
+        }
 
         private string? _textCacheKey;
         private List<SearchableLine> _textCache = new();
@@ -87,7 +111,13 @@ namespace Uviewer.Services
             string query,
             CancellationToken token)
         {
-            return await Task.Run(() => FindPdfMatchesByPageMap(pdfPath, password, query, token), token);
+            var cache = Volatile.Read(ref _pdfCache);
+            return await Task.Run(() =>
+            {
+                cache.Gate.Wait(token);
+                try { return FindPdfMatchesByPageMap(cache, pdfPath, password, query, token); }
+                finally { cache.Gate.Release(); }
+            }, token);
         }
 
         public async Task<IReadOnlyList<DocumentSearchMatch>> SearchEpubAsync(
@@ -124,8 +154,11 @@ namespace Uviewer.Services
             return FindMatches(_epubCache, query);
         }
 
+        public void ClearPdfCache() => Interlocked.Exchange(ref _pdfCache, new PdfTextCache());
+
         public void Clear()
         {
+            ClearPdfCache();
             _textCacheKey = null;
             _textCache.Clear();
             _epubCacheKey = null;
@@ -158,6 +191,7 @@ namespace Uviewer.Services
         }
 
         private static List<DocumentSearchMatch> FindPdfMatchesByPageMap(
+            PdfTextCache cache,
             string pdfPath,
             string? password,
             string query,
@@ -166,68 +200,94 @@ namespace Uviewer.Services
             var result = new List<DocumentSearchMatch>();
             if (string.IsNullOrWhiteSpace(query)) return result;
 
-            using var document = PdfPigDocumentFactory.Open(pdfPath, password);
-            int pageIndex = 0;
-            foreach (var page in document.GetPages())
+            token.ThrowIfCancellationRequested();
+            var info = new FileInfo(pdfPath);
+            var key = new PdfCacheKey(info.FullName, info.Length, info.LastWriteTimeUtc.Ticks,
+                Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(password ?? string.Empty))));
+            if (cache.Key != key)
             {
-                token.ThrowIfCancellationRequested();
+                cache.Pages.Clear();
+                cache.Bytes = 0;
+                cache.PageCount = 0;
+                cache.Key = key;
+            }
 
-                string mappedText = SearchHighlightService.ExtractPdfMappedText(page);
-                var ranges = SearchHighlightService.FindPdfTextRanges(mappedText, query);
-                if (ranges.Count > 0)
+            PdfDocument? document = null;
+            try
+            {
+                if (cache.PageCount == 0)
                 {
-                    for (int matchIndex = 0; matchIndex < ranges.Count; matchIndex++)
-                    {
-                        token.ThrowIfCancellationRequested();
-                        var range = ranges[matchIndex];
-                        result.Add(new DocumentSearchMatch
-                        {
-                            Kind = DocumentSearchKind.Pdf,
-                            PageIndex = pageIndex,
-                            LineNumber = pageIndex + 1,
-                            MatchIndex = matchIndex,
-                            MatchStart = range.Start,
-                            MatchLength = range.Length,
-                            SortKey = pageIndex + 1,
-                            Preview = CreatePreview(mappedText, range, query)
-                        });
-                    }
-
-                    pageIndex++;
-                    continue;
+                    document = PdfPigDocumentFactory.Open(pdfPath, password);
+                    cache.PageCount = document.NumberOfPages;
                 }
-
-                string fallbackText = SearchHighlightService.ExtractPdfPageText(page);
-                if (string.IsNullOrWhiteSpace(fallbackText))
-                {
-                    pageIndex++;
-                    continue;
-                }
-
                 string normalizedQuery = SearchHighlightService.CollapseWhitespace(query);
                 string compactQuery = SearchHighlightService.RemoveWhitespace(normalizedQuery);
-                if (!SearchHighlightService.ContainsSearchText(fallbackText, normalizedQuery, compactQuery, allowCompactFallback: true))
+                for (int pageIndex = 0; pageIndex < cache.PageCount; pageIndex++)
                 {
-                    pageIndex++;
-                    continue;
+                    token.ThrowIfCancellationRequested();
+                    if (!cache.Pages.TryGetValue(pageIndex, out var text))
+                    {
+                        document ??= PdfPigDocumentFactory.Open(pdfPath, password);
+                        var page = document.GetPage(pageIndex + 1);
+                        string mapped = SearchHighlightService.ExtractPdfMappedText(page);
+                        text = new PdfPageText(mapped, SearchHighlightService.ExtractPdfPageText(page, mapped));
+                        token.ThrowIfCancellationRequested();
+                        cache.Add(pageIndex, text);
+                    }
+                    string mappedText = text.MappedText;
+                    var ranges = SearchHighlightService.FindPdfTextRanges(mappedText, query);
+                    if (ranges.Count > 0)
+                    {
+                        for (int matchIndex = 0; matchIndex < ranges.Count; matchIndex++)
+                        {
+                            token.ThrowIfCancellationRequested();
+                            var range = ranges[matchIndex];
+                            result.Add(new DocumentSearchMatch
+                            {
+                                Kind = DocumentSearchKind.Pdf,
+                                PageIndex = pageIndex,
+                                LineNumber = pageIndex + 1,
+                                MatchIndex = matchIndex,
+                                MatchStart = range.Start,
+                                MatchLength = range.Length,
+                                SortKey = pageIndex + 1,
+                                Preview = CreatePreview(mappedText, range, query)
+                            });
+                        }
+
+                        continue;
+                    }
+
+                    string fallbackText = text.FallbackText;
+                    if (string.IsNullOrWhiteSpace(fallbackText))
+                    {
+                        continue;
+                    }
+
+                    if (!SearchHighlightService.ContainsSearchText(fallbackText, normalizedQuery, compactQuery, allowCompactFallback: true))
+                    {
+                        continue;
+                    }
+
+                    var fallbackRanges = SearchHighlightService.FindTextRanges(fallbackText, normalizedQuery, allowCompactFallback: true);
+                    result.Add(new DocumentSearchMatch
+                    {
+                        Kind = DocumentSearchKind.Pdf,
+                        PageIndex = pageIndex,
+                        LineNumber = pageIndex + 1,
+                        MatchIndex = 0,
+                        MatchStart = fallbackRanges.Count == 0 ? -1 : fallbackRanges[0].Start,
+                        MatchLength = fallbackRanges.Count == 0 ? 0 : fallbackRanges[0].Length,
+                        SortKey = pageIndex + 1,
+                        Preview = fallbackRanges.Count == 0
+                            ? CreatePreview(fallbackText)
+                            : CreatePreview(fallbackText, fallbackRanges[0], query)
+                    });
                 }
-
-                var fallbackRanges = SearchHighlightService.FindTextRanges(fallbackText, normalizedQuery, allowCompactFallback: true);
-                result.Add(new DocumentSearchMatch
-                {
-                    Kind = DocumentSearchKind.Pdf,
-                    PageIndex = pageIndex,
-                    LineNumber = pageIndex + 1,
-                    MatchIndex = 0,
-                    MatchStart = fallbackRanges.Count == 0 ? -1 : fallbackRanges[0].Start,
-                    MatchLength = fallbackRanges.Count == 0 ? 0 : fallbackRanges[0].Length,
-                    SortKey = pageIndex + 1,
-                    Preview = fallbackRanges.Count == 0
-                        ? CreatePreview(fallbackText)
-                        : CreatePreview(fallbackText, fallbackRanges[0], query)
-                });
-
-                pageIndex++;
+            }
+            finally
+            {
+                document?.Dispose();
             }
 
             return result;

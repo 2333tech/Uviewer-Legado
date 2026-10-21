@@ -35,11 +35,11 @@ namespace Uviewer
             public Task LoadWebDavFolderAsync(string remotePath, bool openFirstFile = false) =>
                 _window.LoadWebDavFolderAsync(remotePath, openFirstFile);
 
-            public Task OpenWebDavFileAsync(FileItem item) =>
-                _window.OpenWebDavFileAsync(item);
+            public Task OpenWebDavFileAsync(FileItem item, string? initialEntryKey = null) =>
+                _window.OpenWebDavFileAsync(item, initialEntryKey);
 
-            public Task OpenWebDavArchiveAsync(FileItem item) =>
-                _window.OpenWebDavArchiveAsync(item);
+            public Task OpenWebDavArchiveAsync(FileItem item, string? initialEntryKey = null) =>
+                _window.OpenWebDavArchiveAsync(item, initialEntryKey);
 
             public void LoadExplorerFolder(string path) =>
                 _window._explorerSidebarController.LoadFolder(path);
@@ -72,8 +72,8 @@ namespace Uviewer
             public Task LoadImageFromFileAsync(StorageFile file) =>
                 _window._localImageDocumentController.LoadImageFromFileAsync(file);
 
-            public Task LoadImagesFromArchiveAsync(string path) =>
-                _window._archiveDocumentController.LoadImagesFromArchiveAsync(path);
+            public Task LoadImagesFromArchiveAsync(string path, string? initialEntryKey = null) =>
+                _window._archiveDocumentController.LoadImagesFromArchiveAsync(path, initialEntryKey);
 
             public Task DisplayCurrentImageAsync() =>
                 _window._imageViewerController.DisplayCurrentImageAsync();

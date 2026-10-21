@@ -158,6 +158,10 @@ namespace Uviewer
             ImageDoublePageDecisionService.IsWindowWideEnoughForAutoDoublePage(
                 AppWindow.Size.Width,
                 AppWindow.Size.Height);
+        // EPUB separates image pages before text pagination and pairs them in its
+        // own viewer. Its worker-thread paginator must not inspect AppWindow.Size.
+        private bool CanPairVerticalTextImages =>
+            !_isEpubMode && (_isSideBySideMode || CanUseAutoDoublePageForCurrentWindow);
         internal bool _nextImageOnRight => _imageNavigationHost.NextImageOnRight;
         internal bool _isNavigatingRecent { get => _appStateHost.IsNavigatingRecent; set => _appStateHost.IsNavigatingRecent = value; }
         internal bool _sharpenEnabled => _imageNavigationHost.SharpenEnabled;

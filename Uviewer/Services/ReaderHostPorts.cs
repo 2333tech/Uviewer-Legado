@@ -94,6 +94,7 @@ namespace Uviewer.Services
         void UpdateNextImageSideButtonState();
         void UpdateStatusBar(ImageEntry entry, CanvasBitmap bitmap);
         Task DisplayCurrentImageAsync();
+        Task NavigateToImageAsync(int index);
         ViewingContext CreateViewingContext();
         SharpenParams CreateSharpenParams();
         Task LoadImageResourceAndInvalidateAsync(

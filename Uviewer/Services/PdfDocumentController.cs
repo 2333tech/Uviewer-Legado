@@ -159,6 +159,7 @@ namespace Uviewer.Services
 
         public void ShutdownPdfResources()
         {
+            _documentSearchService.ClearPdfCache();
             CancelPdfOperations();
             CurrentPdfSession?.Shutdown();
             _documentSessionTracker.Clear(DocumentKind.Pdf);
@@ -389,6 +390,7 @@ namespace Uviewer.Services
 
         private void CloseCurrentPdfInternal()
         {
+            _documentSearchService.ClearPdfCache();
             CancelPdfOperations();
             _documentSessionTracker.Clear(DocumentKind.Pdf);
             _tocService.Clear();

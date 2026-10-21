@@ -432,11 +432,11 @@ namespace Uviewer.Services
                 {
                     if (Path.GetExtension(favorite.Path).Equals(".7z", StringComparison.OrdinalIgnoreCase))
                     {
-                        await host.OpenWebDavFileAsync(fileItem);
+                        await host.OpenWebDavFileAsync(fileItem, favorite.ArchiveEntryKey);
                     }
                     else
                     {
-                        await host.OpenWebDavArchiveAsync(fileItem);
+                        await host.OpenWebDavArchiveAsync(fileItem, favorite.ArchiveEntryKey);
                     }
 
                     await RestoreArchivePositionAsync(favorite, host);
@@ -520,12 +520,7 @@ namespace Uviewer.Services
             FavoriteItem favorite,
             IBookmarkNavigationHost host)
         {
-            if (string.IsNullOrEmpty(favorite.ArchiveEntryKey))
-            {
-                return;
-            }
-
-            await host.LoadImagesFromArchiveAsync(favorite.Path);
+            await host.LoadImagesFromArchiveAsync(favorite.Path, favorite.ArchiveEntryKey);
             await RestoreArchivePositionAsync(favorite, host);
         }
 
@@ -542,8 +537,11 @@ namespace Uviewer.Services
                 return;
             }
 
-            host.CurrentImageIndex = entryIndex;
-            await host.DisplayCurrentImageAsync();
+            if (host.CurrentImageIndex != entryIndex)
+            {
+                host.CurrentImageIndex = entryIndex;
+                await host.DisplayCurrentImageAsync();
+            }
             if (favorite.ScrollOffset.HasValue)
             {
                 await host.RestoreTextScrollOffsetAsync(favorite.ScrollOffset.Value);

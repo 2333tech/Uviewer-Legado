@@ -152,6 +152,7 @@ namespace Uviewer.Services
         private Task? _epubFullPaginationTask;
         private Task? _epubPreloadTask;
         private Task? _epubTocTask;
+        private bool _isEpubNavigationDialogOpen;
         private CancellationTokenSource _epubLifetimeCts = new();
 
         private readonly EpubReaderState _epubReaderState = new();
@@ -1115,14 +1116,56 @@ namespace Uviewer.Services
 
         internal async Task ShowEpubGoToLineDialog()
         {
-            var pg = CurrentEpubWin2DPage;
-            int totalLines = pg?.TotalLinesInChapter ?? _epubWin2DPages.Count;
-            int currentLine = pg?.StartLine ?? (_currentEpubPageIndex + 1);
-
-            var result = await _textDialogService.ShowGoToLineAsync(currentLine, totalLines, Strings.DialogTitle);
-            if (result.HasValue)
+            if (!_isEpubMode || _epubSpine.Count == 0 || _isEpubNavigationDialogOpen) return;
+            _isEpubNavigationDialogOpen = true;
+            int sessionVersion = _epubSession.Version;
+            var token = _epubLifetimeCts.Token;
+            try
             {
-                await GoToEpubLineAsync(result.Value);
+                var page = CurrentEpubWin2DPage;
+                var position = new EpubNavigationPosition(
+                    _currentEpubChapterIndex + 1,
+                    Math.Max(1, page?.StartLine ?? 1),
+                    Math.Max(1, page?.TotalLinesInChapter ?? 1));
+                await _textDialogService.ShowEpubNavigationAsync(
+                    position, _epubSpine.Count, async (chapter, line) =>
+                    {
+                        await _epubNavigationLock.WaitAsync(token);
+                        try
+                        {
+                            token.ThrowIfCancellationRequested();
+                            if (!_isEpubMode || sessionVersion != _epubSession.Version)
+                                throw new OperationCanceledException(token);
+
+                            int chapterIndex = Math.Clamp(chapter - 1, 0, _epubSpine.Count - 1);
+                            if (chapterIndex != _currentEpubChapterIndex)
+                            {
+                                _currentEpubChapterIndex = chapterIndex;
+                                await LoadEpubChapterAsync(chapterIndex, targetLine: line, token: token);
+                            }
+
+                            // Preview pages contain only a prefix of a large chapter.
+                            // Read the full range before publishing chapter metadata.
+                            if (_isCurrentEpubChapterPartial && _epubFullPaginationTask != null)
+                                await _epubFullPaginationTask.WaitAsync(token);
+                            token.ThrowIfCancellationRequested();
+                            if (!_isEpubMode || sessionVersion != _epubSession.Version)
+                                throw new OperationCanceledException(token);
+
+                            int totalLines = Math.Max(1, _epubWin2DPages.Select(p => p.TotalLinesInChapter).DefaultIfEmpty(1).Max());
+                            line = Math.Clamp(line, 1, totalLines);
+                            await GoToEpubLineAsync(line);
+                            return new EpubNavigationPosition(_currentEpubChapterIndex + 1, line, totalLines);
+                        }
+                        finally
+                        {
+                            _epubNavigationLock.Release();
+                        }
+                    });
+            }
+            finally
+            {
+                _isEpubNavigationDialogOpen = false;
             }
         }
 

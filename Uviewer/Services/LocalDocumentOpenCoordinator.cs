@@ -52,7 +52,7 @@ namespace Uviewer.Services
                     saveOnlyForImageOrText: false,
                     allowUnknownAsStorageFile: true);
 
-                LoadContainingExplorerFolder(path, inBackground: true, onlyIfChanged: false);
+                LoadContainingExplorerFolder(path, inBackground: true);
                 return;
             }
 
@@ -126,7 +126,7 @@ namespace Uviewer.Services
                 saveOnlyForImageOrText: true,
                 allowUnknownAsStorageFile: false);
 
-            LoadContainingExplorerFolder(file.Path, inBackground: false, onlyIfChanged: true);
+            LoadContainingExplorerFolder(file.Path, inBackground: false);
         }
 
         public async Task OpenPickedFolderAsync(StorageFolder folder)
@@ -148,7 +148,7 @@ namespace Uviewer.Services
                         saveBeforeOpen: false,
                         saveOnlyForImageOrText: false,
                         allowUnknownAsStorageFile: false);
-                    LoadContainingExplorerFolder(file.Path, inBackground: false, onlyIfChanged: false);
+                    LoadContainingExplorerFolder(file.Path, inBackground: false);
                     break;
 
                 case StorageFolder folder:
@@ -257,7 +257,7 @@ namespace Uviewer.Services
             }
         }
 
-        private void LoadContainingExplorerFolder(string filePath, bool inBackground, bool onlyIfChanged)
+        private void LoadContainingExplorerFolder(string filePath, bool inBackground)
         {
             var folderPath = Path.GetDirectoryName(filePath);
             if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
@@ -265,7 +265,7 @@ namespace Uviewer.Services
                 return;
             }
 
-            if (onlyIfChanged && _handlers.ShouldLoadExplorerFolder?.Invoke(folderPath) == false)
+            if (_handlers.ShouldLoadExplorerFolder?.Invoke(folderPath) == false)
             {
                 return;
             }

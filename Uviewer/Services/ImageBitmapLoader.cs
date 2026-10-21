@@ -200,12 +200,15 @@ namespace Uviewer.Services
         {
             if (entry.FilePath != null)
             {
-                return await LoadImageFromPathAsync(
+                var bitmap = await LoadImageFromPathAsync(
                     entry.FilePath,
                     canvas,
                     token,
                     context.IsHdrOutputActive,
                     context.HdrDisplayMaxLuminance);
+                if (bitmap != null || !entry.IsArchiveEntry) return bitmap;
+                token.ThrowIfCancellationRequested();
+                entry.FilePath = null;
             }
 
             if (entry.IsArchiveEntry && context.ArchiveSession.HasArchive)

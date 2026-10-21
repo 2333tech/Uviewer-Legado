@@ -164,7 +164,7 @@ namespace Uviewer.Services
                 RunStep("collect native resources", CollectNativeResources);
             }
 
-            RunStep("cleanup 7z temp data", () => context.SevenZipExtraction?.CleanupTempData(immediate: true));
+            await RunStepAsync("cleanup 7z temp data", () => context.SevenZipExtraction?.CleanupTempDataAsync() ?? Task.CompletedTask);
             RunStep("cleanup WebDAV temp files", context.CleanupWebDavTempFiles);
             RunStep("save window settings", context.SaveWindowSettings);
 
@@ -172,7 +172,7 @@ namespace Uviewer.Services
             await RunStepAsync("save favorites", () => context.FavoritesService?.SaveFavoritesAsync() ?? Task.CompletedTask);
 
             RunStep("dispose archive session", () => context.ArchiveSession?.Dispose());
-            RunStep("dispose WebDAV service", () => context.WebDavService?.Dispose());
+            await RunStepAsync("dispose WebDAV service", () => context.WebDavService?.DisposeAsync().AsTask() ?? Task.CompletedTask);
             RunStep("dispose WebDAV state", () => context.WebDavState?.Dispose());
             RunStep("dispose image loading token", () => context.ImageLoadingCts?.Dispose());
             RunStep("dispose text reader state", () => context.TextReaderState?.Dispose());

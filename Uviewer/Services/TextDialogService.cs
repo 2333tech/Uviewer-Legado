@@ -4,6 +4,7 @@ using System;
 using System.Threading.Tasks;
 using Windows.UI;
 using Uviewer.Dialogs;
+using Uviewer.Models;
 
 namespace Uviewer.Services
 {
@@ -110,7 +111,21 @@ namespace Uviewer.Services
             return null;
         }
 
-        public async Task<int?> ShowGoToLineAsync(int currentLine, int totalLines, string title)
+        public async Task ShowEpubNavigationAsync(
+            EpubNavigationPosition position,
+            int chapterCount,
+            Func<int, int, Task<EpubNavigationPosition>> navigateAsync)
+        {
+            var dialog = new EpubNavigationDialog(position, chapterCount, navigateAsync)
+            {
+                XamlRoot = this.XamlRoot,
+                RequestedTheme = this.RequestedTheme
+            };
+            await dialog.ShowAsync();
+            await dialog.PendingNavigation;
+        }
+
+        public async Task<int?> ShowGoToLineAsync(int currentLine, int totalLines, string title, Func<int, Task> navigateAsync)
         {
             var dialog = new GoToLineDialog(currentLine, totalLines, title)
             {
@@ -118,7 +133,22 @@ namespace Uviewer.Services
                 RequestedTheme = this.RequestedTheme
             };
 
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            // Serialize releases so a slower render cannot replace a later selection.
+            Task navigationTask = Task.CompletedTask;
+            async Task NavigateAfterAsync(Task previousNavigation, int line)
+            {
+                await previousNavigation;
+                await navigateAsync(line);
+            }
+
+            dialog.SliderPositionSelected += (_, line) =>
+            {
+                navigationTask = NavigateAfterAsync(navigationTask, line);
+            };
+
+            var result = await dialog.ShowAsync();
+            await navigationTask;
+            if (result == ContentDialogResult.Primary)
             {
                 if (int.TryParse(dialog.EnteredText, out int line))
                 {

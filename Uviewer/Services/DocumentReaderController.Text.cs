@@ -1127,6 +1127,12 @@ SwitchToTextMode();
 
         internal async Task ShowGoToLineDialog()
         {
+            if (!_isTextMode && !_isEpubMode && _currentPdfDocument == null)
+            {
+                await ShowGoToImageDialogAsync();
+                return;
+            }
+
             int currentLine = 1;
             int totalLines = 1;
             string title = Strings.DialogTitle;
@@ -1151,10 +1157,50 @@ SwitchToTextMode();
 
             if (currentLine < 1) currentLine = 1;
 
-            var result = await _textDialogService.ShowGoToLineAsync(currentLine, totalLines, title);
+            var result = await _textDialogService.ShowGoToLineAsync(
+                currentLine, totalLines, title, line => GoToLine(line.ToString()));
             if (result.HasValue)
             {
                 await GoToLine(result.Value.ToString());
+            }
+        }
+
+        private async Task ShowGoToImageDialogAsync()
+        {
+            // Folder entries also contain other supported documents. Number only
+            // images, in the same order used by previous/next image navigation.
+            var images = _imageEntries.Where(FileExplorerService.IsImageEntry).ToList();
+            if (images.Count == 0) return;
+
+            var currentEntry = _currentIndex >= 0 && _currentIndex < _imageEntries.Count
+                ? _imageEntries[_currentIndex]
+                : null;
+            int currentPosition = Math.Max(1, images.FindIndex(entry => ReferenceEquals(entry, currentEntry)) + 1);
+            string? archivePath = _archiveSession.CurrentPath;
+
+            async Task NavigateAsync(int position)
+            {
+                if (position < 1 || position > images.Count || _isTextMode || _isEpubMode ||
+                    _currentPdfDocument != null || _archiveSession.CurrentPath != archivePath) return;
+
+                var target = images[position - 1];
+                // Initial image loading can replace the list after scanning the
+                // folder. Resolve the selected file again in the current list.
+                int targetIndex = _imageEntries.FindIndex(entry =>
+                    entry.FilePath == target.FilePath &&
+                    entry.ArchiveEntryKey == target.ArchiveEntryKey &&
+                    entry.WebDavPath == target.WebDavPath &&
+                    FileExplorerService.IsImageEntry(entry));
+                if (targetIndex < 0) return;
+
+                await _imageNavigationHost.NavigateToImageAsync(targetIndex);
+            }
+
+            var result = await _textDialogService.ShowGoToLineAsync(
+                currentPosition, images.Count, Strings.GoToPageTitle, NavigateAsync);
+            if (result.HasValue)
+            {
+                await NavigateAsync(result.Value);
             }
         }
 

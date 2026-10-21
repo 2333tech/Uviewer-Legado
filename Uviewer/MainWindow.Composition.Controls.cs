@@ -98,7 +98,11 @@ namespace Uviewer
                             HandleRecentRemoveClickedAsync = item => window._bookmarkInteractionController.HandleRecentRemoveClickedAsync(item),
                             ShowPdfToc = () => window._pdfDocumentController.ShowToc(),
                             OpenPdfTocItem = item => window._pdfDocumentController.OpenTocItem(item),
-                            ShowGoToPage = () => window._documentReaderController.GoToPageButton_Click(window.MainToolbar, new RoutedEventArgs()),
+                            ShowGoToPage = () =>
+                            {
+                                if (window._isEpubMode) _ = window._epubReaderController.ShowEpubGoToLineDialog();
+                                else window._documentReaderController.GoToPageButton_Click(window.MainToolbar, new RoutedEventArgs());
+                            },
                             SearchRequested = window._searchController.HandleRightTapped,
                             ZoomOut = window._imageViewerController.ZoomOut,
                             ZoomIn = window._imageViewerController.ZoomIn,

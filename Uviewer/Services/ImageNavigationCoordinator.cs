@@ -16,7 +16,7 @@ namespace Uviewer.Services
         public FastNavigationService FastNavigationService { get; init; } = null!;
         public Func<CancellationToken, Task> ResetFastNavigationAsync { get; init; } = null!;
         public Action UpdateFastNavigationUi { get; init; } = null!;
-        public Func<Task> DisplayCurrentImageAsync { get; init; } = null!;
+        public Func<bool, Task> DisplayCurrentImageAsync { get; init; } = null!;
         public Func<Task> SaveCurrentPositionAsync { get; init; } = null!;
         public Func<bool> ShouldPreloadAfterNavigate { get; init; } = null!;
         public Action<bool> StartPreload { get; init; } = null!;
@@ -40,6 +40,35 @@ namespace Uviewer.Services
 
         public Task NavigateNextAsync(bool isManualClick = false) =>
             NavigateAsync(forward: true, isManualClick);
+
+        public async Task NavigateToImageAsync(int targetIndex)
+        {
+            var entries = _handlers.GetImageEntries();
+            if (_handlers.FastNavigationService.IsNavigationSuspended ||
+                targetIndex < 0 || targetIndex >= entries.Count ||
+                !FileExplorerService.IsImageEntry(entries[targetIndex])) return;
+
+            bool hasPendingPreview = _handlers.FastNavigationService.HasPendingReset;
+            _handlers.FastNavigationService.StopTimers();
+            if (_handlers.GetCurrentIndex() == targetIndex && !hasPendingPreview) return;
+
+            int version = ++_navigationVersion;
+            var targetEntry = entries[targetIndex];
+            bool forward = targetIndex > _handlers.GetCurrentIndex();
+            bool IsCurrentNavigation() => version == _navigationVersion &&
+                !_handlers.FastNavigationService.IsNavigationSuspended &&
+                _handlers.GetCurrentIndex() == targetIndex &&
+                targetIndex < _handlers.GetImageEntries().Count &&
+                ReferenceEquals(_handlers.GetImageEntries()[targetIndex], targetEntry);
+
+            _handlers.SetScrollDirection(forward ? 1 : -1);
+            _handlers.SetCurrentIndex(targetIndex);
+            await _handlers.DisplayCurrentImageAsync(false);
+            if (!IsCurrentNavigation()) return;
+            await _handlers.SaveCurrentPositionAsync();
+            if (!IsCurrentNavigation()) return;
+            if (_handlers.ShouldPreloadAfterNavigate()) _handlers.StartPreload(forward);
+        }
 
         private async Task NavigateAsync(bool forward, bool isManualClick)
         {
@@ -91,7 +120,7 @@ namespace Uviewer.Services
                     return;
                 }
 
-                await _handlers.DisplayCurrentImageAsync();
+                await _handlers.DisplayCurrentImageAsync(true);
                 if (!IsCurrentNavigation()) return;
                 await _handlers.SaveCurrentPositionAsync();
                 if (!IsCurrentNavigation()) return;

@@ -9,7 +9,7 @@ namespace Uviewer.Services
 {
     internal static class ImageToolbarStateService
     {
-        internal static void ApplySharpenState(ToggleButton sharpenButton, FontIcon sharpenIcon, bool isEnabled)
+        internal static void ApplySharpenState(ToggleButton sharpenButton, TextBlock sharpenIcon, bool isEnabled)
         {
             sharpenButton.IsChecked = isEnabled;
 

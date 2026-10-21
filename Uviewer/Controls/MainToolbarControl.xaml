@@ -11,6 +11,17 @@
     mc:Ignorable="d">
 
     <UserControl.Resources>
+        <!-- Keep normal text metrics and apply only a small optical correction. -->
+        <Style x:Key="ToolbarTextIconStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextAlignment" Value="Center" />
+            <Setter Property="RenderTransform">
+                <Setter.Value>
+                    <TranslateTransform Y="-1" />
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="ToolbarButtonStyle" TargetType="Button">
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="BorderThickness" Value="0" />
@@ -418,7 +429,7 @@
                     </Button>
 
                     <Button x:Name="PdfGoToPageButton" Visibility="Collapsed" ToolTipService.ToolTip="{x:Bind app:Strings.PdfGoToPageTooltip}">
-                        <TextBlock Text="G" FontSize="14" FontWeight="Bold"/>
+                        <TextBlock Text="G" FontSize="14" FontWeight="Bold" Style="{StaticResource ToolbarTextIconStyle}"/>
                     </Button>
 
                     <AppBarSeparator x:Name="PdfSeparator" Visibility="Collapsed"/>
@@ -439,7 +450,7 @@
                     </Button>
 
                     <Button x:Name="ZoomActualButton" ToolTipService.ToolTip="{x:Bind app:Strings.ZoomActualTooltip}">
-                        <TextBlock Text="1:1" FontSize="12" FontWeight="SemiBold"/>
+                        <TextBlock Text="1:1" FontSize="12" FontWeight="SemiBold" Style="{StaticResource ToolbarTextIconStyle}"/>
                     </Button>
 
                 </StackPanel>
@@ -447,11 +458,11 @@
                 <!-- Text Toolbar -->
                 <StackPanel x:Name="TextToolbarPanel" Orientation="Horizontal" Spacing="4" Visibility="Collapsed">
                     <ToggleButton x:Name="AozoraToggleButton" ToolTipService.ToolTip="{x:Bind app:Strings.AozoraTooltip}">
-                        <TextBlock Text="A" FontSize="14" FontWeight="Bold"/>
+                        <TextBlock Text="A" FontSize="14" FontWeight="Bold" Style="{StaticResource ToolbarTextIconStyle}"/>
                     </ToggleButton>
                     
                     <ToggleButton x:Name="VerticalToggleButton" ToolTipService.ToolTip="{x:Bind app:Strings.VerticalTooltip}">
-                        <TextBlock Text="V" FontSize="14" FontWeight="Bold"/>
+                        <TextBlock Text="V" FontSize="14" FontWeight="Bold" Style="{StaticResource ToolbarTextIconStyle}"/>
                     </ToggleButton>
                     
                     <Button x:Name="FontToggleButton" ToolTipService.ToolTip="{x:Bind app:Strings.FontTooltip}">
@@ -475,7 +486,7 @@
                                 </MenuFlyoutItem>
                             </MenuFlyout>
                         </Button.ContextFlyout>
-                        <TextBlock Text="F" FontSize="14" FontWeight="Bold"/>
+                        <TextBlock Text="F" FontSize="14" FontWeight="Bold" Style="{StaticResource ToolbarTextIconStyle}"/>
                     </Button>
                     
                     <Button x:Name="TocButton" ToolTipService.ToolTip="{x:Bind app:Strings.TocTooltip}">
@@ -503,7 +514,7 @@
                     </Button>
 
                     <Button x:Name="GoToPageButton" ToolTipService.ToolTip="{x:Bind app:Strings.GoToPageTooltip}">
-                        <TextBlock Text="G" FontSize="14" FontWeight="Bold"/>
+                        <TextBlock Text="G" FontSize="14" FontWeight="Bold" Style="{StaticResource ToolbarTextIconStyle}"/>
                     </Button>
 
                     <AppBarSeparator/>
@@ -530,7 +541,7 @@
                     <AppBarSeparator/>
 
                     <Button x:Name="SideBySideButton" ToolTipService.ToolTip="{x:Bind app:Strings.SideBySideTooltip}">
-                        <TextBlock x:Name="SideBySideText" Text="1" FontSize="14" FontWeight="SemiBold" Width="14" TextAlignment="Center"/>
+                        <TextBlock x:Name="SideBySideText" Text="1" FontSize="14" FontWeight="SemiBold" Width="14" Style="{StaticResource ToolbarTextIconStyle}"/>
                     </Button>
 
                     <Button x:Name="NextImageSideButton" ToolTipService.ToolTip="{x:Bind app:Strings.NextImageSideTooltip}">
@@ -584,7 +595,7 @@
                         <StaticResource x:Key="ToggleButtonForegroundPointerOver" ResourceKey="ToggleButtonForeground" />
                         <StaticResource x:Key="ToggleButtonForegroundCheckedPointerOver" ResourceKey="ToggleButtonForegroundChecked" />
                     </ToggleButton.Resources>
-                    <FontIcon x:Name="SharpenIcon" Glyph="S" FontSize="14" FontFamily="Segoe UI" />
+                    <TextBlock x:Name="SharpenIcon" Text="S" FontSize="14" FontFamily="Segoe UI" Style="{StaticResource ToolbarTextIconStyle}" />
                 </ToggleButton>
 
                 <AppBarSeparator/>

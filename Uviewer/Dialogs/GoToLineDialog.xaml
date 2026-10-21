@@ -17,6 +17,16 @@
         <TextBox x:Name="InputBox"
                  InputScope="Number"
                  PlaceholderText="{x:Bind Placeholder, Mode=OneTime}"
-                 Text="{x:Bind CurrentLineText, Mode=TwoWay}"/>
+                 Text="{x:Bind CurrentLineText, Mode=TwoWay}"
+                 TextChanged="InputBox_TextChanged"/>
+        <Slider x:Name="PositionSlider"
+                Minimum="1"
+                StepFrequency="1"
+                SnapsTo="StepValues"
+                ValueChanged="PositionSlider_ValueChanged"/>
+        <Grid>
+            <TextBlock Text="1" HorizontalAlignment="Left"/>
+            <TextBlock Text="{x:Bind TotalLinesText, Mode=OneTime}" HorizontalAlignment="Right"/>
+        </Grid>
     </StackPanel>
 </ContentDialog>

@@ -4,6 +4,7 @@ using System;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Windows.Graphics;
 using Uviewer.Models;
 
@@ -14,23 +15,42 @@ namespace Uviewer.Services
         private readonly string _settingsDirectory;
         private readonly string _settingsFile;
         private readonly string _legacyWindowSettingsFile;
+        private readonly SettingsFileStore _store;
+        private JsonObject? _baseline;
+        private readonly object _stateGate = new();
 
         public AppSettingsService()
+            : this(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Uviewer"))
         {
-            _settingsDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Uviewer");
-            _settingsFile = Path.Combine(_settingsDirectory, "window_settings.json");
-            _legacyWindowSettingsFile = Path.Combine(_settingsDirectory, "window_settings.txt");
         }
 
-        public bool HasPersistedSettings => File.Exists(_settingsFile) || File.Exists(_legacyWindowSettingsFile);
+        internal AppSettingsService(string settingsDirectory)
+        {
+            _settingsDirectory = settingsDirectory;
+            _settingsFile = Path.Combine(_settingsDirectory, "window_settings.json");
+            _legacyWindowSettingsFile = Path.Combine(_settingsDirectory, "window_settings.txt");
+            _store = new SettingsFileStore(_settingsFile);
+        }
+
+        public bool HasPersistedSettings => File.Exists(_settingsFile) || File.Exists(_settingsFile + ".bak") || File.Exists(_legacyWindowSettingsFile);
 
         public AppSettings LoadSettings() => LoadSettings(DisplayArea.Primary);
 
         public AppSettings LoadSettings(DisplayArea primaryArea)
         {
+            lock (_stateGate)
+            {
+                var settings = LoadSettingsCore(primaryArea);
+                _baseline = ToJson(ToDocument(settings));
+                return settings;
+            }
+        }
+
+        private AppSettings LoadSettingsCore(DisplayArea primaryArea)
+        {
             var defaults = CreateDefaultSettings(primaryArea);
 
-            if (File.Exists(_settingsFile))
+            if (File.Exists(_settingsFile) || File.Exists(_settingsFile + ".bak"))
             {
                 return LoadJsonSettings(defaults);
             }
@@ -50,14 +70,22 @@ namespace Uviewer.Services
         {
             try
             {
-                if (!Directory.Exists(_settingsDirectory))
+                lock (_stateGate)
                 {
-                    Directory.CreateDirectory(_settingsDirectory);
+                    var desired = ToJson(ToDocument(settings));
+                    _store.Update(current =>
+                    {
+                        if (current?.Version < AppSettingsDocument.CurrentVersion && current.App?.KeepInTray == true)
+                            current.App.AllowMultipleInstances = true;
+                        var merged = current == null ? (JsonObject)desired.DeepClone() : ToJson(current);
+                        MergeChanges(merged, desired, _baseline);
+                        merged["version"] = AppSettingsDocument.CurrentVersion;
+                        return merged.Deserialize(AppSettingsJsonContext.Default.AppSettingsDocument)!;
+                    });
+                    // Track this window's snapshot, including values it has not
+                    // adopted from other instances, so later saves keep them intact.
+                    _baseline = desired;
                 }
-
-                var document = ToDocument(settings);
-                var json = JsonSerializer.Serialize(document, typeof(AppSettingsDocument), AppSettingsJsonContext.Default);
-                File.WriteAllText(_settingsFile, json);
                 System.Diagnostics.Debug.WriteLine($"Window settings saved: Max={settings.IsMaximized}, RestoreRect={settings.LastNonMaximizedRect.X},{settings.LastNonMaximizedRect.Y},{settings.LastNonMaximizedRect.Width}x{settings.LastNonMaximizedRect.Height}");
             }
             catch (Exception ex)
@@ -68,18 +96,45 @@ namespace Uviewer.Services
 
         public void SaveRegistrationStatus(bool isRegistered, bool allowMultipleInstances)
         {
-            var settings = LoadSettings();
-            settings.IsRegistered = isRegistered;
-            settings.AllowMultipleInstances = allowMultipleInstances;
-            SaveSettings(settings);
+            try
+            {
+                lock (_stateGate)
+                {
+                    _store.Update(current =>
+                    {
+                        current ??= ToDocument(File.Exists(_legacyWindowSettingsFile) && TryLoadLegacySettings(DisplayArea.Primary, out var legacy)
+                            ? legacy : CreateDefaultSettings(DisplayArea.Primary));
+                        current.App ??= new AppBehaviorSettings();
+                        current.App.Registered = isRegistered;
+                        current.App.AllowMultipleInstances = allowMultipleInstances;
+                        current.Version = AppSettingsDocument.CurrentVersion;
+                        return current;
+                    });
+                }
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Error saving registration status: {ex.Message}"); }
+        }
+
+        private static JsonObject ToJson(AppSettingsDocument document)
+            => (JsonObject)JsonSerializer.SerializeToNode(document, AppSettingsJsonContext.Default.AppSettingsDocument)!;
+
+        private static void MergeChanges(JsonObject current, JsonObject desired, JsonObject? baseline)
+        {
+            foreach (var property in desired)
+            {
+                JsonNode? previous = baseline?[property.Key];
+                if (baseline != null && JsonNode.DeepEquals(property.Value, previous)) continue;
+                if (property.Value is JsonObject children && current[property.Key] is JsonObject target)
+                    MergeChanges(target, children, previous as JsonObject);
+                else current[property.Key] = property.Value?.DeepClone();
+            }
         }
 
         private AppSettings LoadJsonSettings(AppSettings defaults)
         {
             try
             {
-                var json = File.ReadAllText(_settingsFile);
-                var document = JsonSerializer.Deserialize(json, typeof(AppSettingsDocument), AppSettingsJsonContext.Default) as AppSettingsDocument;
+                var document = _store.Read();
                 if (document == null)
                 {
                     return defaults;

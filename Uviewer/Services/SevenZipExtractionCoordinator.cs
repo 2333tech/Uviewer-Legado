@@ -1,6 +1,6 @@
 using System;
 using System.IO;
-using System.Linq;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -10,41 +10,54 @@ namespace Uviewer.Services
     {
         private CancellationTokenSource? _extractCts;
         private CancellationTokenSource _jumpCts = new();
+        private LeasedTempDirectory? _tempDirectory;
+        private Task _extractionTask = Task.CompletedTask;
+        private readonly List<Task> _cleanupTasks = new();
+        private readonly object _stateGate = new();
+        private readonly string _tempRoot;
 
-        public string? CurrentTempFolder { get; private set; }
+        public SevenZipExtractionCoordinator() : this(Path.Combine(Path.GetTempPath(), "Uviewer")) { }
+        internal SevenZipExtractionCoordinator(string tempRoot) => _tempRoot = tempRoot;
+
+        public string? CurrentTempFolder => _tempDirectory?.Folder;
         public int LastIndexForJump { get; private set; } = -1;
         public CancellationToken JumpToken => _jumpCts.Token;
 
-        public void CancelExtraction()
-        {
-            _extractCts?.Cancel();
-        }
+        public void CancelExtraction() => _extractCts?.Cancel();
 
         public CancellationToken StartNewExtraction()
         {
-            _extractCts?.Cancel();
-            _extractCts?.Dispose();
-            _extractCts = new CancellationTokenSource();
-            return _extractCts.Token;
+            CleanupTempData();
+            lock (_stateGate)
+            {
+                _extractCts = new CancellationTokenSource();
+                return _extractCts.Token;
+            }
         }
 
-        public string CreateTempFolder()
+        internal Task<string> CreateTempFolderAsync(CancellationToken token) => Task.Run(() =>
         {
-            string baseTemp = Path.Combine(Path.GetTempPath(), "Uviewer");
-            CurrentTempFolder = Path.Combine(baseTemp, "7z_" + Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(CurrentTempFolder);
-            return CurrentTempFolder;
+            token.ThrowIfCancellationRequested();
+            var directory = LeasedTempDirectory.Create(_tempRoot, "7z_");
+            lock (_stateGate)
+            {
+                if (_extractCts != null && _extractCts.Token == token && !token.IsCancellationRequested)
+                {
+                    _tempDirectory = directory;
+                    return directory.Folder;
+                }
+            }
+            directory.Dispose();
+            throw new OperationCanceledException(token);
+        }, token);
+
+        internal void TrackExtraction(Task task)
+        {
+            lock (_stateGate) _extractionTask = task;
         }
 
-        public bool ShouldSignalJump(int currentIndex, int threshold)
-        {
-            return Math.Abs(currentIndex - LastIndexForJump) > threshold;
-        }
-
-        public void MarkCurrentIndex(int currentIndex)
-        {
-            LastIndexForJump = currentIndex;
-        }
+        public bool ShouldSignalJump(int currentIndex, int threshold) => Math.Abs(currentIndex - LastIndexForJump) > threshold;
+        public void MarkCurrentIndex(int currentIndex) => LastIndexForJump = currentIndex;
 
         public void SignalJump(int currentIndex)
         {
@@ -61,144 +74,45 @@ namespace Uviewer.Services
 
         public void CleanupTempData(bool immediate = false)
         {
-            try
+            CancellationTokenSource? cancellation;
+            LeasedTempDirectory? directory;
+            Task extraction;
+            lock (_stateGate)
             {
-                _extractCts?.Cancel();
-                _extractCts?.Dispose();
+                cancellation = _extractCts;
                 _extractCts = null;
-
-                if (CurrentTempFolder != null)
-                {
-                    string folderToDelete = CurrentTempFolder;
-                    if (Directory.Exists(folderToDelete))
-                    {
-                        if (immediate)
-                        {
-                            TryDeleteDirectoryRecursive(folderToDelete);
-                        }
-                        else
-                        {
-                            CurrentTempFolder = null;
-                            _ = Task.Run(async () =>
-                            {
-                                await Task.Delay(1000);
-                                for (int i = 0; i < 3; i++)
-                                {
-                                    try
-                                    {
-                                        if (Directory.Exists(folderToDelete))
-                                            Directory.Delete(folderToDelete, true);
-                                        break;
-                                    }
-                                    catch
-                                    {
-                                        await Task.Delay(2000);
-                                    }
-                                }
-
-                                CleanupTempRoot();
-                            });
-                        }
-                    }
-                }
-
-                if (immediate) CleanupTempRoot(force: true);
+                directory = _tempDirectory;
+                _tempDirectory = null;
+                extraction = _extractionTask;
+                _extractionTask = Task.CompletedTask;
             }
-            catch { }
-        }
-
-        public void CleanupZeroByteTempFiles()
-        {
-            _ = Task.Run(() =>
+            cancellation?.Cancel();
+            if (immediate && extraction.IsCompleted)
             {
-                try
-                {
-                    string baseTemp = Path.Combine(Path.GetTempPath(), "Uviewer");
-                    if (Directory.Exists(baseTemp))
-                    {
-                        var files = Directory.GetFiles(baseTemp, "*", SearchOption.AllDirectories);
-                        foreach (var file in files)
-                        {
-                            try
-                            {
-                                var fi = new FileInfo(file);
-                                if (fi.Length == 0)
-                                {
-                                    fi.Delete();
-                                }
-                            }
-                            catch { }
-                        }
-
-                        var dirs = Directory.GetDirectories(baseTemp, "*", SearchOption.AllDirectories)
-                            .OrderByDescending(d => d.Length);
-                        foreach (var dir in dirs)
-                        {
-                            try
-                            {
-                                if (!Directory.EnumerateFileSystemEntries(dir).Any())
-                                {
-                                    Directory.Delete(dir);
-                                }
-                            }
-                            catch { }
-                        }
-                    }
-                }
-                catch { }
-            });
-        }
-
-        private static void CleanupTempRoot(bool force = false)
-        {
-            try
-            {
-                var baseTemp = Path.Combine(Path.GetTempPath(), "Uviewer");
-                if (Directory.Exists(baseTemp))
-                {
-                    if (force)
-                    {
-                        TryDeleteDirectoryRecursive(baseTemp);
-                    }
-                    else if (!Directory.EnumerateFileSystemEntries(baseTemp).Any())
-                    {
-                        Directory.Delete(baseTemp);
-                    }
-                }
+                directory?.Dispose();
             }
-            catch { }
-        }
-
-        private static void TryDeleteDirectoryRecursive(string path)
-        {
-            try
+            _cleanupTasks.RemoveAll(task => task.IsCompleted);
+            _cleanupTasks.Add(Task.Run(async () =>
             {
-                if (!Directory.Exists(path)) return;
-
-                try
+                // Native extraction can still be writing after cancellation. Keep
+                // the lease until every worker has closed its output stream.
+                try { await extraction.ConfigureAwait(false); }
+                catch (Exception ex) { System.Diagnostics.Debug.WriteLine(ex); }
+                finally
                 {
-                    foreach (var file in Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories))
-                    {
-                        try { File.Delete(file); } catch { }
-                    }
+                    if (directory != null) await directory.DeleteAsync().ConfigureAwait(false);
+                    cancellation?.Dispose();
                 }
-                catch { }
-
-                for (int i = 0; i < 5; i++)
-                {
-                    try
-                    {
-                        if (Directory.Exists(path))
-                            Directory.Delete(path, true);
-                        return;
-                    }
-                    catch
-                    {
-                        if (i < 4) Thread.Sleep(100);
-                    }
-                }
-            }
-            catch { }
+            }));
         }
+
+        public Task CleanupTempDataAsync()
+        {
+            CleanupTempData();
+            return Task.WhenAll(_cleanupTasks);
+        }
+
+        public void CleanupAbandonedTempFolders() => _ = Task.Run(() =>
+            LeasedTempDirectory.CleanupAbandoned(_tempRoot, "7z_*"));
     }
 }

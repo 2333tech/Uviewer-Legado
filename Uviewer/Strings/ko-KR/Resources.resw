@@ -322,6 +322,9 @@
   <data name="AddToFavoritesContext" xml:space="preserve">
     <value>즐겨찾기 추가</value>
   </data>
+  <data name="EpubNavigationTitle" xml:space="preserve"><value>챕터 / 줄 이동</value></data>
+  <data name="ChapterLabel" xml:space="preserve"><value>챕터</value></data>
+  <data name="LineLabel" xml:space="preserve"><value>줄</value></data>
   <data name="DialogTitle" xml:space="preserve">
     <value>줄 이동</value>
   </data>

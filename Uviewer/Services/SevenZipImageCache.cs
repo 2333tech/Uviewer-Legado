@@ -18,21 +18,25 @@ namespace Uviewer.Services
             public required int DisplayIndex { get; init; }
             public required string Path { get; init; }
             public DateTime LastWriteTime { get; init; }
+            public ulong Size { get; init; }
             public TaskCompletionSource<string?> Ready { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         }
 
         private readonly Dictionary<uint, Image> _images = new();
         private readonly Dictionary<string, Image> _keys = new(StringComparer.Ordinal);
         private readonly CancellationTokenSource _cancellation;
+        private readonly SevenZipDiskBudget _diskBudget;
         private int _activeWorkers;
         private int _peakActiveWorkers;
         internal int BlockCount { get; private set; }
         internal int WorkerCount { get; private set; }
+        internal int StartupImageCount { get; private set; }
         internal int PeakActiveWorkers => _peakActiveWorkers;
 
         public SevenZipImageCache(IList<Entry> entries, IReadOnlyList<ImageEntry> images, string folder, CancellationToken token)
         {
             _cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+            _diskBudget = new SevenZipDiskBudget(folder);
             var indices = entries.Select((entry, index) => (entry.FileName, Index: (uint)index))
                 .ToDictionary(entry => entry.FileName, entry => entry.Index, StringComparer.Ordinal);
             for (int index = 0; index < images.Count; index++)
@@ -44,7 +48,8 @@ namespace Uviewer.Services
                     Entry = entry,
                     DisplayIndex = index,
                     Path = System.IO.Path.Combine(folder, Guid.NewGuid().ToString("N") + System.IO.Path.GetExtension(entry.ArchiveEntryKey)),
-                    LastWriteTime = entries[(int)nativeIndex].LastWriteTime
+                    LastWriteTime = entries[(int)nativeIndex].LastWriteTime,
+                    Size = entries[(int)nativeIndex].Size
                 };
                 _images.Add(nativeIndex, image);
                 _keys.Add(entry.ArchiveEntryKey, image);
@@ -81,6 +86,58 @@ namespace Uviewer.Services
                 Debug.WriteLine($"7z image cache: {_images.Count} images, {blocks.Count} blocks, {workers} workers");
                 var gate = new object();
 
+                void ExtractBlock(SevenZipBatchExtractor extractor, uint[] block)
+                {
+                    try
+                    {
+                        int active = Interlocked.Increment(ref _activeWorkers);
+                        int peak;
+                        do
+                        {
+                            peak = _peakActiveWorkers;
+                            if (active <= peak) break;
+                        } while (Interlocked.CompareExchange(ref _peakActiveWorkers, active, peak) != peak);
+                        extractor.Extract(block, index =>
+                        {
+                            var image = _images[index];
+                            if (_diskBudget.TryAdmit(image.Size)) return image.Path + ".tmp";
+                            image.Ready.TrySetResult(null); // Read on demand without a disk cache.
+                            return null;
+                        }, (index, path) =>
+                        {
+                            token.ThrowIfCancellationRequested();
+                            var image = _images[index];
+                            if (image.LastWriteTime != default)
+                            {
+                                try { File.SetLastWriteTime(path, image.LastWriteTime); }
+                                catch (ArgumentOutOfRangeException) { }
+                            }
+                            File.Move(path, image.Path);
+                            image.Entry.FilePath = image.Path;
+                            image.Ready.TrySetResult(image.Path);
+                        }, token, _diskBudget.BeforeWrite);
+                    }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"7z block extraction failed: {ex}");
+                        // A damaged/unsupported entry can still use the ordinary reader.
+                        foreach (uint index in block) _images[index].Ready.TrySetResult(null);
+                    }
+                    finally { Interlocked.Decrement(ref _activeWorkers); }
+                }
+
+                int NearestBlock(int current)
+                {
+                    int next = 0, distance = int.MaxValue;
+                    for (int i = 0; i < blocks.Count; i++)
+                    {
+                        int candidate = blocks[i].Min(index => Math.Abs(_images[index].DisplayIndex - current));
+                        if (candidate < distance) (next, distance) = (i, candidate);
+                    }
+                    return next;
+                }
+
                 void ExtractBlocks(SevenZipBatchExtractor extractor)
                 {
                     while (!token.IsCancellationRequested)
@@ -89,53 +146,33 @@ namespace Uviewer.Services
                         lock (gate)
                         {
                             if (blocks.Count == 0) return;
-                            int current = getCurrentIndex();
-                            int next = 0;
-                            int distance = int.MaxValue;
-                            for (int i = 0; i < blocks.Count; i++)
-                            {
-                                int candidate = blocks[i].Min(index => Math.Abs(_images[index].DisplayIndex - current));
-                                if (candidate < distance) (next, distance) = (i, candidate);
-                            }
+                            int next = NearestBlock(getCurrentIndex());
                             block = blocks[next];
                             blocks.RemoveAt(next);
                         }
-                        try
-                        {
-                            int active = Interlocked.Increment(ref _activeWorkers);
-                            int peak;
-                            do
-                            {
-                                peak = _peakActiveWorkers;
-                                if (active <= peak) break;
-                            } while (Interlocked.CompareExchange(ref _peakActiveWorkers, active, peak) != peak);
-                            extractor.Extract(block, index => _images[index].Path + ".tmp", (index, path) =>
-                            {
-                                token.ThrowIfCancellationRequested();
-                                var image = _images[index];
-                                if (image.LastWriteTime != default)
-                                {
-                                    try { File.SetLastWriteTime(path, image.LastWriteTime); }
-                                    catch (ArgumentOutOfRangeException) { }
-                                }
-                                File.Move(path, image.Path);
-                                image.Entry.FilePath = image.Path;
-                                image.Ready.TrySetResult(image.Path);
-                            }, token);
-                        }
-                        catch (OperationCanceledException) { throw; }
-                        catch (Exception ex)
-                        {
-                            Debug.WriteLine($"7z block extraction failed: {ex}");
-                            // A damaged/unsupported entry can still use the ordinary reader.
-                            foreach (uint index in block) _images[index].Ready.TrySetResult(null);
-                        }
-                        finally { Interlocked.Decrement(ref _activeWorkers); }
+                        ExtractBlock(extractor, block);
                     }
                 }
 
+                if (blocks.Count > 0)
+                {
+                    int current = getCurrentIndex();
+                    int nearest = NearestBlock(current);
+                    uint[] startup = blocks[nearest].Where(index =>
+                        _images[index].DisplayIndex >= current - 2 &&
+                        _images[index].DisplayIndex <= current + 6).ToArray();
+                    StartupImageCount = startup.Length;
+                    // For a bookmark deep in a solid block, skip writing its entire
+                    // prefix before showing the target. One grouped pass warms the
+                    // visible/adjacent pages; the remaining pages follow in bulk.
+                    if (startup.Length > 0) ExtractBlock(first, startup);
+                    blocks[nearest] = blocks[nearest].Except(startup).ToArray();
+                    if (blocks[nearest].Length == 0) blocks.RemoveAt(nearest);
+                }
+
                 // Each worker owns its native archive in the MTA. Parallelize
-                // independent blocks, never repeated decodes of one solid block.
+                // independent blocks. Each block has at most one startup pass
+                // and one bulk pass, rather than one decode per preload request.
                 var tasks = new List<Task>();
                 for (int i = 1; i < workers; i++)
                     tasks.Add(Task.Run(() =>

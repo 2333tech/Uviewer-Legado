@@ -1,0 +1,43 @@
+<ContentDialog
+    x:Class="Uviewer.Dialogs.EpubNavigationDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:common="using:Uviewer"
+    Style="{StaticResource DefaultContentDialogStyle}"
+    Title="{x:Bind common:Strings.EpubNavigationTitle}"
+    PrimaryButtonText="{x:Bind common:Strings.DialogPrimary}"
+    CloseButtonText="{x:Bind common:Strings.Close}"
+    DefaultButton="Primary">
+    <StackPanel Width="420" Spacing="12">
+        <Grid x:Name="NavigationGrid" RowSpacing="12" ColumnSpacing="8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="72"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <TextBlock Text="{x:Bind common:Strings.ChapterLabel}" VerticalAlignment="Center"/>
+            <NumberBox x:Name="ChapterInput" Grid.Column="1" Minimum="1" SmallChange="1"
+                       SpinButtonPlacementMode="Hidden" ValueChanged="ChapterInput_ValueChanged"/>
+            <Slider x:Name="ChapterSlider" Grid.Column="2" Minimum="1" StepFrequency="1"
+                    SnapsTo="StepValues" ValueChanged="ChapterSlider_ValueChanged"/>
+            <TextBlock x:Name="ChapterTotalText" Grid.Column="3" VerticalAlignment="Center"/>
+            <TextBlock Grid.Row="1" Text="{x:Bind common:Strings.LineLabel}" VerticalAlignment="Center"/>
+            <NumberBox x:Name="LineInput" Grid.Row="1" Grid.Column="1" Minimum="1" SmallChange="1"
+                       SpinButtonPlacementMode="Hidden" ValueChanged="LineInput_ValueChanged"/>
+            <Slider x:Name="LineSlider" Grid.Row="1" Grid.Column="2" Minimum="1" StepFrequency="1"
+                    SnapsTo="StepValues" ValueChanged="LineSlider_ValueChanged"/>
+            <TextBlock x:Name="LineTotalText" Grid.Row="1" Grid.Column="3" VerticalAlignment="Center"/>
+            <!-- Overlay loading state without adding a row to the dialog content. -->
+            <ProgressRing x:Name="LoadingIndicator" Grid.RowSpan="2" Grid.ColumnSpan="4"
+                          Width="20" Height="20" IsActive="False" Visibility="Collapsed"
+                          HorizontalAlignment="Center" VerticalAlignment="Center"
+                          IsHitTestVisible="False"/>
+        </Grid>
+        <TextBlock x:Name="ErrorText" TextWrapping="Wrap" Visibility="Collapsed"/>
+    </StackPanel>
+</ContentDialog>

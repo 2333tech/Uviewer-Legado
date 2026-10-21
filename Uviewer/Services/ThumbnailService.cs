@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,12 +11,17 @@ using SharpCompress.Archives;
 using Uviewer;
 using Uviewer.Models;
 using Windows.Storage;
+using Windows.Storage.Streams;
 
 namespace Uviewer.Services
 {
     public class ThumbnailService : IThumbnailService
     {
         private readonly SemaphoreSlim _thumbnailSemaphore = new(4);
+        private readonly ThumbnailDiskCache _diskCache = new();
+        private readonly ThumbnailMemoryCache<BitmapImage> _memoryCache = new();
+        private readonly ConcurrentDictionary<string, FolderCover> _folderCovers = new(StringComparer.OrdinalIgnoreCase);
+        private sealed record FolderCover(long ModifiedTicks, string? ImagePath);
 
         public async Task LoadThumbnailsAsync(
             IEnumerable<FileItem> items,
@@ -49,21 +55,7 @@ namespace Uviewer.Services
                     item.IsThumbnailLoading = true;
                     try
                     {
-                        // Add a small jitter to stagger heavy operations
-                        await Task.Delay(5, ct);
-
-                        if (item.IsArchive || item.IsEpub)
-                        {
-                            await LoadArchiveThumbnailAsync(item, dispatcher, ct, decodePixelWidth);
-                        }
-                        else if (item.IsDirectory)
-                        {
-                            await LoadFolderThumbnailAsync(item, dispatcher, ct, decodePixelWidth);
-                        }
-                        else if (item.IsImage)
-                        {
-                            await LoadImageThumbnailAsync(item, dispatcher, ct, decodePixelWidth);
-                        }
+                        await LoadItemThumbnailAsync(item, dispatcher, ct, decodePixelWidth);
                     }
                     catch (OperationCanceledException) { }
                     catch (Exception ex)
@@ -83,227 +75,181 @@ namespace Uviewer.Services
             }
         }
 
-        private async Task LoadArchiveThumbnailAsync(FileItem item, DispatcherQueue dispatcher, CancellationToken ct, int decodePixelWidth)
+        private async Task LoadItemThumbnailAsync(FileItem item, DispatcherQueue dispatcher, CancellationToken ct, int size)
         {
-            string ext = Path.GetExtension(item.FullPath).ToLowerInvariant();
-            if (ext == ".7z")
+            string? sourcePath = item.IsDirectory ? GetFolderCoverPath(item.FullPath) : item.FullPath;
+            if (sourcePath == null) return;
+            ct.ThrowIfCancellationRequested();
+            string? key = ThumbnailDiskCache.CreateKey(sourcePath, size);
+            if (key != null)
             {
-                await Load7zThumbnailAsync(item, dispatcher, ct, decodePixelWidth);
+                if (await TrySetMemoryThumbnailAsync(item, dispatcher, ct, key)) return;
+                var bytes = await _diskCache.ReadAsync(key, ct);
+                if (bytes != null && await SetThumbnailAsync(item, dispatcher, ct, size, bytes, key)) return;
             }
+
+            if (item.IsArchive || item.IsEpub)
+                await LoadArchiveThumbnailAsync(item, dispatcher, ct, size, key);
             else
-            {
-                await LoadGeneralArchiveThumbnailAsync(item, dispatcher, ct, decodePixelWidth);
-            }
+                await LoadImageThumbnailAsync(item, sourcePath, dispatcher, ct, size, key);
         }
 
-        private async Task Load7zThumbnailAsync(FileItem item, DispatcherQueue dispatcher, CancellationToken ct, int decodePixelWidth)
+        private string? GetFolderCoverPath(string folderPath)
         {
-            await _thumbnailSemaphore.WaitAsync(ct);
-            try
-            {
-                string libraryPath = Path.Combine(AppContext.BaseDirectory, "Libs", "7z.dll");
-                using var archive = new SevenZipExtractor.ArchiveFile(item.FullPath, libraryPath);
-                var entry = archive.Entries
-                    .Where(e => !e.IsFolder &&
-                           FileExplorerService.GetSupportedFileKind(e.FileName) == SupportedFileKind.Image)
-                    .OrderBy(e => e.FileName, NaturalSortComparer.Default)
-                    .FirstOrDefault();
+            long modified = Directory.GetLastWriteTimeUtc(folderPath).Ticks;
+            if (_folderCovers.TryGetValue(folderPath, out var cover) && cover.ModifiedTicks == modified &&
+                (cover.ImagePath == null || File.Exists(cover.ImagePath)))
+                return cover.ImagePath;
 
-                if (entry != null)
-                {
-                    var memStream = new MemoryStream();
-                    try
-                    {
-                        entry.Extract(memStream);
-                        memStream.Position = 0;
-
-                        // 비동기 연속 실행 옵션 부여 및 제네릭 타입 사용
-                        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                        
-                        // Cancellation Token을 TCS에 연결하여 Deadlock 방지
-                        using var registration = ct.Register(() => tcs.TrySetCanceled());
-
-                        bool enqueued = dispatcher.TryEnqueue(DispatcherQueuePriority.Normal, async () =>
-                        {
-                            try
-                            {
-                                if (ct.IsCancellationRequested)
-                                {
-                                    tcs.TrySetCanceled();
-                                    return;
-                                }
-                                
-                                var bitmap = new BitmapImage();
-                                bitmap.DecodePixelWidth = decodePixelWidth;
-                                await bitmap.SetSourceAsync(memStream.AsRandomAccessStream());
-                                item.Thumbnail = bitmap;
-                                tcs.TrySetResult(true);
-                            }
-                            catch
-                            {
-                                tcs.TrySetResult(false);
-                            }
-                        });
-
-                        if (enqueued)
-                        {
-                            try { await tcs.Task; } catch (OperationCanceledException) { }
-                        }
-                    }
-                    finally
-                    {
-                        memStream.Dispose();
-                    }
-                }
-            }
-            finally
-            {
-                _thumbnailSemaphore.Release();
-            }
+            string? firstImage = Directory.EnumerateFiles(folderPath)
+                .Where(path => FileExplorerService.GetSupportedFileKind(path) == SupportedFileKind.Image)
+                .OrderBy(Path.GetFileName, NaturalSortComparer.Default)
+                .FirstOrDefault();
+            if (_folderCovers.Count >= 1024) _folderCovers.Clear();
+            _folderCovers[folderPath] = new FolderCover(modified, firstImage);
+            return firstImage;
         }
 
-        private async Task LoadGeneralArchiveThumbnailAsync(FileItem item, DispatcherQueue dispatcher, CancellationToken ct, int decodePixelWidth)
-        {
-            await _thumbnailSemaphore.WaitAsync(ct);
-            try
-            {
-                using var archive = ArchiveFactory.OpenArchive(item.FullPath);
-                var entry = archive.Entries
-                    .Where(e => !e.IsDirectory &&
-                           FileExplorerService.GetSupportedFileKind(e.Key) == SupportedFileKind.Image)
-                    .OrderBy(e => e.Key, NaturalSortComparer.Default)
-                    .FirstOrDefault();
-
-                if (entry != null)
-                {
-                    using var entryStream = entry.OpenEntryStream();
-                    var memStream = new MemoryStream();
-                    try
-                    {
-                        await entryStream.CopyToAsync(memStream, ct);
-                        memStream.Position = 0;
-
-                        var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-                        using var registration = ct.Register(() => tcs.TrySetCanceled());
-
-                        bool enqueued = dispatcher.TryEnqueue(DispatcherQueuePriority.Normal, async () =>
-                        {
-                            try
-                            {
-                                if (ct.IsCancellationRequested)
-                                {
-                                    tcs.TrySetCanceled();
-                                    return;
-                                }
-
-                                var bitmap = new BitmapImage();
-                                bitmap.DecodePixelWidth = decodePixelWidth;
-                                await bitmap.SetSourceAsync(memStream.AsRandomAccessStream());
-                                item.Thumbnail = bitmap;
-                                tcs.TrySetResult(true);
-                            }
-                            catch
-                            {
-                                tcs.TrySetResult(false);
-                            }
-                        });
-
-                        if (enqueued)
-                        {
-                            try { await tcs.Task; } catch (OperationCanceledException) { }
-                        }
-                    }
-                    finally
-                    {
-                        memStream.Dispose();
-                    }
-                }
-            }
-            finally
-            {
-                _thumbnailSemaphore.Release();
-            }
-        }
-
-        private async Task LoadImageThumbnailAsync(FileItem item, DispatcherQueue dispatcher, CancellationToken ct, int decodePixelWidth)
-        {
-            try
-            {
-                var file = await StorageFile.GetFileFromPathAsync(item.FullPath);
-                using var thumbnail = await file.GetThumbnailAsync(
-                    Windows.Storage.FileProperties.ThumbnailMode.SingleItem,
-                    (uint)decodePixelWidth);
-
-                if (thumbnail != null && !ct.IsCancellationRequested)
-                {
-                    await SetThumbnailOnDispatcherAsync(item, dispatcher, ct, decodePixelWidth, thumbnail);
-                }
-            }
-            catch { }
-        }
-
-        private async Task LoadFolderThumbnailAsync(FileItem item, DispatcherQueue dispatcher, CancellationToken ct, int decodePixelWidth)
-        {
-            try
-            {
-                var firstImagePath = Directory.EnumerateFiles(item.FullPath)
-                    .Where(path => FileExplorerService.GetSupportedFileKind(path) == SupportedFileKind.Image)
-                    .OrderBy(Path.GetFileName, NaturalSortComparer.Default)
-                    .FirstOrDefault();
-
-                if (firstImagePath == null || ct.IsCancellationRequested) return;
-
-                var file = await StorageFile.GetFileFromPathAsync(firstImagePath);
-                using var thumbnail = await file.GetThumbnailAsync(
-                    Windows.Storage.FileProperties.ThumbnailMode.SingleItem,
-                    (uint)decodePixelWidth);
-
-                if (thumbnail != null && !ct.IsCancellationRequested)
-                {
-                    await SetThumbnailOnDispatcherAsync(item, dispatcher, ct, decodePixelWidth, thumbnail);
-                }
-            }
-            catch { }
-        }
-
-        private static async Task SetThumbnailOnDispatcherAsync(
-            FileItem item,
-            DispatcherQueue dispatcher,
-            CancellationToken ct,
-            int decodePixelWidth,
-            Windows.Storage.FileProperties.StorageItemThumbnail thumbnail)
+        private async Task<bool> TrySetMemoryThumbnailAsync(FileItem item, DispatcherQueue dispatcher, CancellationToken ct, string key)
         {
             var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-            using var registration = ct.Register(() => tcs.TrySetCanceled());
+            using var registration = ct.Register(() => tcs.TrySetCanceled(ct));
+            bool enqueued = dispatcher.TryEnqueue(DispatcherQueuePriority.Normal, () =>
+            {
+                try
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (_memoryCache.TryGet(key, out var bitmap))
+                    {
+                        item.Thumbnail = bitmap;
+                        tcs.TrySetResult(true);
+                    }
+                    else tcs.TrySetResult(false);
+                }
+                catch (OperationCanceledException) { tcs.TrySetCanceled(ct); }
+                catch (Exception ex) { tcs.TrySetException(ex); }
+            });
+            if (!enqueued) tcs.TrySetResult(false);
+            return await tcs.Task;
+        }
 
+        private async Task LoadArchiveThumbnailAsync(FileItem item, DispatcherQueue dispatcher, CancellationToken ct, int decodePixelWidth, string? cacheKey)
+        {
+            await _thumbnailSemaphore.WaitAsync(ct);
+            try
+            {
+                using var image = new MemoryStream();
+                if (Path.GetExtension(item.FullPath).Equals(".7z", StringComparison.OrdinalIgnoreCase))
+                {
+                    string libraryPath = Path.Combine(AppContext.BaseDirectory, "Libs", "7z.dll");
+                    using var archive = new SevenZipExtractor.ArchiveFile(item.FullPath, libraryPath);
+                    var entry = archive.Entries
+                        .Where(e => !e.IsFolder && FileExplorerService.GetSupportedFileKind(e.FileName) == SupportedFileKind.Image)
+                        .OrderBy(e => e.FileName, NaturalSortComparer.Default)
+                        .FirstOrDefault();
+                    if (entry == null) return;
+                    entry.Extract(image);
+                }
+                else
+                {
+                    using var archive = ArchiveFactory.OpenArchive(item.FullPath);
+                    var entry = archive.Entries
+                        .Where(e => !e.IsDirectory && FileExplorerService.GetSupportedFileKind(e.Key) == SupportedFileKind.Image)
+                        .OrderBy(e => e.Key, NaturalSortComparer.Default)
+                        .FirstOrDefault();
+                    if (entry == null) return;
+                    using var entryStream = entry.OpenEntryStream();
+                    await entryStream.CopyToAsync(image, ct);
+                }
+
+                ct.ThrowIfCancellationRequested();
+                byte[]? encoded = null;
+                try
+                {
+                    encoded = ArchiveThumbnailEncoder.Encode(image, decodePixelWidth, ct);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Thumbnail cache encoding skipped: {ex.Message}");
+                }
+
+                await StoreAndSetThumbnailAsync(item, item.FullPath, dispatcher, ct, decodePixelWidth,
+                    encoded ?? image.ToArray(), encoded == null ? null : cacheKey);
+            }
+            finally
+            {
+                _thumbnailSemaphore.Release();
+            }
+        }
+
+        private async Task<bool> SetThumbnailAsync(
+            FileItem item, DispatcherQueue dispatcher, CancellationToken ct, int decodePixelWidth, byte[] bytes, string? cacheKey = null)
+        {
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var registration = ct.Register(() => tcs.TrySetCanceled(ct));
             bool enqueued = dispatcher.TryEnqueue(DispatcherQueuePriority.Normal, async () =>
             {
                 try
                 {
-                    if (ct.IsCancellationRequested)
-                    {
-                        tcs.TrySetCanceled();
-                        return;
-                    }
-
-                    var bitmap = new BitmapImage
-                    {
-                        DecodePixelWidth = decodePixelWidth
-                    };
-                    await bitmap.SetSourceAsync(thumbnail);
+                    ct.ThrowIfCancellationRequested();
+                    // The callback owns its stream, including when cancellation releases the caller early.
+                    using var stream = new MemoryStream(bytes, writable: false);
+                    using var source = stream.AsRandomAccessStream();
+                    var bitmap = new BitmapImage { DecodePixelWidth = decodePixelWidth };
+                    await bitmap.SetSourceAsync(source);
+                    if (cacheKey != null)
+                        _memoryCache.Add(cacheKey, bitmap, Math.Max(1L, (long)bitmap.PixelWidth * bitmap.PixelHeight * 4));
+                    ct.ThrowIfCancellationRequested();
                     item.Thumbnail = bitmap;
                     tcs.TrySetResult(true);
                 }
-                catch
-                {
-                    tcs.TrySetResult(false);
-                }
+                catch (OperationCanceledException) { tcs.TrySetCanceled(ct); }
+                catch { tcs.TrySetResult(false); }
             });
+            if (!enqueued) tcs.TrySetResult(false);
+            return await tcs.Task;
+        }
 
-            if (enqueued)
-            {
-                try { await tcs.Task; } catch (OperationCanceledException) { }
-            }
+        private async Task StoreAndSetThumbnailAsync(
+            FileItem item, string sourcePath, DispatcherQueue dispatcher, CancellationToken ct,
+            int size, byte[] bytes, string? cacheKey)
+        {
+            if (cacheKey != null && cacheKey == ThumbnailDiskCache.CreateKey(sourcePath, size))
+                await _diskCache.WriteAsync(cacheKey, bytes, ct);
+            // Commit the generated bytes before waiting for XAML. Leaving the folder during
+            // display should not discard a completed thumbnail and force regeneration.
+            await SetThumbnailAsync(item, dispatcher, ct, size, bytes, cacheKey);
+        }
+
+        private async Task LoadImageThumbnailAsync(
+            FileItem item, string sourcePath, DispatcherQueue dispatcher, CancellationToken ct,
+            int decodePixelWidth, string? cacheKey)
+        {
+            var file = await StorageFile.GetFileFromPathAsync(sourcePath);
+            using var thumbnail = await file.GetThumbnailAsync(
+                Windows.Storage.FileProperties.ThumbnailMode.SingleItem,
+                (uint)decodePixelWidth);
+            if (thumbnail != null)
+                await SetThumbnailFromStreamAsync(item, dispatcher, ct, decodePixelWidth, thumbnail, sourcePath, cacheKey);
+        }
+
+        private async Task SetThumbnailFromStreamAsync(
+            FileItem item,
+            DispatcherQueue dispatcher,
+            CancellationToken ct,
+            int decodePixelWidth,
+            IRandomAccessStream thumbnail,
+            string sourcePath,
+            string? cacheKey)
+        {
+            // StorageItemThumbnail belongs to the worker. Snapshot it before dispatching so
+            // cancellation cannot dispose it while XAML's native decoder is still reading.
+            using var bytes = new MemoryStream();
+            using var source = thumbnail.AsStreamForRead();
+            await source.CopyToAsync(bytes, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            await StoreAndSetThumbnailAsync(item, sourcePath, dispatcher, ct, decodePixelWidth, bytes.ToArray(), cacheKey).ConfigureAwait(false);
         }
     }
 }

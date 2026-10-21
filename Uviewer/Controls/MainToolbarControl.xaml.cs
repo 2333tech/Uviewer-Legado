@@ -281,7 +281,7 @@ namespace Uviewer.Controls
             ToolTipService.SetToolTip(FavoritesButton, Strings.FavoritesTooltip);
             ToolTipService.SetToolTip(TocButton, Strings.TocTooltip);
             ToolTipService.SetToolTip(PdfTocButton, Strings.TocTooltip);
-            ToolTipService.SetToolTip(PdfGoToPageButton, Strings.PdfGoToPageTooltip);
+            UpdateImageGoToPageTooltip();
             ToolTipService.SetToolTip(SettingsButton, Strings.SettingsTooltip);
             ToolTipService.SetToolTip(MainToolbarOverflowButton, Strings.MoreCommandsTooltip);
             ToolTipService.SetToolTip(PinButton, Strings.PinTooltip);
@@ -496,8 +496,14 @@ namespace Uviewer.Controls
         public void SetPdfGoToPageVisible(bool isVisible)
         {
             _isPdfGoToPageAvailable = isVisible;
+            UpdateImageGoToPageTooltip();
             UpdateToolbarItemVisibility();
         }
+
+        private void UpdateImageGoToPageTooltip() =>
+            ToolTipService.SetToolTip(PdfGoToPageButton, _isPdfGoToPageAvailable
+                ? Strings.PdfGoToPageTooltip
+                : $"{Strings.GoToPageTitle} (G)");
 
         public void SetSharpenState(bool isEnabled) =>
             ImageToolbarStateService.ApplySharpenState(SharpenButton, SharpenIcon, isEnabled);
