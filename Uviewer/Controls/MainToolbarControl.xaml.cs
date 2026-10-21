@@ -153,6 +153,14 @@ namespace Uviewer.Controls
             LegadoPurifyEnabledMenuItem.Click += (_, _) =>
                 LegadoPurifyEnabledChanged?.Invoke(this, LegadoPurifyEnabledMenuItem.IsChecked);
             TextCacheMenuItem.Click += (_, _) => TextCacheToggled?.Invoke(this, EventArgs.Empty);
+
+            // 「阅读模式（A 按钮）下才可用」的菜单项在此登记：
+            // 未开启阅读模式时统一置灰，并把悬停提示换成"在阅读模式下有效"。
+            // 用登记表而不是逐项写死，是因为缓存按钮后续可能复用为其它用途——
+            // 新增 / 替换这类菜单项只要在这里加一行，门控与提示自动跟随。
+            RegisterReadingModeMenuItem(LegadoPurifyEnabledMenuItem, () => Strings.LegadoPurifyEnabledHint);
+            RegisterReadingModeMenuItem(TextCacheMenuItem, () => Strings.TextCacheHint, () => _textCacheSourceAvailable);
+
             LangAutoItem.Click += LanguageItem_Click;
             LangKoItem.Click += LanguageItem_Click;
             LangEnItem.Click += LanguageItem_Click;
@@ -287,8 +295,9 @@ namespace Uviewer.Controls
             ToolTipService.SetToolTip(PinButton, Strings.PinTooltip);
             ToolTipService.SetToolTip(AlwaysOnTopButton, Strings.AlwaysOnTopTooltip);
             ToolTipService.SetToolTip(AllowMultipleInstancesButton, Strings.AllowMultipleInstances);
-            ToolTipService.SetToolTip(PrevFileButton, Strings.PrevFileTooltip);
-            ToolTipService.SetToolTip(NextFileButton, Strings.NextFileTooltip);
+            // 语义随阅读模式切换：普通"上/下一个文件"，阅读模式"上/下一章"
+            ApplyFileNavigationTooltips();
+
             ToolTipService.SetToolTip(PrevPageButton, Strings.PrevPageTooltip);
             ToolTipService.SetToolTip(NextPageButton, Strings.NextPageTooltip);
 
@@ -359,6 +368,9 @@ namespace Uviewer.Controls
             SharpenParamsResetButton.Content = Strings.ResetButton;
 
             Bindings.Update();
+            // 语言切换会重设各菜单项提示，这里再走一遍阅读模式门控，
+            // 保证"置灰项显示『在阅读模式下有效』"在新语言下也成立
+            ApplyReadingModeMenuState();
             QueueToolbarOverflowUpdate();
         }
 
@@ -416,7 +428,9 @@ namespace Uviewer.Controls
         public void SetTextCacheState(bool isChecked, bool isEnabled)
         {
             TextCacheMenuItem.IsChecked = isChecked;
-            TextCacheMenuItem.IsEnabled = isEnabled;
+            _textCacheSourceAvailable = isEnabled;
+            // 真正的 IsEnabled 由"自身可用 && 阅读模式开启"共同决定
+            ApplyReadingModeMenuState();
         }
         public void SetAllowMultipleInstances(bool value)
         {
@@ -445,6 +459,81 @@ namespace Uviewer.Controls
 
         public void SetAozoraToggleChecked(bool isChecked) => AozoraToggleButton.IsChecked = isChecked;
 
+        // ------------------------------------------------------------------
+        // 阅读模式（顶栏 A 按钮）联动的设置菜单项
+        //
+        // 语义：这些菜单项只在阅读模式开启时才有意义（替换净化、章节缓存），
+        // 关闭时置灰 + 提示"在阅读模式下有效"。
+        // 实现用登记表而不是 if 判断具体控件——缓存按钮计划复用，届时只需换登记项。
+        // ------------------------------------------------------------------
+
+        private sealed record ReadingModeMenuEntry(
+            ToggleMenuFlyoutItem Item, Func<string> Hint, Func<bool>? IsAvailable);
+
+        private readonly List<ReadingModeMenuEntry> _readingModeMenuItems = new();
+        private bool _isReadingModeActive;
+
+        /// <summary>章节缓存菜单项自身是否可用（当前是否打开着文本源），由控制器回写。</summary>
+        private bool _textCacheSourceAvailable;
+
+        /// <summary>「上一个 / 下一个」按钮当前是否代表"上一章 / 下一章"。</summary>
+        private bool _isFileNavAsChapter;
+
+        // EN: Registers a menu item that is only enabled while reading mode is active (greyed out + hint otherwise).
+        /// <summary>
+        /// 登记一个「仅阅读模式可用」的菜单项。
+        /// </summary>
+        /// <param name="item">菜单项。</param>
+        /// <param name="hint">阅读模式生效时显示的原提示（延迟求值，语言切换后仍正确）。</param>
+        /// <param name="isAvailable">该项自身的可用条件（阅读模式之外，如"当前有文本源"）；null = 只看阅读模式。</param>
+        public void RegisterReadingModeMenuItem(
+            ToggleMenuFlyoutItem item, Func<string> hint, Func<bool>? isAvailable = null)
+        {
+            _readingModeMenuItems.Add(new ReadingModeMenuEntry(item, hint, isAvailable));
+            ApplyReadingModeMenuState();
+        }
+
+        // EN: Applies reading-mode state to every registered menu item.
+        /// <summary>阅读模式开 / 关 → 联动菜单项的可用性与提示文案。</summary>
+        public void SetReadingModeActive(bool isActive)
+        {
+            _isReadingModeActive = isActive;
+            ApplyReadingModeMenuState();
+        }
+
+        // EN: Switches previous/next buttons between file navigation and chapter navigation (tooltip follows).
+        /// <summary>
+        /// 「上一个 / 下一个」按钮的语义切换。
+        /// <para>阅读模式开启时，这两个按钮（与键盘 ↑ / ↓）改意为「上一章 / 下一章」——
+        /// 章节由顶栏目录下拉栏定义；关闭时恢复"上一个 / 下一个文件"。</para>
+        /// </summary>
+        public void SetFileNavigationMode(bool asChapterNavigation)
+        {
+            if (_isFileNavAsChapter == asChapterNavigation) return;
+            _isFileNavAsChapter = asChapterNavigation;
+            ApplyFileNavigationTooltips();
+        }
+
+        private void ApplyFileNavigationTooltips()
+        {
+            ToolTipService.SetToolTip(PrevFileButton,
+                _isFileNavAsChapter ? Strings.PrevChapterTooltip : Strings.PrevFileTooltip);
+            ToolTipService.SetToolTip(NextFileButton,
+                _isFileNavAsChapter ? Strings.NextChapterTooltip : Strings.NextFileTooltip);
+        }
+
+        private void ApplyReadingModeMenuState()
+        {
+            foreach (var entry in _readingModeMenuItems)
+            {
+                var available = _isReadingModeActive && (entry.IsAvailable?.Invoke() ?? true);
+                entry.Item.IsEnabled = available;
+                ToolTipService.SetToolTip(
+                    entry.Item,
+                    available ? entry.Hint() : Strings.ReadingModeOnlyHint);
+            }
+        }
+
         public void SetAozoraToggleState(bool? isChecked = null, bool? isEnabled = null)
         {
             if (isChecked.HasValue) AozoraToggleButton.IsChecked = isChecked.Value;
@@ -472,6 +561,18 @@ namespace Uviewer.Controls
         public void SetTextToolbarVisible(bool isVisible)
         {
             _isTextToolbarAvailable = isVisible;
+            UpdateToolbarItemVisibility();
+        }
+
+        // EN: Shows/hides the TXT TOC button (no TOC is generated when reading mode is off).
+        /// <summary>
+        /// 文本目录按钮是否可用。
+        /// <para>阅读模式未开启的 TXT 不生成目录，按钮随之隐藏（目录为空，点了也没意义）。</para>
+        /// </summary>
+        public void SetTextTocAvailable(bool isAvailable)
+        {
+            if (_isTextTocAvailable == isAvailable) return;
+            _isTextTocAvailable = isAvailable;
             UpdateToolbarItemVisibility();
         }
 

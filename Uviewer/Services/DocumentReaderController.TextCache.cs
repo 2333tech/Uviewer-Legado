@@ -70,9 +70,37 @@ namespace Uviewer
         internal bool TextCacheActive => _textCacheEntry is not null && _textCacheHeadingLines is not null;
 
         // ============================================================
+        // 虚拟（内存）窗口：无磁盘缓存的本地区块文件在阅读模式下窗口化时用
+        //   · 目录缓存：内存 static，进程退出即释放（用户要求目录不落盘）
+        //   · 章节文本缓存：实例级，只保留"当前窗口"的章，关闭文件即释放
+        // ============================================================
+
+        /// <summary>当前窗口是否来自"内存虚拟缓存"（不是磁盘上的章节缓存）。</summary>
+        private bool _isVirtualTextCache;
+
+        /// <summary>当前是否处于内存虚拟窗口模式（磁盘缓存未开启、但阅读模式已开启的本地文件）。</summary>
+        internal bool IsVirtualTextCache => _isVirtualTextCache;
+
+        /// <summary>虚拟窗口专用：按章缓存<b>净化后</b>的文本（只保留当前窗口内的章）。</summary>
+        private readonly Dictionary<int, string> _virtualPurifiedChapters = new();
+
+        /// <summary>内存章节文本缓存上限（章）；当前窗口 8 章，留 3 倍余量足够来回翻。</summary>
+        private const int VirtualPurifiedChapterLimit = 24;
+
+        /// <summary>
+        /// 目录缓存（无磁盘缓存的本地文件在阅读模式下用）：源键 → 章节表。
+        /// <para><b>只在内存里</b>：程序退出即释放，绝不落盘（用户明确要求）。
+        /// 上限 8 本，防止连续打开很多书把章节表堆满内存。</para>
+        /// </summary>
+        private static readonly Dictionary<string, List<TextCacheChapter>> VirtualChapterMaps = new(StringComparer.Ordinal);
+        private static readonly Queue<string> VirtualChapterMapOrder = new();
+        private const int VirtualChapterMapLimit = 8;
+
+        // ============================================================
         // 打开路径接线
         // ============================================================
 
+        // EN: Tries to open via the on-disk chapter cache; a hit also enables reading mode for this file.
         /// <summary>
         /// 尝试用章节缓存打开当前文本。在读原文之后、整本净化之前调用。
         /// <returns>true = 已按窗口模式打开（调用方只需补 reveal/侧栏等收尾）；false = 无有效缓存，走整本路径。</returns>
@@ -105,6 +133,11 @@ namespace Uviewer
             _textCacheEntry = entry;
             _textCacheSourceKey = key;
             _textCacheNormalizedRaw = TextCacheLogic.NormalizeNewlines(rawContent ?? string.Empty);
+
+            // 命中章节缓存 ⇒ 开启阅读模式：缓存本身带完整目录与净化文本，
+            // 只有阅读模式打开时这套东西才被使用（与"无缓存 ⇒ 不开启"互为一对）。
+            // 注意不写 aozora_settings.json：这是"按文件"的自动判断，不该覆盖用户的手动偏好。
+            _isAozoraMode = true;
 
             // 起始章：缓存的上次阅读章名 → 找不到（或没有）就从第一章开始
             var center = TextCacheLogic.FindChapterIndex(entry.Chapters, entry.LastChapterName);
@@ -142,13 +175,43 @@ namespace Uviewer
             WindowAssembly assembly;
             try
             {
-                // 逐章切片 + 净化 + 装配放后台：8 章 × 几十毫秒，UI 线程不阻塞
+                // 逐章切片 + 净化 + 装配放后台：8 章 × 几十毫秒，UI 线程不阻塞。
+                // 虚拟窗口模式额外按"章下标"复用内存里已净化好的章（切回同一窗口不重复净化）。
+                var isVirtual = _isVirtualTextCache;
+                var cachedSnapshot = isVirtual ? new Dictionary<int, string>(_virtualPurifiedChapters) : null;
+                var freshlyPurified = new Dictionary<int, string>();
+
                 assembly = await Task.Run(() =>
                 {
-                    var purify = new Func<string, string>(slice =>
-                        purifyEnabled && service.IsInitialized ? service.PurifyForDisplay(slice) : slice);
-                    return TextCacheLogic.AssembleWindow(normalized, entry.Chapters, from, to, purify);
+                    string PurifyChapter(int index, string slice)
+                    {
+                        if (cachedSnapshot is not null && cachedSnapshot.TryGetValue(index, out var hit))
+                        {
+                            return hit;
+                        }
+
+                        var pure = purifyEnabled && service.IsInitialized ? service.PurifyForDisplay(slice) : slice;
+                        if (cachedSnapshot is not null)
+                        {
+                            freshlyPurified[index] = pure;
+                        }
+
+                        return pure;
+                    }
+
+                    return TextCacheLogic.AssembleWindow(normalized, entry.Chapters, from, to, PurifyChapter);
                 }, token).ConfigureAwait(true);
+
+                if (cachedSnapshot is not null)
+                {
+                    foreach (var pair in freshlyPurified)
+                    {
+                        _virtualPurifiedChapters[pair.Key] = pair.Value;
+                    }
+
+                    // 用户约定：切换章节后丢弃窗口范围外的缓存
+                    TrimVirtualPurifiedChapters(from, to);
+                }
             }
             catch (OperationCanceledException)
             {
@@ -210,7 +273,11 @@ namespace Uviewer
             _textCacheLastScrollChapter = _textCacheCenter;
             _textCacheSwitching = false;
 
-            SaveTextCachePosition(_textCacheCenter, Math.Max(0, lineInChapter));
+            if (!_isVirtualTextCache)
+            {
+                SaveTextCachePosition(_textCacheCenter, Math.Max(0, lineInChapter));
+            }
+
             UpdateTextCacheMenuState();
         }
 
@@ -369,6 +436,10 @@ namespace Uviewer
         /// <summary>清窗口会话状态（不删缓存文件；换源 / 缓存失效时调）。</summary>
         internal void ClearTextCacheWindowState()
         {
+            // 虚拟窗口：窗口文本缓存随文件关闭 / 关闭阅读模式一起释放（目录缓存保留在内存里）
+            _isVirtualTextCache = false;
+            _virtualPurifiedChapters.Clear();
+
             _textCacheEntry = null;
             _textCacheNormalizedRaw = null;
             _textCacheSourceKey = null;
@@ -378,6 +449,160 @@ namespace Uviewer
             _textCacheCenter = -1;
             _textCacheLastScrollChapter = -1;
             _textCacheSwitching = false;
+        }
+
+        // ============================================================
+        // 虚拟（内存）窗口：无磁盘缓存的本地文件在阅读模式下使用
+        // ============================================================
+
+        // EN: Opens the current local file as an in-memory (non-persisted) chapter window, reusing the disk-cache render path.
+        /// <summary>
+        /// 用内存章节表把当前本地文件按窗口显示（磁盘缓存未开启、但阅读模式已开启时）。
+        ///
+        /// <para><b>与磁盘缓存共用同一条渲染路径</b>（<see cref="ShowTextCacheWindowAsync"/>）：
+        /// 目录、窗口装配、章节切换、规则变更刷新全部复用，差别只有两点——
+        /// ① 章节表只存在内存里（程序退出即释放，绝不落盘）；
+        /// ② 阅读位置不回写磁盘。</para>
+        ///
+        /// <para>窗口范围固定「前 2 后 5 + 本章」= 8 章，窗口外不净化、也不缓存文本。</para>
+        /// </summary>
+        /// <param name="center">目标章下标（开启阅读模式时约定从文件头 = 0 开始）。</param>
+        /// <param name="lineInChapter">章内行偏移（切换章节/刷新时还原位置用）。</param>
+        /// <returns>true = 已按窗口渲染；false = 目录不正常（识别不到章）或无原文，调用方应回退整本渲染。</returns>
+        internal async Task<bool> TryOpenVirtualWindowAsync(
+            int center, int lineInChapter = 0, CancellationToken token = default)
+        {
+            var raw = _currentTextRawContent;
+            if (string.IsNullOrEmpty(raw))
+            {
+                return false;
+            }
+
+            var key = TextCacheLogic.ComputeSourceKey(
+                _currentTextFilePath, _archiveSession.CurrentPath, _currentTextArchiveEntryKey);
+            if (string.IsNullOrEmpty(key))
+            {
+                return false;
+            }
+
+            // 目录缓存：首次扫全本（标题规则），之后同一本书直接复用内存里的结果。
+            // 键里混入"标题规则 + 替换规则"指纹：规则一改，旧章节表自然失效（不需要手动清理）。
+            var chapters = GetOrBuildVirtualChapterMap(BuildVirtualChapterMapKey(key), raw);
+            if (chapters.Count == 0)
+            {
+                // 目录不正常（没有任何能识别的章节）：不做窗口化，回退整本显示
+                return false;
+            }
+
+            _isVirtualTextCache = true;
+            _virtualPurifiedChapters.Clear();
+            _textCacheEntry = new TextCacheEntry
+            {
+                SourceKey = key,
+                Chapters = chapters,
+                SavedAtUtcTicks = DateTime.UtcNow.Ticks,
+                LastChapterName = string.Empty,
+                LastLineInChapter = 0,
+            };
+            _textCacheSourceKey = key;
+            _textCacheNormalizedRaw = TextCacheLogic.NormalizeNewlines(raw);
+
+            await ShowTextCacheWindowAsync(center, lineInChapter, token).ConfigureAwait(true);
+            return true;
+        }
+
+        // EN: Gets or builds the in-memory chapter map (memory only, never persisted, capped at 8 books).
+        /// <summary>
+        /// 取（或构建）内存目录缓存。key = 源键；上限 <see cref="VirtualChapterMapLimit"/> 本，FIFO 淘汰。
+        /// <para>章节表按<b>原文</b>行号建立（与磁盘缓存同口径），标题行预净化照常生效。</para>
+        /// </summary>
+        private List<TextCacheChapter> GetOrBuildVirtualChapterMap(string key, string raw)
+        {
+            if (VirtualChapterMaps.TryGetValue(key, out var cached) && cached.Count > 0)
+            {
+                return cached;
+            }
+
+            var chapters = TextCacheLogic.BuildChapterMap(
+                TextCacheLogic.NormalizeNewlines(raw), GetEnabledTitleRules(), PurifyTitleLineForToc);
+
+            if (chapters.Count == 0)
+            {
+                return chapters;
+            }
+
+            // 容量控制：连续打开很多本书时淘汰最早的那份（只影响下次要不要重扫，不影响正确性）
+            while (VirtualChapterMaps.Count >= VirtualChapterMapLimit && VirtualChapterMapOrder.Count > 0)
+            {
+                var evicted = VirtualChapterMapOrder.Dequeue();
+                if (!string.Equals(evicted, key, StringComparison.Ordinal))
+                {
+                    VirtualChapterMaps.Remove(evicted);
+                }
+            }
+
+            VirtualChapterMaps[key] = chapters;
+            VirtualChapterMapOrder.Enqueue(key);
+            return chapters;
+        }
+
+        // EN: Map key = source key + title/replace rule fingerprints, so rule edits invalidate it automatically.
+        /// <summary>
+        /// 内存目录缓存的键 = 源键 + 标题规则指纹 + 替换规则指纹。
+        /// <para>把规则指纹并进键里，规则一变旧条目就再也命中不到（自然失效），
+        /// 无需在"导入/开关规则"的每条路径上手动清理——漏一处就会拿旧章节表切书。</para>
+        /// </summary>
+        private string BuildVirtualChapterMapKey(string sourceKey)
+        {
+            var service = _bookSourceService;
+            if (service is null || !service.IsInitialized)
+            {
+                return sourceKey;
+            }
+
+            return string.Concat(
+                sourceKey,
+                "|t:", TextCacheLogic.ComputeTitleRulesFingerprint(service.TitleRules.GetAll()),
+                "|r:", TextCacheLogic.ComputeReplaceRulesFingerprint(service.ReplaceRules.GetAll()));
+        }
+
+        /// <summary>丢掉内存里的章节文本缓存（净化规则变更后调用：旧文本按旧规则净化过，必须重算）。</summary>
+        internal void InvalidateVirtualPurifiedChapters() => _virtualPurifiedChapters.Clear();
+
+        // EN: Keeps purified text only for chapters inside the current window (drop the rest on chapter switch).
+        /// <summary>
+        /// 只保留当前窗口内的章节文本缓存（用户约定：切换章节后丢弃窗口范围外的缓存）。
+        /// </summary>
+        private void TrimVirtualPurifiedChapters(int fromInclusive, int toExclusive)
+        {
+            if (_virtualPurifiedChapters.Count == 0)
+            {
+                return;
+            }
+
+            var stale = new List<int>();
+            foreach (var chapterIndex in _virtualPurifiedChapters.Keys)
+            {
+                if (chapterIndex < fromInclusive || chapterIndex >= toExclusive)
+                {
+                    stale.Add(chapterIndex);
+                }
+            }
+
+            foreach (var chapterIndex in stale)
+            {
+                _virtualPurifiedChapters.Remove(chapterIndex);
+            }
+
+            // 兜底：窗口计算异常时不至于无限增长
+            while (_virtualPurifiedChapters.Count > VirtualPurifiedChapterLimit)
+            {
+                foreach (var chapterIndex in _virtualPurifiedChapters.Keys)
+                {
+                    _virtualPurifiedChapters.Remove(chapterIndex);
+                    break;
+                }
+            }
         }
 
         /// <summary>
@@ -406,11 +631,17 @@ namespace Uviewer
                 return;
             }
 
-            await SaveTextCacheAsync().ConfigureAwait(true);
+            // 已在窗口模式（含内存虚拟窗口）时保存缓存，保留当前阅读位置
+            await SaveTextCacheAsync(preservePosition: TextCacheActive).ConfigureAwait(true);
         }
 
+        // EN: Writes the on-disk chapter cache; preservePosition keeps chapter name + intra-chapter line offset.
         /// <summary>保存缓存：完整目录 + 章节分化 + 当前阅读位置。全量净化只用于校验章名，不落盘。</summary>
-        private async Task SaveTextCacheAsync()
+        /// <param name="preservePosition">
+        /// true = 保留当前阅读位置（标题规则变更后重建缓存时用：用户不该因为改了规则被踢回第一章）。
+        /// 精度沿用缓存既定口径：章节名 + 章内行偏移。
+        /// </param>
+        private async Task SaveTextCacheAsync(bool preservePosition = false)
         {
             var raw = await ReadCurrentTextRawAsync().ConfigureAwait(true);
             if (raw is null)
@@ -421,7 +652,16 @@ namespace Uviewer
 
             var service = BookSources;
             var titleRules = service.TitleRules.GetEnabledOrdered();
-            var chapters = TextCacheLogic.BuildChapterMap(raw, titleRules);
+
+            // 位置快照必须在 ClearTextCacheWindowState() 之前取（那个方法会把 center 清成 -1）
+            var previousCenter = _textCacheCenter;
+            var previousChapterName = _textCacheEntry is { Chapters.Count: > 0 } previousEntry &&
+                                      _textCacheCenter >= 0 && _textCacheCenter < previousEntry.Chapters.Count
+                ? previousEntry.Chapters[_textCacheCenter].Name
+                : string.Empty;
+            var previousLineInChapter = _textCacheEntry?.LastLineInChapter ?? 0;
+
+            var chapters = TextCacheLogic.BuildChapterMap(raw, titleRules, PurifyTitleLineForToc);
             if (chapters.Count == 0)
             {
                 ShowNotification(
@@ -441,7 +681,7 @@ namespace Uviewer
             {
                 var pure = service.PurifyForDisplay(raw);
                 var pureSplit = TextTocBuilder.Build(
-                    TextCacheLogic.NormalizeNewlines(pure), titleRules);
+                    TextCacheLogic.NormalizeNewlines(pure), titleRules, PurifyTitleLineForToc);
                 if (pureSplit.Count == chapters.Count)
                 {
                     for (var i = 0; i < chapters.Count; i++)
@@ -467,8 +707,8 @@ namespace Uviewer
                 TitleRulesFingerprint = TextCacheLogic.ComputeTitleRulesFingerprint(service.TitleRules.GetAll()),
                 SavedAtUtcTicks = DateTime.UtcNow.Ticks,
                 Chapters = chapters,
-                LastChapterName = string.Empty,
-                LastLineInChapter = 0,
+                LastChapterName = preservePosition ? previousChapterName : string.Empty,
+                LastLineInChapter = preservePosition ? previousLineInChapter : 0,
             };
 
             await TextCacheStore.SaveAsync(entry).ConfigureAwait(true);
@@ -478,7 +718,13 @@ namespace Uviewer
             _textCacheEntry = entry;
             _textCacheSourceKey = key;
             _textCacheNormalizedRaw = TextCacheLogic.NormalizeNewlines(raw);
-            await ShowTextCacheWindowAsync(0).ConfigureAwait(true);
+
+            // 已经落盘 → 不再是虚拟缓存，内存里的章节文本缓存可以丢掉（磁盘缓存会重新装配）
+            _isVirtualTextCache = false;
+            _virtualPurifiedChapters.Clear();
+
+            await ShowTextCacheWindowAsync(preservePosition && previousCenter >= 0 ? previousCenter : 0)
+                .ConfigureAwait(true);
 
             UpdateTextCacheMenuState();
             var message = mismatch

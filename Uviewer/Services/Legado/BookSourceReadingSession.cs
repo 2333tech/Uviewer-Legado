@@ -214,6 +214,7 @@ namespace Uviewer.Services.Legado
             return LegadoHtmlText.ToPlainText(purified);
         }
 
+        // EN: Raw (un-purified) HTML of a chapter, or null when it is not in the raw cache.
         /// <summary>
         /// 切换净化开关后，<b>只重算窗口内</b>的章节（当前章 + 前后邻近）。
         /// <para><b>为什么只算窗口</b>：全书重算是 O(全书) 的正则替换（实测 60 章 60ms、
@@ -222,6 +223,15 @@ namespace Uviewer.Services.Legado
         /// 按需重算（原文仍在缓存里，同样零网络）。</para>
         /// <para>返回被重算的章下标集合，供上层决定是否需要重绘。</para>
         /// </summary>
+        /// <summary>
+        /// 取某章的<b>原文</b>（未净化 HTML）。
+        /// <para>给"替换净化管理"界面探测逐条规则是否在本章生效用：替换规则的作用对象就是原文，
+        /// 拿已净化的文本去探测会漏掉"已经被删掉的片段"。</para>
+        /// <para>原文不在缓存（该章尚未抓取过，或已被 LRU 挤出）时返回 null，调用方自行回退。</para>
+        /// </summary>
+        public string? GetRawChapterContent(int index) =>
+            index >= 0 && index < Chapters.Count && TryGetRaw(index, out var raw) ? raw : null;
+
         public IReadOnlyList<int> RepurifyWindow(int centerIndex, int before, int after)
         {
             var touched = new List<int>();

@@ -91,6 +91,11 @@ namespace Uviewer.Services
                     await actions.NavigateToFileAsync(route.Direction > 0);
                     return;
 
+                case AppCommand.NavigateReadingChapter:
+                    // 阅读模式：↑ / ↓ = 上一章 / 下一章（章节由顶栏目录定义）
+                    await actions.NavigateReadingChapterAsync(route.Direction > 0);
+                    return;
+
                 case AppCommand.DeleteSelectedFile:
                     await actions.DeleteSelectedFileAsync();
                     return;

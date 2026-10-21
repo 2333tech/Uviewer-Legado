@@ -30,7 +30,7 @@ namespace Uviewer.Services.Legado
         /// </summary>
         private static readonly string[] CanonicalOrder =
         {
-            "Name", "Group", "Pattern", "Replacement", "Scope",
+            "Name", "Group", "Pattern", "Replacement", "Scope", "ScopeTitle", "ScopeContent",
             "TitleGroup", "IsRegex", "IsVolume", "IsBookTitle", "Level",
             "IsEnabled", "Order", "Id",
         };
@@ -42,6 +42,8 @@ namespace Uviewer.Services.Legado
             ["Pattern"] = "匹配串（正则或文本，依下方开关）",
             ["Replacement"] = "替换为（正则形态支持 $1 / $& 分组引用）",
             ["Scope"] = "作用范围（空或 * = 全部书籍；source:书源URL；book:书籍URL；书名;书籍URL）",
+            ["ScopeTitle"] = "作用于标题（在标题/分章规则识别章名之前先净化标题行）",
+            ["ScopeContent"] = "作用于正文（关闭后只洗标题、不洗正文）",
             ["IsRegex"] = "正则替换（关 = 字面替换）",
             ["IsEnabled"] = "启用该规则",
             ["Order"] = "执行顺序（升序，越小越先执行）",
@@ -127,6 +129,15 @@ namespace Uviewer.Services.Legado
         {
             var kind = rule.IsRegex ? "正则" : "文本";
             var scope = string.IsNullOrWhiteSpace(rule.Scope) || rule.Scope == "*" ? "全部书籍" : rule.Scope;
+
+            // 标题 / 正文通道（legado scopeTitle / scopeContent）：两者都开是默认，只开一边要标出来
+            if (rule.ScopeTitle || !rule.ScopeContent)
+            {
+                var channels = rule.ScopeTitle && rule.ScopeContent
+                    ? "标题+正文"
+                    : rule.ScopeTitle ? "仅标题" : "仅正文";
+                scope += $"（{channels}）";
+            }
             var group = string.IsNullOrWhiteSpace(rule.Group) ? null : $"[{rule.Group}]";
             var pattern = rule.Pattern.Length > 40 ? rule.Pattern[..40] + "…" : rule.Pattern;
 
@@ -165,6 +176,8 @@ namespace Uviewer.Services.Legado
             Pattern = r.Pattern,
             Replacement = r.Replacement,
             Scope = r.Scope,
+            ScopeTitle = r.ScopeTitle,
+            ScopeContent = r.ScopeContent,
             IsEnabled = r.IsEnabled,
             IsRegex = r.IsRegex,
             Order = r.Order,

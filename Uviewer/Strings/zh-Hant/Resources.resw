@@ -94,6 +94,12 @@
   <data name="NextFileTooltip" xml:space="preserve">
     <value>下一個檔案 (↓)</value>
   </data>
+  <data name="PrevChapterTooltip" xml:space="preserve">
+    <value>上一章</value>
+  </data>
+  <data name="NextChapterTooltip" xml:space="preserve">
+    <value>下一章</value>
+  </data>
   <data name="PrevPageTooltip" xml:space="preserve">
     <value>上一張影像/上一頁 (←)</value>
   </data>
@@ -101,7 +107,10 @@
     <value>下一張影像/下一頁 (→)</value>
   </data>
   <data name="AozoraTooltip" xml:space="preserve">
-    <value>青空文庫/md (A)</value>
+    <value>青空/MD/閱讀模式 (A)</value>
+  </data>
+  <data name="ReadingModeOnlyHint" xml:space="preserve">
+    <value>在閱讀模式下有效</value>
   </data>
   <data name="FontTooltip" xml:space="preserve">
     <value>變更字型(F) - 右鍵開啟設定</value>

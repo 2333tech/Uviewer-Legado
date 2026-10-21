@@ -26,7 +26,7 @@ namespace Uviewer.Services.Legado
 
             // 规范顺序（不含 Id，Id 排最后只读展示）
             Assert.Equal(
-                new[] { "Name", "Group", "Pattern", "Replacement", "Scope", "IsRegex", "IsEnabled", "Order", "Id" },
+                new[] { "Name", "Group", "Pattern", "Replacement", "Scope", "ScopeTitle", "ScopeContent", "IsRegex", "IsEnabled", "Order", "Id" },
                 order);
 
             // 表单可编辑属性一个不漏（漏一个 = 表单少一个字段）

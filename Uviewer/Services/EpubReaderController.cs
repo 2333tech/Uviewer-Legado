@@ -550,6 +550,11 @@ namespace Uviewer.Services
             MainToolbar.SetImageToolbarVisible(false);
             MainToolbar.SetTextToolbarVisible(true); // Reuse text toolbar for now
             MainToolbar.SetVerticalToggleState(isEnabled: true); // 버튼 활성화 확인
+            // EPUB 有自己的目录：文本目录按钮始终可见；阅读模式（A）在 EPUB 下不适用，相关菜单项置灰
+            // EN: EPUB keeps its own TOC button and does not use reading mode.
+            MainToolbar.SetTextTocAvailable(true);
+            MainToolbar.SetReadingModeActive(false);
+            MainToolbar.SetFileNavigationMode(false);   // EPUB 的 ↑/↓ 仍是上/下一个文件
             
             MainToolbar.SetSideBySideToolbarVisible(true);
             MainToolbar.SetSharpenControlsVisible(true);

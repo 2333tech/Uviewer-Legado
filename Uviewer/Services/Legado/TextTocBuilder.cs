@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Uviewer.Services.Legado.BookSources;
@@ -26,13 +27,22 @@ namespace Uviewer.Services.Legado
         /// <summary>卷标题的标记（与 <c>DocumentReaderController.LegadoChapterTag</c> 同范式）。</summary>
         internal const string LegadoVolumeTocTag = "LegadoVolume";
 
+        // EN: Builds TOC entries; the optional hook pre-purifies heading lines before title rules run.
         /// <summary>
         /// 从整本文本里切出目录条目。
         /// </summary>
         /// <param name="content">整本文本（通常是<b>已净化</b>的内容）。</param>
         /// <param name="titleRules">用户导入的标题/章节划分规则（可为空）。</param>
         /// <returns>目录条目；无标题时返回空列表（不硬造目录）。</returns>
-        internal static List<TextTocEntry> Build(string content, IReadOnlyList<TitleRule>? titleRules)
+        /// <param name="purifyTitleLine">
+        /// 标题行预净化（作用于标题的替换规则，legado <c>scopeTitle</c>）。
+        /// 在<b>识别标题之前</b>逐行调用：先去前缀/装饰符，标题规则才可能命中。
+        /// null = 不预净化（无替换规则时的零开销路径）。
+        /// </param>
+        internal static List<TextTocEntry> Build(
+            string content,
+            IReadOnlyList<TitleRule>? titleRules,
+            Func<string, string>? purifyTitleLine = null)
         {
             var list = new List<TextTocEntry>();
             if (string.IsNullOrEmpty(content))
@@ -46,6 +56,13 @@ namespace Uviewer.Services.Legado
             for (var i = 0; i < rawLines.Length; i++)
             {
                 var line = rawLines[i].Trim();
+
+                // 标题行预净化：只有"作用于标题"的规则会改动它；无规则时是直接返回，零开销
+                if (purifyTitleLine is not null && line.Length > 0)
+                {
+                    line = purifyTitleLine(line).Trim();
+                }
+
                 var level = 0;
                 string text = "";
 
@@ -63,7 +80,7 @@ namespace Uviewer.Services.Legado
             // 内置标记一个都没命中 → 交给用户导入的标题/章节划分规则切分
             if (list.Count == 0 && titleRules is { Count: > 0 })
             {
-                var split = TxtChapterSplitter.Split(content, titleRules);
+                var split = TxtChapterSplitter.Split(content, titleRules, purifyTitleLine);
                 foreach (var chapter in split.Chapters)
                 {
                     // 卷标题进目录但不跳章（SourceLineNumber = -1，与 LegadoTocAdapter 约定一致）

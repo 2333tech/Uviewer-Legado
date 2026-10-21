@@ -75,9 +75,15 @@ namespace Uviewer
         public static string NextImageSideTooltip => GetString("NextImageSideTooltip");
         public static string PrevFileTooltip => GetString("PrevFileTooltip");
         public static string NextFileTooltip => GetString("NextFileTooltip");
+        /// <summary>阅读模式下，↑ / 工具栏"上一个"按钮改意为"上一章"。</summary>
+        public static string PrevChapterTooltip => GetString("PrevChapterTooltip");
+        public static string NextChapterTooltip => GetString("NextChapterTooltip");
         public static string PrevPageTooltip => GetString("PrevPageTooltip");
         public static string NextPageTooltip => GetString("NextPageTooltip");
         public static string AozoraTooltip => GetString("AozoraTooltip");
+        // EN: Hint shown on settings items that only work in reading mode.
+        /// <summary>阅读模式关闭时，相关菜单项（替换净化 / 章节缓存等）的悬停提示。</summary>
+        public static string ReadingModeOnlyHint => GetString("ReadingModeOnlyHint");
         public static string FontTooltip => GetString("FontTooltip");
         public static string GoToPageTooltip => GetString("GoToPageTooltip");
         public static string PdfGoToPageTooltip => GetString("PdfGoToPageTooltip");

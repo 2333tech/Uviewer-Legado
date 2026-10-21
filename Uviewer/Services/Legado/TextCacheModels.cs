@@ -292,11 +292,18 @@ namespace Uviewer.Services.Legado
         ///（内置标记 → 用户标题规则），保证开不开缓存看到的是同一套章。
         /// 无章节时返回空列表（调用方应放弃缓存路径）。
         /// </summary>
-        public static List<TextCacheChapter> BuildChapterMap(string rawText, IReadOnlyList<TitleRule> titleRules)
+        /// <param name="purifyTitleLine">
+        /// 标题行预净化（作用于标题的替换规则，legado <c>scopeTitle</c>）。与渲染路径同一委托，
+        /// 保证"缓存切出的章"与"目录里看到的章"一致。null = 不预净化。
+        /// </param>
+        public static List<TextCacheChapter> BuildChapterMap(
+            string rawText,
+            IReadOnlyList<TitleRule> titleRules,
+            Func<string, string>? purifyTitleLine = null)
         {
             var normalized = NormalizeNewlines(rawText ?? string.Empty);
             var totalLines = normalized.Split('\n').Length;
-            var entries = TextTocBuilder.Build(normalized, titleRules);
+            var entries = TextTocBuilder.Build(normalized, titleRules, purifyTitleLine);
             if (entries.Count == 0)
             {
                 return new List<TextCacheChapter>();
@@ -347,6 +354,7 @@ namespace Uviewer.Services.Legado
             return string.Join("\n", lines, from, to - from);
         }
 
+        // EN: Assembles a chapter window; the indexed overload allows per-chapter purified-text caching.
         /// <summary>
         /// 装配窗口：逐章切片 → <paramref name="purify"/>（总开关关闭时由调用方传恒等函数）→ 拼接。
         /// 返回每章标题在装配文本里的行号，供目录跳转 / 当前章高亮 / 章内行偏移恢复使用。
@@ -358,7 +366,21 @@ namespace Uviewer.Services.Legado
             IReadOnlyList<TextCacheChapter> chapters,
             int from,
             int toExclusive,
-            Func<string, string> purify)
+            Func<string, string> purify) =>
+            AssembleWindow(normalizedText, chapters, from, toExclusive, (_, slice) => purify(slice));
+
+        /// <summary>
+        /// 装配窗口（带章下标的净化委托版）。
+        /// <para>带下标是为了让调用方能按「第几章」缓存净化结果（虚拟窗口的内存缓存）：
+        /// 5 参重载内部就是转调本方法、忽略下标。</para>
+        /// </summary>
+        /// <param name="purifyChapter">(章下标, 原文切片) → 净化后文本。</param>
+        public static WindowAssembly AssembleWindow(
+            string normalizedText,
+            IReadOnlyList<TextCacheChapter> chapters,
+            int from,
+            int toExclusive,
+            Func<int, string, string> purifyChapter)
         {
             var count = Math.Max(0, toExclusive - from);
             var sb = new StringBuilder();
@@ -378,7 +400,7 @@ namespace Uviewer.Services.Legado
                 }
 
                 var slice = SliceChapter(normalizedText, chapter);
-                var purified = purify(slice) ?? string.Empty;
+                var purified = purifyChapter(i, slice) ?? string.Empty;
 
                 if (k > 0)
                 {

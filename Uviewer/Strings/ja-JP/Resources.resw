@@ -94,6 +94,12 @@
   <data name="NextFileTooltip" xml:space="preserve">
     <value>次のファイル(↓)</value>
   </data>
+  <data name="PrevChapterTooltip" xml:space="preserve">
+    <value>前の章</value>
+  </data>
+  <data name="NextChapterTooltip" xml:space="preserve">
+    <value>次の章</value>
+  </data>
   <data name="PrevPageTooltip" xml:space="preserve">
     <value>前の画像/ページ(←)</value>
   </data>
@@ -101,7 +107,10 @@
     <value>次の画像/ページ(→)</value>
   </data>
   <data name="AozoraTooltip" xml:space="preserve">
-    <value>青空文庫/md (A)</value>
+    <value>青空/MD/読書モード (A)</value>
+  </data>
+  <data name="ReadingModeOnlyHint" xml:space="preserve">
+    <value>読書モードでのみ有効</value>
   </data>
   <data name="FontTooltip" xml:space="preserve">
     <value>フォント変更(F) - 右クリックで設定</value>

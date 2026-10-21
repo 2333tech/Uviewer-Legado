@@ -142,6 +142,8 @@ namespace Uviewer
 
             public bool IsTextMode => _window._isTextMode;
             public bool IsAozoraMode => _window._isAozoraMode;
+            // EN: Exposes reading-mode state to the shortcut router.
+            public bool IsReadingMode => _window._documentReaderController.IsReadingMode;
             public bool ShouldInvertControls => _window.ShouldInvertControls;
 
             public int CurrentEpubChapterIndex
@@ -201,6 +203,17 @@ namespace Uviewer
                 _window._documentNavigationCoordinator.NavigatePageAsync(direction);
             public Task DisplayCurrentImageAsync() => _window._imageViewerController.DisplayCurrentImageAsync();
             public Task NavigateToFileAsync(bool forward) => _window._imageViewerController.NavigateToFileAsync(forward);
+
+            // EN: Chapter navigation; falls back to previous/next file when reading mode does not handle it.
+            /// <summary>阅读模式：↑ / ↓ 走"上一章 / 下一章"；不接管（非阅读模式）时回落到上/下一个文件。</summary>
+            public async Task NavigateReadingChapterAsync(bool forward)
+            {
+                if (!await _window._documentReaderController.NavigateReadingChapterAsync(forward).ConfigureAwait(true))
+                {
+                    await _window._imageViewerController.NavigateToFileAsync(forward).ConfigureAwait(true);
+                }
+            }
+
             public Task DeleteSelectedFileAsync() =>
                 _window._explorerSidebarController.DeleteSelectedAsync(
                     _window._imageViewerController.GetCurrentNavigatingPath());

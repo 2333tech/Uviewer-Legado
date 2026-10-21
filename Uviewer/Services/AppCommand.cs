@@ -23,6 +23,9 @@ namespace Uviewer.Services
         NavigateToFirstImage,
         NavigateToLastImage,
         NavigateToFile,
+        // EN: Previous/next chapter command used by arrow keys in reading mode.
+        /// <summary>阅读模式下的 ↑ / ↓：上一章 / 下一章（章节由顶栏目录定义）。</summary>
+        NavigateReadingChapter,
         DeleteSelectedFile,
         AddToFavorites,
         ToggleSharpening,

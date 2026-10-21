@@ -124,10 +124,25 @@ namespace Uviewer
                             ToggleNextImageSide = () => window._imageViewerController.ToggleNextImageSide(),
                             ToggleSharpeningAsync = () => window._imageViewerController.ToggleSharpeningAsync(),
                             ResetSharpenParams = window.ImageOptions.Reset,
-                            NavigatePreviousFileAsync = () => window._imageViewerController.NavigateToFileAsync(false),
+                            // 阅读模式下「上一个 / 下一个文件」= 上一章 / 下一章（章节由顶栏目录下拉栏定义）
+                            // EN: In reading mode the previous-file button becomes "previous chapter" (chapter list from the TOC).
+                            NavigatePreviousFileAsync = async () =>
+                            {
+                                if (!await window._documentReaderController.NavigateReadingChapterAsync(false).ConfigureAwait(true))
+                                {
+                                    await window._imageViewerController.NavigateToFileAsync(false).ConfigureAwait(true);
+                                }
+                            },
                             NavigatePreviousPageAsync = () => window._documentNavigationCoordinator.NavigatePreviousAsync(),
                             NavigateNextPageAsync = () => window._documentNavigationCoordinator.NavigateNextAsync(),
-                            NavigateNextFileAsync = () => window._imageViewerController.NavigateToFileAsync(true),
+                            // EN: In reading mode the next-file button becomes "next chapter".
+                            NavigateNextFileAsync = async () =>
+                            {
+                                if (!await window._documentReaderController.NavigateReadingChapterAsync(true).ConfigureAwait(true))
+                                {
+                                    await window._imageViewerController.NavigateToFileAsync(true).ConfigureAwait(true);
+                                }
+                            },
                             ToggleFullscreen = window.ToggleFullscreen,
                             CloseWindow = window.RequestWindowClose,
                             ShowNotification = (message, icon, color) => window.ShowNotification(message, icon, color)

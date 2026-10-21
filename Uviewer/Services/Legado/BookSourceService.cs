@@ -209,8 +209,44 @@ namespace Uviewer.Services.Legado
       return text;
             }
 
-      var ctx = new PurifyContext(bookName, bookUrl, sourceUrl, null);
+            var ctx = new PurifyContext(bookName, bookUrl, sourceUrl, null);
   return _purifier.Apply(text, in ctx);
+        }
+
+        // EN: Title channel purification entry (scopeTitle rules only).
+        /// <summary>
+        /// <b>标题通道</b>净化：只应用"作用于标题"的替换规则（legado <c>scopeTitle</c>）。
+        /// <para>在标题 / 分章规则识别章节行<b>之前</b>逐行调用，让"先去前缀再识别"这类标题能命中规则。</para>
+        /// </summary>
+        public string PurifyTitleLine(string line, string? bookName = null, string? bookUrl = null, string? sourceUrl = null)
+        {
+            if (string.IsNullOrEmpty(line))
+            {
+                return line;
+            }
+
+            var ctx = new PurifyContext(bookName, bookUrl, sourceUrl, null);
+            return _purifier.ApplyToTitle(line, in ctx);
+        }
+
+        // EN: Probes which replace rules actually apply to the given chapter text (empty when purification is off).
+        /// <summary>
+        /// 探测当前章节上<b>真正生效</b>的替换规则（给"替换净化管理"界面打「本章生效」标记用）。
+        /// <para>判定口径与 <see cref="PurifyForDisplay"/> 完全一致：按管线顺序逐条应用、比较前后文本，
+        /// 只有真的改写了文本的规则算生效。</para>
+        /// <para>总开关关闭时返回空集合——此时净化整段不生效，界面不该标"生效"。</para>
+        /// </summary>
+        /// <param name="text">探测文本（当前章节的<b>原文</b>）。</param>
+        public IReadOnlyList<long> FindEffectiveReplaceRuleIds(
+            string text, string? bookName = null, string? bookUrl = null, string? sourceUrl = null)
+        {
+            if (string.IsNullOrEmpty(text) || !_purifyEnabled)
+            {
+                return Array.Empty<long>();
+            }
+
+            var ctx = new PurifyContext(bookName, bookUrl, sourceUrl, null);
+            return _purifier.FindEffectiveRuleIds(text, in ctx);
         }
 
         // ============================================================

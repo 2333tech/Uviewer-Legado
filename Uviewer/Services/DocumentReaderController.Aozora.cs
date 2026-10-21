@@ -222,8 +222,39 @@ namespace Uviewer
             ToggleAozoraMode();
         }
 
+        // EN: Reading mode = advanced (Aozora/Markdown) layout + replace-rule purification + title-rule TOC + chapter cache.
+        /// <summary>
+        /// <b>阅读模式</b>（顶栏 A 按钮）的当前生效状态。
+        /// <para>阅读模式 = 青空/MD 排版 + 替换净化 + 标题规则目录 + 章节缓存，四件事同一个开关：
+        /// 关掉就是"原文 + 纯文本渲染 + 无目录"，避免半开半闭的状态组合。</para>
+        /// <para>只看 <c>_isAozoraMode</c>：书源书在打开时显式置为 true（它自带净化链路与书源目录），
+        /// 不跟随会话状态——否则"读着书源又打开本地 txt"时本地文件会被误判成阅读模式。</para>
+        /// </summary>
+        internal bool IsReadingMode => !_isEpubMode && _isAozoraMode;
+
+        // EN: Pushes reading-mode state to the toolbar (gated menu items, TOC button, prev/next-file semantics).
+        /// <summary>
+        /// 把阅读模式状态同步到顶栏：
+        /// ① 设置菜单里"仅阅读模式可用"的项（替换净化、章节缓存）；
+        /// ② 文本目录按钮可见性（未开阅读模式的 TXT 不生成目录，按钮随之隐藏；EPUB 保留）。
+        /// </summary>
+        internal void ApplyReadingModeUiState()
+        {
+            var readingMode = IsReadingMode;
+            MainToolbar.SetReadingModeActive(readingMode);
+            MainToolbar.SetTextTocAvailable(_isEpubMode || readingMode);
+            // 「上一个 / 下一个文件」在阅读模式下改意为「上一章 / 下一章」（键盘 ↑ / ↓ 同）
+            MainToolbar.SetFileNavigationMode(readingMode);
+        }
+
+        // EN: True when the displayed text comes from a local file or an archive entry (has a full raw text to window).
+        /// <summary>当前显示的是否本地文本源（本地文件 / 压缩包条目）——只有它们有"整本原文"可用于窗口化。</summary>
+        private bool HasLocalTextSource() =>
+            !string.IsNullOrEmpty(_currentTextFilePath) || _currentTextArchiveEntryKey is not null;
+
         private bool _isAozoraModeSwitchInProgress;
 
+        // EN: Toggles reading mode; re-renders via disk-cache window, in-memory window, or whole-file fallback.
         internal async void ToggleAozoraMode()
         {
             if (_isAozoraModeSwitchInProgress) return;
@@ -281,16 +312,66 @@ namespace Uviewer
 
                 MainToolbar.SetAozoraToggleChecked(_isAozoraMode);
                 SaveAozoraSettings();
+                ApplyReadingModeUiState();
 
-                if (!string.IsNullOrEmpty(_currentTextContent))
+                // 开启阅读模式且本文件没有磁盘章节缓存 → 走"内存窗口"装配：
+                // 目录只算一次（内存），窗口只净化前 2 后 5 + 本章，不再整本净化。
+                var wantVirtualWindow = _isAozoraMode && !TextCacheActive && HasLocalTextSource();
+
+                // 关闭阅读模式：只丢弃窗口状态与<b>内存</b>里的章节文本缓存。
+                // ⚠ 磁盘上的章节缓存文件不在这里清理（也不能清理）：它属于用户的持久化数据，
+                //    下次打开文件仍会命中并自动开启阅读模式；删除只允许走「缓存」菜单项。
+                if (!_isAozoraMode)
                 {
-                    CancelAndResetGlobalTextCts();
-                    string displayName = string.IsNullOrEmpty(_currentTextFilePath) ? "Document" : System.IO.Path.GetFileName(_currentTextFilePath);
-                    await DisplayLoadedText(_currentTextContent, displayName, _currentTextFilePath, _globalTextCts!.Token);
+                    // 先把当前位置刷进缓存（有磁盘缓存的文件：关掉阅读模式也不该丢阅读进度），
+                    // 再只清理内存态；磁盘缓存文件本身原样保留。
+                    FlushTextCachePosition();
+                    ClearTextCacheWindowState();
                 }
-                else
+
+                CancelAndResetGlobalTextCts();
+
+                var windowRendered = false;
+                if (wantVirtualWindow)
                 {
-                    if (TextFastNavOverlay != null) TextFastNavOverlay.Visibility = Visibility.Collapsed;
+                    // ① 先用磁盘上的章节缓存（有缓存的文件：继续用它 + 上次阅读位置，也不必重扫目录）。
+                    //    注意：这里只"读"缓存，任何情况下都不会删除磁盘缓存文件——
+                    //    删除只有一条路径，就是用户主动点设置里的「缓存」菜单项。
+                    var rawForCache = _currentTextRawContent ?? string.Empty;
+                    var displayName = string.IsNullOrEmpty(_currentTextFilePath)
+                        ? "Document"
+                        : System.IO.Path.GetFileName(_currentTextFilePath);
+                    windowRendered = await TryOpenWithTextCacheAsync(
+                        rawForCache, displayName, _currentTextFilePath ?? _currentTextArchiveEntryKey, _globalTextCts!.Token)
+                        .ConfigureAwait(true);
+
+                    // ② 没有磁盘缓存 → 内存虚拟窗口（目录只算一次，窗口只净化 8 章），从文件头开始
+                    if (!windowRendered)
+                    {
+                        windowRendered = await TryOpenVirtualWindowAsync(0).ConfigureAwait(true);
+                    }
+                }
+
+                if (!windowRendered)
+                {
+                    // 回退路径（目录不正常 / 非本地文件 / 关闭阅读模式）：整本文本原样渲染。
+                    // 原文单独存一份（_currentTextRawContent），否则反复开关会把"已净化"的文本再套一遍规则。
+                    if (!string.IsNullOrEmpty(_currentTextRawContent))
+                    {
+                        _currentTextContent = _isAozoraMode
+                            ? PurifyTextBeforeDisplay(_currentTextRawContent)
+                            : _currentTextRawContent;
+                    }
+
+                    if (!string.IsNullOrEmpty(_currentTextContent))
+                    {
+                        string displayName = string.IsNullOrEmpty(_currentTextFilePath) ? "Document" : System.IO.Path.GetFileName(_currentTextFilePath);
+                        await DisplayLoadedText(_currentTextContent, displayName, _currentTextFilePath, _globalTextCts!.Token);
+                    }
+                    else
+                    {
+                        if (TextFastNavOverlay != null) TextFastNavOverlay.Visibility = Visibility.Collapsed;
+                    }
                 }
             }
             catch (OperationCanceledException) { }
@@ -483,12 +564,12 @@ namespace Uviewer
         {
             _ = CompleteAozoraParsingAsync(rawContent, isMarkdown, fontSize, parseGeneration, token);
         }
-        else if (!TextCacheActive)
+        else if (_legadoSession is null && !TextCacheActive)
         {
             // ⚠ 必须带标题规则：青空模式只是排版，普通小说块里没有标题，
             // 只传块会把刚由 DisplayLoadedText 装好的"规则目录"换成空目录（无目录 bug）。
             // 章节窗口模式除外：那儿的目录来自缓存，由 ShowTextCacheWindowAsync 安装。
-            _tocService.SetProvider(new TextTocProvider(_currentTextContent, _aozoraBlocks, GetEnabledTitleRules()));
+            _tocService.SetProvider(CreateTextTocProvider(_currentTextContent, _aozoraBlocks));
             _ = _tocService.LoadTocAsync(token);
             StartAozoraPageCalculationAsync();
         }
@@ -605,9 +686,11 @@ namespace Uviewer
 
                         if (!preview.IsPartial)
                         {
-                            if (!TextCacheActive)
+                            // 书源书：目录来自书源会话（InstallLegadoToc 装的 StaticTocProvider），
+                            // 这里再装一次 TextTocProvider 会把"全书目录"换成"本章规则目录"。
+                            if (_legadoSession is null && !TextCacheActive)
                             {
-                                _tocService.SetProvider(new TextTocProvider(_currentTextContent, _aozoraBlocks, GetEnabledTitleRules()));
+                                _tocService.SetProvider(CreateTextTocProvider(_currentTextContent, _aozoraBlocks));
                                 _ = _tocService.LoadTocAsync(token);
                             }
 
@@ -1194,9 +1277,9 @@ namespace Uviewer
             }
             else if (!preview.IsPartial)
             {
-                if (!TextCacheActive)
+                if (_legadoSession is null && !TextCacheActive)
                 {
-                    _tocService.SetProvider(new TextTocProvider(_currentTextContent, _aozoraBlocks, GetEnabledTitleRules()));
+                    _tocService.SetProvider(CreateTextTocProvider(_currentTextContent, _aozoraBlocks));
                     _ = _tocService.LoadTocAsync(token);
                 }
             }
@@ -1433,59 +1516,7 @@ namespace Uviewer
             if (e.ClickedItem is TocItem item)
             {
                 MainToolbar.HideTextTocFlyout();
-
-                // 书源目录优先：SourceLineNumber 在书源目录里是"章节下标"而非行号，
-                // 必须先于按行跳转的分支处理（阶段 5 集成）。
-                if (TryHandleLegadoTocClick(item))
-                {
-                    return;
-                }
-
-                // 章节缓存（窗口模式）目录：Tag 是章下标；窗口外点击 ⇒ 重开窗口
-                if (TryHandleTextCacheTocClick(item))
-                {
-                    return;
-                }
-
-                if (_isEpubMode)
-                {
-                    if (!string.IsNullOrEmpty(item.EpubLink))
-                    {
-                        JumpToEpubTocItem(new EpubTocItem { Title = item.HeadingText, Link = item.EpubLink });
-                    }
-                }
-                else if (item.Tag?.ToString() == "PDF")
-                {
-                    if (item.SourceLineNumber >= 0 && item.SourceLineNumber < _imageEntries.Count)
-                    {
-                        _currentIndex = item.SourceLineNumber;
-                        _ = DisplayCurrentImageAsync();
-                    }
-                }
-                else if (item.SourceLineNumber > 0)
-                {
-                    if (_isVerticalMode)
-                    {
-                        _ = PrepareVerticalTextAsync(item.SourceLineNumber);
-                    }
-                    else if (_isAozoraMode)
-                    {
-                        JumpToAozoraLine(item.SourceLineNumber);
-                    }
-                    else
-                    {
-                        ScrollToLine(item.SourceLineNumber);
-                    }
-                }
-                else if (item.SourceLineNumber == 0)
-                {
-                    // 卷标题 / 无跳转目标的条目（分章规则标记的卷、PDF 书签等）：
-                    // 给出明确反馈，而不是"点了没反应"让用户以为功能坏了。
-                    ShowNotification(
-                        string.IsNullOrEmpty(item.HeadingText) ? Strings.NoTocContent : $"“{item.HeadingText}”是卷标题，请选择其下的具体章节",
-                        "\uE946",
-                        "Gray");
-                }
+                NavigateToTocItem(item);   // 与"上一章/下一章"共用同一条跳转分发
             }
         }
     }

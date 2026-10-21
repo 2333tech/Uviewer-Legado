@@ -95,6 +95,17 @@ public static class TxtChapterSplitter
     /// <para>不依赖规则内容，只看中文小说的常见形态：行首是"第/卷/篇/章/节/回"，
     /// 或以 "#" 开头，或含"Chapter"。目的是让绝大多数正文行在进入正则前就被淘汰。</para>
     /// </summary>
+    /// <summary>行首是否带装饰性前缀（书名号/方括号/括号/"序"等）——这类行去前缀后可能就是标题。</summary>
+    private static bool HasLeadingDecoration(string trimmed)
+    {
+        if (trimmed.Length == 0 || trimmed.Length > 120)
+        {
+            return false;
+        }
+
+        return trimmed[0] is '【' or '［' or '《' or '「' or '『' or '[' or '（' or '(';
+    }
+
     private static bool MaybeHeading(string trimmed)
     {
         if (trimmed.Length == 0 || trimmed.Length > 120)
@@ -126,6 +137,7 @@ public static class TxtChapterSplitter
         return false;
     }
 
+    // EN: Splits a book into chapters; an optional hook lets title-scope rules clean a line before matching.
     /// <summary>
     /// 切分整本文本。
     /// <para><paramref name="content"/> 会被规范化换行（CRLF/CR → LF）后再按行处理；
@@ -133,7 +145,14 @@ public static class TxtChapterSplitter
     /// </summary>
     /// <param name="content">全文（可很大，故内部用 Span/逐行处理，不建整份 DOM）。</param>
     /// <param name="rules">已启用的规则（<see cref="TitleRuleManager.GetEnabledOrdered"/> 的输出）。</param>
-    public static SplitResult Split(string? content, IReadOnlyList<TitleRule> rules)
+    /// <param name="purifyTitleLine">
+    /// 标题行预净化（作用于标题的替换规则，legado <c>scopeTitle</c>）：识别标题<b>之前</b>逐行调用。
+    /// 只在"可能是标题"的行上执行（<see cref="MaybeHeading"/> 或带装饰前缀），正文行不付这份成本。
+    /// </param>
+    public static SplitResult Split(
+        string? content,
+        IReadOnlyList<TitleRule> rules,
+        Func<string, string>? purifyTitleLine = null)
     {
         var chapters = new List<ChapterSpan>();
         var bookTitle = string.Empty;
@@ -166,6 +185,17 @@ public static class TxtChapterSplitter
             if (line.Length == 0)
             {
                 continue;
+            }
+
+            // 标题行预净化：先去前缀/装饰符，"【玄幻】第1章 风起"才能被标题规则认出来。
+            // 只对"看起来像标题"的行执行，避免为整本正文付一遍替换成本。
+            if (purifyTitleLine is not null && (MaybeHeading(line) || HasLeadingDecoration(line)))
+            {
+                var purified = purifyTitleLine(line).Trim();
+                if (purified.Length > 0)
+                {
+                    line = purified;
+                }
             }
 
             // 前置筛选：绝大多数正文行在这里就被淘汰，不进入正则

@@ -21,6 +21,8 @@ namespace Uviewer.Controls
         private bool _isSharpenAvailable = true;
         private bool _isPdfTocAvailable;
         private bool _isPdfGoToPageAvailable;
+        /// <summary>文本目录按钮可用性（随阅读模式开关；关闭阅读模式的 TXT 不生成目录）。</summary>
+        private bool _isTextTocAvailable = true;
         private readonly Dictionary<FrameworkElement, ToolbarOverflowItemPresentation> _toolbarOverflowPresentations = new();
         private bool _isArrangingToolbarOverflow;
         private bool _toolbarOverflowUpdateQueued;
@@ -432,6 +434,8 @@ namespace Uviewer.Controls
 
         private bool IsToolbarItemAvailable(string id)
         {
+            // 目录按钮先于通用文本工具栏判定：阅读模式关闭时即使文本工具栏可见也要隐藏
+            if (id == ToolbarItemIds.TextToc) return _isTextToolbarAvailable && _isTextTocAvailable;
             if (ImageToolbarItemIds.Contains(id)) return _isImageToolbarAvailable;
             if (TextToolbarItemIds.Contains(id)) return _isTextToolbarAvailable;
             if (SideBySideToolbarItemIds.Contains(id)) return _isSideBySideToolbarAvailable;

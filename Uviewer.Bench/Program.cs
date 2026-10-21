@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using HtmlAgilityPack;
+using Uviewer.Services.Legado;
 using Uviewer.Services.Legado.Models;
 using Uviewer.Services.Legado.BookSources;
 using BookSourceModel = Uviewer.Services.Legado.Models.BookSource;
@@ -28,6 +29,7 @@ static class Bench
         if (filter is null or "p2") await Phase2(sample);
         if (filter is null or "p3") await Phase3();
         if (filter is null or "p4") Phase4();
+        if (filter is null or "p5") Phase5();
     }
 
     static string FindSample()
@@ -931,6 +933,162 @@ static class Bench
     }
 
     /// <summary>构造一份近似真实正文页的 HTML（含 <c>div#content</c> 与若干段落/广告块）。</summary>
+
+    // ============================================================
+    // 阶段 5：本地 TXT「窗口式按需净化」可行性测量
+    //
+    // 要回答的问题：把"打开文件时整本净化"改成"只净化当前窗口（前 2 后 5 + 本章 = 8 章）"
+    // 到底能省多少等待？两个场景：
+    //   ① 首次开启阅读模式（打开文件）
+    //   ② 变更替换净化规则后刷新
+    // 注意：目录（标题规则）必须扫全本才能得到全书章节，这部分窗口化省不掉，
+    // 所以它作为"两者都要付的固定成本"单独测量。
+    // ============================================================
+    static void Phase5()
+    {
+        Console.WriteLine("== 阶段 5：本地 TXT 窗口式按需净化可行性 ==");
+
+        var chaptersDir = FindPerfChaptersDir();
+        // chaptersDir = …/PerfBenchmark/text/chapters → 上两级 = …/PerfBenchmark
+        var perfBenchDir = Directory.GetParent(Directory.GetParent(chaptersDir)!.FullName)!.FullName;
+        var rulesDir = Path.Combine(perfBenchDir, "rules");
+        var replaceRules = LoadReplaceRules(Path.Combine(rulesDir, "replace-rules.json"));
+        var titleRules = LoadTitleRules(Path.Combine(rulesDir, "title-rules.json"));
+
+        var book = BuildBook(chaptersDir, 1_400_000);
+        Console.WriteLine($"模拟书：{book.Text.Length / 1024} KB / {book.ChapterTexts.Count} 章 / 替换规则 {replaceRules.Count} 条 / 标题规则 {titleRules.Count} 条");
+
+        var purifier = new ContentPurifier { Rules = replaceRules };
+        var ctx = PurifyContext.Default;
+
+        // 8 章窗口（前 2 后 5 + 本章），取中间位置以便两侧都满
+        var center = 5;
+        var window = new List<string>();
+        for (var i = Math.Max(0, center - 2); i <= Math.Min(book.ChapterTexts.Count - 1, center + 5); i++)
+        {
+            window.Add(book.ChapterTexts[i]);
+        }
+
+        var windowBytes = window.Sum(w => w.Length);
+
+        // 预热（JIT + 正则编译缓存）
+        _ = purifier.Apply(book.Text, ctx);
+        _ = TextTocBuilder.Build(book.Text, titleRules);
+
+        var (fullMs, fullMb) = Best(() => Sink += purifier.Apply(book.Text, ctx).Length, 3);
+        var (windowMs, windowMb) = Best(() =>
+        {
+            var n = 0;
+            foreach (var slice in window) n += purifier.Apply(slice, ctx).Length;
+            Sink += n;
+        }, 3);
+        var (tocMs, tocMb) = Best(() => Sink += TextTocBuilder.Build(book.Text, titleRules).Count, 3);
+        var (oneChapterMs, oneChapterMb) = Best(() => Sink += purifier.Apply(book.ChapterTexts[center], ctx).Length, 3);
+
+        Row($"全文净化（旧：打开时整本 {book.Text.Length / 1024}KB）", fullMs, fullMb);
+        Row($"8 章窗口净化（新：只算窗口 {windowBytes / 1024}KB）", windowMs, windowMb);
+        Row("单章净化（规则变更时的前台部分）", oneChapterMs, oneChapterMb);
+        Row("全文目录构建（标题规则，两者都必须付）", tocMs, tocMb);
+
+        var oldOpen = fullMs + tocMs;
+        var newOpen = windowMs + tocMs;
+        Console.WriteLine();
+        Console.WriteLine($"打开文件：旧 ≈ {oldOpen:F0} ms（整本净化 {fullMs:F0} + 目录 {tocMs:F0}）");
+        Console.WriteLine($"          新 ≈ {newOpen:F0} ms（窗口净化 {windowMs:F0} + 目录 {tocMs:F0}）");
+        Console.WriteLine($"          ⇒ 省下 {oldOpen - newOpen:F0} ms（{(oldOpen > 0 ? 100 * (oldOpen - newOpen) / oldOpen : 0):F0}%），"
+            + $"其中目录构建占新耗时的 {(newOpen > 0 ? 100 * tocMs / newOpen : 0):F0}%");
+        Console.WriteLine();
+        Console.WriteLine($"规则变更：旧（整本重净化，前台阻塞）≈ {fullMs:F0} ms");
+        Console.WriteLine($"          新（本章前台 {oneChapterMs:F0} ms + 窗口后台 {windowMs:F0} ms）");
+        Console.WriteLine($"          ⇒ 前台等待降低 {(fullMs > 0 ? 100 * (fullMs - oneChapterMs) / fullMs : 0):F0}%");
+        Console.WriteLine();
+
+        // 规则条数敏感性：真实用户常见 20~80 条
+        foreach (var scale in new[] { 4, 8 })
+        {
+            var scaled = new List<ReplaceRule>();
+            for (var k = 0; k < scale; k++)
+            {
+                foreach (var r in replaceRules)
+                {
+                    scaled.Add(new ReplaceRule
+                    {
+                        Id = r.Id + k * 1000,
+                        Name = $"{r.Name}#{k}",
+                        Pattern = r.Pattern,
+                        Replacement = r.Replacement,
+                        Scope = r.Scope,
+                        IsRegex = r.IsRegex,
+                        IsEnabled = true,
+                        Order = r.Order + k * 100,
+                    });
+                }
+            }
+
+            var p2 = new ContentPurifier { Rules = scaled };
+            _ = p2.Apply(book.Text, ctx);
+            var (f, _) = Best(() => Sink += p2.Apply(book.Text, ctx).Length, 3);
+            var (w, _) = Best(() =>
+            {
+                var n = 0;
+                foreach (var slice in window) n += p2.Apply(slice, ctx).Length;
+                Sink += n;
+            }, 3);
+            Console.WriteLine($"规则 {scaled.Count} 条：整本 {f:F0} ms vs 窗口 {w:F0} ms（省 {f - w:F0} ms）");
+        }
+    }
+
+    /// <summary>定位 <c>Sample/PerfBenchmark/text/chapters</c>（从 bin 向上回溯）。</summary>
+    static string FindPerfChaptersDir()
+    {
+        for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+        {
+            var candidate = Path.Combine(d.FullName, "Sample", "PerfBenchmark", "text", "chapters");
+            if (Directory.Exists(candidate)) return candidate;
+        }
+
+        throw new DirectoryNotFoundException("Sample/PerfBenchmark/text/chapters 未找到");
+    }
+
+    static List<ReplaceRule> LoadReplaceRules(string path)
+    {
+        var json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<List<ReplaceRule>>(json, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+        }) ?? new List<ReplaceRule>();
+    }
+
+    static List<TitleRule> LoadTitleRules(string path)
+    {
+        var json = File.ReadAllText(path);
+        return JsonSerializer.Deserialize<List<TitleRule>>(json, new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true,
+        }) ?? new List<TitleRule>();
+    }
+
+    /// <summary>用样例章节拼一本接近真实的 TXT 书（重复章节直到目标体积，标题行改成"第N章"）。</summary>
+    static (string Text, List<string> ChapterTexts) BuildBook(string chaptersDir, int targetBytes)
+    {
+        var sources = Directory.GetFiles(chaptersDir, "*.html").OrderBy(p => p, StringComparer.Ordinal).ToList();
+        var bodies = sources.Select(p => LegadoHtmlText.ToPlainText(File.ReadAllText(p)).Trim()).ToList();
+
+        var sb = new StringBuilder(targetBytes + 4096);
+        var chapters = new List<string>();
+        var index = 0;
+        while (sb.Length < targetBytes)
+        {
+            var body = bodies[index % bodies.Count];
+            var chapter = $"第{index + 1}章 测试章节{index + 1}\n\n{body}";
+            chapters.Add(chapter);
+            sb.Append(chapter).Append("\n\n");
+            index++;
+        }
+
+        return (sb.ToString(), chapters);
+    }
+
     static string BuildHtml(int approxBytes)
     {
         var sb = new StringBuilder(approxBytes + 1024);

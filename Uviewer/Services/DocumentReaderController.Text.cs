@@ -30,6 +30,14 @@ namespace Uviewer
             set => _textReaderState.Content = value ?? string.Empty;
         }
 
+        // EN: Pristine (un-purified) text of the current local file, kept so reading mode can switch raw <-> purified.
+        /// <summary>
+        /// 当前文本的<b>原始</b>内容（未净化）。只有本地文件 / 压缩包条目这两条路径有值：
+        /// 阅读模式切换要在"原文 ↔ 净化后文本"之间来回切换，而且<b>不能</b>对已净化文本
+        /// 二次套规则（非幂等替换会累积改写）。书源章节、缓存窗口的内容本身就是最终形态，故为 null。
+        /// </summary>
+        internal string? _currentTextRawContent;
+
         internal TextSettingsManager _settingsManager = null!;
         internal bool _isTextMode = false;
         internal bool _isCurrentTextPlainModeLocked = false;
@@ -163,6 +171,9 @@ CancelAndResetGlobalTextCts();
           string content = await _textDocumentLoadService.ReadLocalFileAsync(file, _settingsManager.EncodingName, token);
       if (token.IsCancellationRequested) return;
 
+     // 换文件先清掉上一份原文，避免命中缓存时残留旧文件的 raw（切换阅读模式会误用）
+     _currentTextRawContent = null;
+
      // 章节缓存命中 → 窗口模式（只净化前后章节）；未命中 → 整本净化路径
       if (await TryOpenWithTextCacheAsync(content, file.Name, file.Path, token).ConfigureAwait(true))
        {
@@ -175,7 +186,9 @@ CancelAndResetGlobalTextCts();
     // 读取 → 渲染之间净化（受一级菜单"替换净化（总开关）"控制）。
       // 抓取阶段（整本下载）现在只落原文，净化统一在这里做；
        // 这样下载下来的书重新打开时，总开关依然能立即生效。
-        content = PurifyTextBeforeDisplay(content);
+        _currentTextRawContent = content;          // 留一份原文供阅读模式开关来回切换
+        ApplyReadingModeForCacheMiss(file.Name);   // 无缓存 ⇒ TXT 不开启阅读模式
+        content = PurifyTextBeforeDisplay(content); // 阅读模式关闭时原样返回
 
         await DisplayLoadedText(content, file.Name, file.Path, token);
 
@@ -230,6 +243,8 @@ SwitchToTextMode();
 
             if (token.IsCancellationRequested) return;
 
+            _currentTextRawContent = null;   // 换条目先清掉上一份原文
+
       // 章节缓存命中 → 窗口模式；未命中 → 整本净化路径（与本地文件同接线）
        if (await TryOpenWithTextCacheAsync(content, entry.DisplayName, null, token).ConfigureAwait(true))
         {
@@ -240,6 +255,8 @@ SwitchToTextMode();
        }
 
       // 与本地文件同一时机净化（读取 → 渲染之间，受总开关控制）
+     _currentTextRawContent = content;
+     ApplyReadingModeForCacheMiss(entry.DisplayName);
      content = PurifyTextBeforeDisplay(content);
 
        await DisplayLoadedText(content, entry.DisplayName, null, token);
@@ -288,9 +305,11 @@ SwitchToTextMode();
             // **当前这一章**的行目录 —— 目录从"全书章节"退化成"本章小节"。
             // 章节窗口模式（TextCacheActive）同理除外：目录来自缓存（TextCacheTocProvider），
             // 由 ShowTextCacheWindowAsync 在 DisplayLoadedText 之后安装。
-            if (_legadoSession is null && !TextCacheActive)
+            // 阅读模式关闭时也不生成：标题规则属于阅读模式的一部分，此时没有目录，
+            // 顶栏目录按钮同步隐藏（见 ApplyReadingModeUiState）。
+            if (_legadoSession is null && !TextCacheActive && _isAozoraMode)
             {
-       _tocService.SetProvider(new TextTocProvider(content, null, GetEnabledTitleRules()));
+       _tocService.SetProvider(CreateTextTocProvider(content));
          _ = _tocService.LoadTocAsync(token);
       }
 
@@ -307,6 +326,9 @@ SwitchToTextMode();
             MainToolbar.SetVerticalToggleState(
                 isChecked: canUseVerticalMode && _isVerticalMode,
                 isEnabled: canUseVerticalMode);
+
+            // 阅读模式状态同步到顶栏：目录按钮可见性 + 设置菜单里"仅阅读模式可用"的项
+            ApplyReadingModeUiState();
 
             // Unified Target Line Logic
             int targetLine = 1;
@@ -419,6 +441,19 @@ SwitchToTextMode();
 
         internal bool IsPlainTextModeLockedDocumentActive() => _isTextMode && _isCurrentTextPlainModeLocked;
 
+        // EN: Uncached .txt stays out of reading mode; other text formats keep the previous default (on).
+        /// <summary>
+        /// 未命中章节缓存时的阅读模式决策（只对 TXT 生效）。
+        /// <para>规则：本地 <c>.txt</c> 没有章节缓存 ⇒ <b>不开</b>阅读模式（原文 + 无目录 + 不净化）；
+        /// 其它文本格式（.md / .html 等）沿用既有行为（播放器按设置里的开关，默认开启）。</para>
+        /// <para>命中缓存的情况不在这里处理：<c>TryOpenWithTextCacheAsync</c> 成功后直接置为开启。</para>
+        /// </summary>
+        private void ApplyReadingModeForCacheMiss(string name)
+        {
+            bool isTxt = string.Equals(System.IO.Path.GetExtension(name), ".txt", StringComparison.OrdinalIgnoreCase);
+            _isAozoraMode = !isTxt;
+        }
+
         internal void ApplyPlainTextModeLock()
         {
             _isAozoraMode = false;
@@ -442,6 +477,7 @@ SwitchToTextMode();
 
             MainToolbar.SetAozoraToggleState(isChecked: false, isEnabled: false);
             MainToolbar.SetVerticalToggleState(isChecked: false, isEnabled: false);
+            ApplyReadingModeUiState();   // 纯文本锁定 ⇒ 阅读模式不可用：相关菜单项置灰、目录按钮隐藏
 
             if (AozoraTextCanvas != null) AozoraTextCanvas.Visibility = Visibility.Collapsed;
             if (VerticalTextCanvas != null) VerticalTextCanvas.Visibility = Visibility.Collapsed;
@@ -520,6 +556,7 @@ SwitchToTextMode();
             MainToolbar.SetTextToolbarVisible(true);
             MainToolbar.SetSideBySideToolbarVisible(false);
             MainToolbar.SetSharpenControlsVisible(true);
+            ApplyReadingModeUiState();
 
             // Load Settings (Must happen before visibility check)
             LoadTextSettings();
@@ -605,6 +642,10 @@ SwitchToTextMode();
             _isEpubMode = false; // Reset Epub mode
             DisableVerticalModeForImageDocument();
 
+            // 离开文本显示：窗口状态与内存里的章节文本缓存一并释放（磁盘缓存文件与内存目录缓存保留）
+            FlushTextCachePosition();
+            ClearTextCacheWindowState();
+
             // 切走图片/PDF = 离开书源阅读：取消在途预取并落盘阅读进度（阶段 5 集成）。
             // fire-and-forget：关书是清理动作，不该阻塞模式切换；异常已在内部吞掉。
             if (IsLegadoMode)
@@ -621,6 +662,9 @@ SwitchToTextMode();
             MainToolbar.SetTextToolbarVisible(false);
             MainToolbar.SetSideBySideToolbarVisible(_currentPdfDocument == null);
             MainToolbar.SetSharpenControlsVisible(_currentPdfDocument == null);
+            // 图片/PDF 不是阅读模式：净化/缓存等菜单项置灰（缓存按钮仍由 hasSource 决定是否可点）
+            MainToolbar.SetReadingModeActive(false);
+            MainToolbar.SetFileNavigationMode(false);   // 「上一/下一个文件」语义恢复
 
             // 핀치 줌과 스와이프를 위해 조작 모드 활성화 (PDF 및 일반 이미지 모두)
             ImageArea.ManipulationMode = Microsoft.UI.Xaml.Input.ManipulationModes.All;

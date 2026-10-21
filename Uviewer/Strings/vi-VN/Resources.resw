@@ -94,6 +94,12 @@
   <data name="NextFileTooltip" xml:space="preserve">
     <value>Tệp tiếp theo (↓)</value>
   </data>
+  <data name="PrevChapterTooltip" xml:space="preserve">
+    <value>Chương trước</value>
+  </data>
+  <data name="NextChapterTooltip" xml:space="preserve">
+    <value>Chương sau</value>
+  </data>
   <data name="PrevPageTooltip" xml:space="preserve">
     <value>Ảnh/trang trước (←)</value>
   </data>
@@ -101,7 +107,10 @@
     <value>Ảnh/trang tiếp theo (→)</value>
   </data>
   <data name="AozoraTooltip" xml:space="preserve">
-    <value>Aozora/md (A)</value>
+    <value>Aozora/MD/Chế độ đọc (A)</value>
+  </data>
+  <data name="ReadingModeOnlyHint" xml:space="preserve">
+    <value>Chỉ khả dụng trong Chế độ đọc</value>
   </data>
   <data name="FontTooltip" xml:space="preserve">
     <value>Đổi phông chữ (F) - Nhấp phải để cài đặt</value>

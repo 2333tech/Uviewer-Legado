@@ -116,20 +116,15 @@ public sealed class ContentPurifier
         // ⑤+⑥ 逐规则应用：scope 过滤 + 替换 + 单规则异常跳过
         foreach (var rule in rules)
         {
-            if (!ScopeMatches(rule, in ctx))
+            // 正文通道：只作用于标题的规则（legado scopeTitle-only）不参与正文净化
+            if (!rule.Rule.ScopeContent || !ScopeMatches(rule, in ctx))
             {
                 continue;
             }
 
             try
             {
-                text = rule.JsScript is { } js
-                    // @js: 形态：逐匹配求值（MatchEvaluator 的返回值按字面量使用，
-                    // 不经 $1/$& 展开——legado 用 quoteReplacementJs 达到同样效果）
-                    ? rule.Regex!.Replace(text, m => ReplaceJsEvaluator.Evaluate(js, m.Value))
-                    : rule.Regex is not null
-                        ? rule.Regex.Replace(text, rule.Replacement)
-                        : text.Replace(rule.Pattern, rule.Replacement);
+                text = ApplyRule(rule, text);
             }
             catch (RegexMatchTimeoutException)
             {
@@ -149,6 +144,113 @@ public sealed class ContentPurifier
 
         return text;
     }
+
+    // EN: Returns the ids of rules that actually change the text (used by the rule manager's "active here" badge).
+    /// <summary>
+    /// 探测<b>真正生效</b>的规则：按管线顺序逐条应用，只有改变了文本的规则才算命中。
+    /// <para>给"替换净化管理"界面打「本章生效」标记用，因此判定口径与 <see cref="Apply"/> 完全一致：
+    /// 作用域不匹配、正则不命中、<c>@js:</c> 异常、替换结果与原文相同（空替换等）都不算生效。</para>
+    /// <para>顺序很关键：后面的规则是在前面规则改写过的文本上匹配的，所以这里必须真实地滚一遍文本，
+    /// 不能对每条规则都拿原文单独 test。</para>
+    /// </summary>
+    /// <param name="text">探测文本（通常是当前章节的原文）。</param>
+    /// <param name="ctx">书籍上下文（scope 匹配 + 净化开关）。</param>
+    /// <returns>命中规则的主键（不会重复；按执行顺序）。</returns>
+    public IReadOnlyList<long> FindEffectiveRuleIds(string text, in PurifyContext ctx)
+    {
+        var hits = new List<long>();
+        if (string.IsNullOrEmpty(text) || ctx.UseReplaceRule is false)
+        {
+            return hits;
+        }
+
+        var rules = EnsureCompiled();
+        if (rules is null || rules.Length == 0)
+        {
+            return hits;
+        }
+
+        text = TextNormalization.ToLf(text);
+
+        foreach (var rule in rules)
+        {
+            // 探针与正文管线同口径：只看作用于正文的规则
+            if (!rule.Rule.ScopeContent || !ScopeMatches(rule, in ctx))
+            {
+                continue;
+            }
+
+            var before = text;
+            try
+            {
+                text = ApplyRule(rule, text);
+            }
+            catch
+            {
+                // 与 Apply 一致：单条规则异常 → 跳过该规则，后续规则继续在未改动的文本上跑
+                continue;
+            }
+
+            if (!string.Equals(before, text, StringComparison.Ordinal))
+            {
+                hits.Add(rule.Rule.Id);
+            }
+        }
+
+        return hits;
+    }
+
+    // EN: Title channel: applies only scopeTitle rules, before title rules split the text into chapters.
+    /// <summary>
+    /// <b>标题通道</b>：只跑"作用于标题"的规则（legado <c>scopeTitle</c>）。
+    /// <para>调用时机在"标题/分章规则识别章节行<b>之前</b>"——不少 TXT 的标题要先去掉前缀/装饰符
+    /// 才能被标题规则匹配（例如"【玄幻】第12章 风起"要先去掉【玄幻】）。</para>
+    /// <para>与正文通道共用同一份编译快照与 scope 匹配，差别只有 <c>ScopeTitle</c> 过滤；
+    /// 标题是单行文本，逐条替换代价可忽略。</para>
+    /// </summary>
+    public string ApplyToTitle(string titleText, in PurifyContext ctx)
+    {
+        if (string.IsNullOrEmpty(titleText) || ctx.UseReplaceRule is false)
+        {
+            return titleText;
+        }
+
+        var rules = EnsureCompiled();
+        if (rules is null || rules.Length == 0)
+        {
+            return titleText;
+        }
+
+        var text = TextNormalization.ToLf(titleText);
+        foreach (var rule in rules)
+        {
+            if (!rule.Rule.ScopeTitle || !ScopeMatches(rule, in ctx))
+            {
+                continue;
+            }
+
+            try
+            {
+                text = ApplyRule(rule, text);
+            }
+            catch
+            {
+                // 与正文通道一致：单条异常跳过，不影响其余规则
+            }
+        }
+
+        return text;
+    }
+
+    /// <summary>单条规则的实际替换（正则 / <c>@js:</c> / 字面三分支）。</summary>
+    private static string ApplyRule(CompiledRule rule, string text) =>
+        rule.JsScript is { } js
+            // @js: 形态：逐匹配求值（MatchEvaluator 的返回值按字面量使用，
+            // 不经 $1/$& 展开——legado 用 quoteReplacementJs 达到同样效果）
+            ? rule.Regex!.Replace(text, m => ReplaceJsEvaluator.Evaluate(js, m.Value))
+            : rule.Regex is not null
+                ? rule.Regex.Replace(text, rule.Replacement)
+                : text.Replace(rule.Pattern, rule.Replacement);
 
     /// <summary>
     /// 取编译快照（惰性重建 + 短锁双重检查）。

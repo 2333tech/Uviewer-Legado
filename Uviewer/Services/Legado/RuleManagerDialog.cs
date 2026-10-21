@@ -15,7 +15,11 @@ namespace Uviewer.Services.Legado
     /// <param name="Title">主标题（规则名）。</param>
     /// <param name="Detail">副标题（分组 / 作用范围 / 正则摘要等）。</param>
     /// <param name="IsEnabled">当前是否启用。</param>
-    public sealed record RuleListItem(long Id, string Title, string Detail, bool IsEnabled);
+    /// <param name="Badge">
+    /// 行内小标记（可选）。替换净化用它标出"这条规则在当前章节真的命中了"；
+    /// null / 空 = 不加标记。刻意做成通用字符串：标题规则将来也能复用同一套标记。
+    /// </param>
+    public sealed record RuleListItem(long Id, string Title, string Detail, bool IsEnabled, string? Badge = null);
 
     /// <summary>
     /// 规则管理器的配置（净化规则与标题规则各给一份，对话框本体完全通用）。
@@ -262,7 +266,7 @@ namespace Uviewer.Services.Legado
                     {
                         list.Items.Add(new ListViewItem
                         {
-                            Content = BuildListItemContent(item, RefreshList),
+                            Content = BuildListItemContent(item, RefreshList, palette.TextSecondary),
                             Tag = item.Id,
                         });
                     }
@@ -499,12 +503,14 @@ namespace Uviewer.Services.Legado
             await dialog.ShowAsync();
         }
 
+        // EN: Builds a rule row: title, optional "active here" badge, summary and the enable checkbox.
         /// <summary>
         /// 构建规则列表项内容：左侧名称/状态，右侧启用复选框。
         /// <para>与书源列表项同构（去掉能力徽标——那是书源特有的阶段 4 警示）。
         /// 复选框勾选变化立即落盘（与表单"启用"开关一致），不必再点保存。</para>
         /// </summary>
-        private UIElement BuildListItemContent(RuleListItem item, Action<long> refreshList)
+        private UIElement BuildListItemContent(
+            RuleListItem item, Action<long> refreshList, Microsoft.UI.Xaml.Media.Brush badgeForeground)
         {
             var title = new TextBlock
             {
@@ -515,6 +521,28 @@ namespace Uviewer.Services.Legado
                     : Microsoft.UI.Text.FontWeights.Normal,
                 Opacity = item.IsEnabled ? 1.0 : 0.5,
             };
+
+            // 标记（如"本章生效"）贴在标题右侧：放在条目开头会与复选框/名称抢视觉焦点，
+            // 放副标题里又会被长摘要挤掉。
+            var titleRow = new Grid { ColumnSpacing = 6 };
+            titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            titleRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Grid.SetColumn(title, 0);
+            titleRow.Children.Add(title);
+
+            if (!string.IsNullOrEmpty(item.Badge))
+            {
+                var badge = new TextBlock
+                {
+                    Text = item.Badge,
+                    FontSize = 11,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = badgeForeground,
+                    Opacity = 0.9,
+                };
+                Grid.SetColumn(badge, 1);
+                titleRow.Children.Add(badge);
+            }
 
             var subtitle = new TextBlock
             {
@@ -527,7 +555,7 @@ namespace Uviewer.Services.Legado
             };
 
             var text = new StackPanel { Spacing = 0 };
-            text.Children.Add(title);
+            text.Children.Add(titleRow);
             text.Children.Add(subtitle);
 
             // 启用复选框：勾选 = 启用该规则（即时落盘）

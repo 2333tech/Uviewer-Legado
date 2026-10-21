@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -33,15 +34,23 @@ namespace Uviewer.Services
         private readonly string _content;
         private readonly List<AozoraBindingModel>? _blocks;
         private readonly IReadOnlyList<TitleRule>? _titleRules;
+        private readonly Func<string, string>? _purifyTitleLine;
 
+        // EN: TOC provider for TXT; headings may be pre-purified by title-scope replace rules.
+        /// <param name="purifyTitleLine">
+        /// 标题行预净化（作用于标题的替换规则）。识别标题前逐行调用，
+        /// 让"【玄幻】第12章"这类带前缀的标题在去前缀后能被标题规则命中。
+        /// </param>
         public TextTocProvider(
             string content,
             List<AozoraBindingModel>? blocks = null,
-            IReadOnlyList<TitleRule>? titleRules = null)
+            IReadOnlyList<TitleRule>? titleRules = null,
+            Func<string, string>? purifyTitleLine = null)
         {
             _content = content;
             _blocks = blocks;
             _titleRules = titleRules;
+            _purifyTitleLine = purifyTitleLine;
         }
 
         public async Task<List<TocItem>> GetTocAsync(CancellationToken token = default)
@@ -69,7 +78,7 @@ namespace Uviewer.Services
                 // 继续往下走标题规则切分（TextTocBuilder 内置标记 → 用户规则）。
             }
 
-            var entries = await Task.Run(() => TextTocBuilder.Build(_content, _titleRules), token);
+            var entries = await Task.Run(() => TextTocBuilder.Build(_content, _titleRules, _purifyTitleLine), token);
 
             return entries
                 .Select(e => new TocItem

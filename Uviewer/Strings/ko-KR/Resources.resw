@@ -94,6 +94,12 @@
   <data name="NextFileTooltip" xml:space="preserve">
     <value>다음 파일(↓)</value>
   </data>
+  <data name="PrevChapterTooltip" xml:space="preserve">
+    <value>이전 장</value>
+  </data>
+  <data name="NextChapterTooltip" xml:space="preserve">
+    <value>다음 장</value>
+  </data>
   <data name="PrevPageTooltip" xml:space="preserve">
     <value>이전 이미지/페이지(←)</value>
   </data>
@@ -101,7 +107,10 @@
     <value>다음 이미지/페이지(→)</value>
   </data>
   <data name="AozoraTooltip" xml:space="preserve">
-    <value>Aozora/md (A)</value>
+    <value>아오조라/MD/읽기 모드 (A)</value>
+  </data>
+  <data name="ReadingModeOnlyHint" xml:space="preserve">
+    <value>읽기 모드에서만 사용 가능</value>
   </data>
   <data name="FontTooltip" xml:space="preserve">
     <value>폰트 변경(F) - 우클릭으로 설정</value>

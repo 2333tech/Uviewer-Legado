@@ -38,6 +38,24 @@ public sealed class ReplaceRule
     /// <summary>作用范围：空/'*' 全部；source:&lt;origin&gt;；book:&lt;bookUrl&gt;；&lt;name&gt;[;&lt;bookUrl&gt;]（见 ContentPurifier.ScopeMatches）。</summary>
     public string? Scope { get; set; }
 
+    /// <summary>
+    /// 是否作用于<b>标题</b>（legado <c>scopeTitle</c>，默认 false）。
+    /// <para>作用于标题的规则会在"标题/分章规则"识别章节行<b>之前</b>先跑一遍目标行，
+    /// 这样"第123章 书名"这类需要先清理再识别的标题才能被标题规则匹配到。</para>
+    /// </summary>
+    [JsonPropertyName("scopeTitle")]
+    // EN: legado scopeTitle - rule also applies to heading lines before title rules run.
+    public bool ScopeTitle { get; set; }
+
+    /// <summary>
+    /// 是否作用于<b>正文</b>（legado <c>scopeContent</c>，默认 true）。
+    /// <para>与 <see cref="ScopeTitle"/> 互相独立：可以为只洗标题、只洗正文、或两者都洗。</para>
+    /// </summary>
+    [JsonPropertyName("scopeContent")]
+    // EN: legado scopeContent - rule applies to body text (default true, keeps legacy behavior).
+    public bool ScopeContent { get; set; } = true;
+
+
     /// <summary>是否启用（旧键名 isEnabled，用 JsonPropertyName 固定输出）。</summary>
     [JsonPropertyName("isEnabled")]
     public bool IsEnabled { get; set; } = true;

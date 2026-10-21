@@ -94,6 +94,12 @@
   <data name="NextFileTooltip" xml:space="preserve">
     <value>Next File (↓)</value>
   </data>
+  <data name="PrevChapterTooltip" xml:space="preserve">
+    <value>Previous Chapter</value>
+  </data>
+  <data name="NextChapterTooltip" xml:space="preserve">
+    <value>Next Chapter</value>
+  </data>
   <data name="PrevPageTooltip" xml:space="preserve">
     <value>Previous Image/Page (←)</value>
   </data>
@@ -101,7 +107,10 @@
     <value>Next Image/Page (→)</value>
   </data>
   <data name="AozoraTooltip" xml:space="preserve">
-    <value>Aozora/md (A)</value>
+    <value>Aozora/MD/Reading Mode (A)</value>
+  </data>
+  <data name="ReadingModeOnlyHint" xml:space="preserve">
+    <value>Available in Reading Mode</value>
   </data>
   <data name="FontTooltip" xml:space="preserve">
     <value>Change Font (F) - Right-click for settings</value>

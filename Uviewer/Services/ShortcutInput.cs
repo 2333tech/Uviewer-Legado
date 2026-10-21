@@ -11,6 +11,9 @@ namespace Uviewer.Services
         public bool IsEpubMode { get; init; }
         public bool IsTextMode { get; init; }
         public bool IsAozoraMode { get; init; }
+        // EN: Reading mode flag; arrow keys navigate chapters instead of files.
+        /// <summary>阅读模式（顶栏 A 按钮）是否生效：↑ / ↓ 因此改为上一章 / 下一章。</summary>
+        public bool IsReadingMode { get; init; }
         public bool IsVerticalMode { get; init; }
         public bool ShouldInvertControls { get; init; }
         public int CurrentEpubChapterIndex { get; init; }

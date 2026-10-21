@@ -97,6 +97,7 @@ namespace Uviewer.Services
                 IsEpubMode = actions.IsEpubMode,
                 IsTextMode = actions.IsTextMode,
                 IsAozoraMode = actions.IsAozoraMode,
+                IsReadingMode = actions.IsReadingMode,
                 IsVerticalMode = actions.IsVerticalMode,
                 ShouldInvertControls = actions.ShouldInvertControls,
                 CurrentEpubChapterIndex = actions.CurrentEpubChapterIndex,

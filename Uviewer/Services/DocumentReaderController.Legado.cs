@@ -66,6 +66,30 @@ namespace Uviewer
                 : service.TitleRules.GetEnabledOrdered();
         }
 
+        // EN: Single place that builds the TXT TOC provider, always wired with title-line purification.
+        /// <summary>
+        /// 构造 TXT 目录提供器：统一挂上「标题行预净化」。
+        /// <para>作用于标题的替换规则（legado <c>scopeTitle</c>）必须在标题/分章规则<b>之前</b>生效，
+        /// 否则"【玄幻】第12章 风起"这类带前缀的标题根本匹配不到标题规则。</para>
+        /// </summary>
+        internal TextTocProvider CreateTextTocProvider(string content, List<AozoraBindingModel>? blocks = null) =>
+            new(content, blocks, GetEnabledTitleRules(), PurifyTitleLineForToc);
+
+        // EN: Applies title-scope replace rules to a heading line before title-rule matching.
+        /// <summary>
+        /// 标题行预净化委托。
+        /// <para>刻意<b>不</b>主动构造 <see cref="BookSourceService"/>：书源数据尚未加载时
+        /// 等价于"没有标题规则"，直接原样返回，避免渲染路径上意外触发一次 IO。</para>
+        /// </summary>
+        private string PurifyTitleLineForToc(string line)
+        {
+            var service = _bookSourceService;
+            return service is null || !service.IsInitialized
+                ? line
+                : service.PurifyTitleLine(line, ReplaceScopeBookName, ReplaceScopeBookUrl, ReplaceScopeSourceUrl);
+        }
+
+        // EN: Rebuilds the TOC after title-rule edits; rebuilds file cache only when the chapter list really changed.
         /// <summary>
         /// 用最新的标题规则重建当前 TXT 的目录（导入/开关规则后调用）。
         /// <para>必须重建 provider 而不是只 LoadToc —— provider 在构造时就固定了规则快照，
@@ -84,21 +108,55 @@ namespace Uviewer
                 return;
             }
 
-            // 章节窗口模式：标题规则变了 ⇒ 标题规则指纹变 ⇒ 缓存失效，
-            // 直接重载（重载会走整本路径，下次打开才按新规则建缓存）
+            // 标题规则优先级最高：先记下"改之前的目录"，用来判断目录是否真的变了
+            var before = _tocService.CurrentToc.Select(t => t.HeadingText).ToArray();
+
             if (TextCacheActive)
             {
-                await ReloadCurrentTextAsync().ConfigureAwait(true);
+                // 内存虚拟窗口（无磁盘缓存）：不能落盘——只丢掉旧章节表，用新规则重新装配窗口
+                if (IsVirtualTextCache)
+                {
+                    InvalidateVirtualPurifiedChapters();
+                    var center = Math.Max(0, _textCacheCenter);
+                    var offset = GetCurrentChapterLineOffset();
+                    ClearTextCacheWindowState();
+                    if (await TryOpenVirtualWindowAsync(center, offset).ConfigureAwait(true))
+                    {
+                        ShowNotification(
+                            $"目录已按新标题规则重建：{_tocService.CurrentToc.Count} 章", "\uE73E", "Green");
+                    }
+
+                    return;
+                }
+
+                // 磁盘章节缓存：目录来自缓存 ⇒ 用新规则重建缓存（保留阅读位置），再按原章重开窗口
+                await SaveTextCacheAsync(preservePosition: true).ConfigureAwait(true);
                 return;
             }
 
-            _tocService.SetProvider(new TextTocProvider(_currentTextContent, null, GetEnabledTitleRules()));
+            // 阅读模式未开启：本来就没有由标题规则生成的目录，无需重建
+            if (!_isAozoraMode)
+            {
+                return;
+            }
+
+            _tocService.SetProvider(CreateTextTocProvider(_currentTextContent));
             await _tocService.LoadTocAsync().ConfigureAwait(true);
+
+            // 目录没变 ⇒ 什么都不做（连通知都不发，避免无意义打扰）
+            var after = _tocService.CurrentToc.Select(t => t.HeadingText).ToArray();
+            if (before.SequenceEqual(after))
+            {
+                return;
+            }
+
+            ShowNotification($"目录已按新标题规则重建：{after.Length} 章", "\uE73E", "Green");
         }
 
         /// <summary>是否正处于书源阅读模式。</summary>
         internal bool IsLegadoMode => _legadoSession is not null;
 
+    // EN: The only purify entry for local text; skipped entirely when reading mode is off.
         /// <summary>
         /// <b>读取 → 渲染之间</b>的统一净化（受一级菜单"替换净化（总开关）"控制）。
         ///
@@ -120,6 +178,13 @@ namespace Uviewer
         if (string.IsNullOrEmpty(text))
         {
       return text;
+        }
+
+        // 阅读模式（顶栏 A 按钮）关闭时不做替换净化：模式关闭 = 纯文本浏览原始内容，
+        // 开关即"净化 / 不净化"的唯一入口，关掉即刻还原原文，不需要重新读盘。
+        if (!_isAozoraMode)
+        {
+            return text;
         }
 
         // 注意：<b>不要</b>用"_legadoSession 非空"来跳过净化。
@@ -227,6 +292,13 @@ namespace Uviewer
             InstallLegadoToc(chapters);
 
             SwitchToTextMode();
+
+            // 书源书恒为阅读模式：它自带净化链路 + 书源目录，与"本地 TXT 是否有缓存"无关。
+            // 置位后再渲染首章，顶栏 A 按钮、净化/缓存菜单项、目录按钮才会同步成"可用"。
+            _isAozoraMode = true;
+            _currentTextRawContent = null;   // 书源正文没有"原文/净化"双态，避免切换模式时误用旧本地文本
+            ApplyReadingModeUiState();
+
             await ShowLegadoChapterAsync(startIndex, token).ConfigureAwait(true);
             return true;
         }
@@ -273,6 +345,7 @@ namespace Uviewer
 
                 // 书名 + 章名作为"文件名"，让最近记录/进度 UI 有可读标识
                 var displayName = $"{LegadoBookName} - {title}";
+                _currentTextRawContent = null;   // 章节正文本身就是最终形态（已在会话内净化）
                 await DisplayLoadedText(content, displayName, null, local).ConfigureAwait(true);
 
                 if (generation != _legadoGeneration || local.IsCancellationRequested)
@@ -440,11 +513,27 @@ namespace Uviewer
             await rules.PickAndImportAsync().ConfigureAwait(true);
         }
 
+        // EN: Replace-rule manager dialog: probes per-rule hits for the current chapter and refreshes the view on close.
         /// <summary>查看并逐条编辑已导入的净化规则（主从界面，与书源管理同构）。</summary>
         internal async Task ShowReplaceRulesAsync()
         {
             var service = BookSources;
             await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            // ①「本章生效」标记：打开窗口前拿**当前章节原文**跑一遍净化管线（后台线程，避免卡 UI）。
+            //    口径与真实净化完全一致——只有真的改写了本章文本的规则才会带标记。
+            var probeText = GetCurrentChapterRawTextForRuleProbe();
+            IReadOnlyCollection<long> effectiveIds = Array.Empty<long>();
+            if (!string.IsNullOrEmpty(probeText) && IsReplacePurifyEffective())
+            {
+                effectiveIds = await Task.Run(() => service.FindEffectiveReplaceRuleIds(
+                    probeText, ReplaceScopeBookName, ReplaceScopeBookUrl, ReplaceScopeSourceUrl)).ConfigureAwait(true);
+            }
+
+            // ② 关窗后是否需要刷新正文：比"改前 / 改后"的净化规则指纹。
+            //    比用"点了保存"当信号更准——只改名称/分组不影响净化（不刷新），
+            //    导入 / 删除 / 改匹配串 / 改替换串 / 改开关都会改变指纹（刷新）。
+            var rulesFingerprintBefore = TextCacheLogic.ComputeReplaceRulesFingerprint(service.ReplaceRules.GetAll());
 
             var rules = new ReplaceRuleService(service, RootGrid, GetWindowHandle, NotifyFromRuleService);
             var dialog = new RuleManagerDialog<Uviewer.Services.Legado.Models.ReplaceRule>(
@@ -454,7 +543,7 @@ namespace Uviewer
                     DialogTitle = "替换净化规则管理",
                     ItemNoun = "净化规则",
                     EmptyHint = "尚未导入任何净化规则。\n请先用「导入净化规则 JSON…」从 legado / reader 导出的规则文件导入。",
-                    ListItems = rules.List,
+                    ListItems = () => rules.ListWithMarkers(effectiveIds),
                     NameOf = ReplaceRuleService.NameOf,
                     DetailOf = ReplaceRuleService.DetailOf,
                     IdOf = r => r.Id,
@@ -475,6 +564,13 @@ namespace Uviewer
                 });
 
             await dialog.ShowAsync().ConfigureAwait(true);
+
+            // ③ 规则真的变了才刷新，且只重算预处理窗口（书源 RepurifyWindow / 缓存窗口重装配）
+            var rulesFingerprintAfter = TextCacheLogic.ComputeReplaceRulesFingerprint(service.ReplaceRules.GetAll());
+            if (!string.Equals(rulesFingerprintBefore, rulesFingerprintAfter, StringComparison.Ordinal))
+            {
+                await RefreshReadingAfterReplaceRulesChangedAsync().ConfigureAwait(true);
+            }
         }
 
         /// <summary>导入标题 / 章节划分规则 JSON。</summary>
@@ -628,11 +724,16 @@ namespace Uviewer
    }
         }
 
-        /// <summary>切换净化后重算窗口：当前章之前重算 2 章、之后重算 4 章（与预取窗口一致）。</summary>
+        // ============================================================
+        // 阅读窗口约定（项目默认）：前 2 后 5 + 当前章 = 8 章。
+        // 书源预取/重净化、本地章节缓存（TextCacheFormat.WindowBefore/After）统一用这个窗口。
+        // ============================================================
+
+        /// <summary>窗口：当前章之前重算的章数（约定值 2）。</summary>
         private const int RepurifyWindowBefore = 2;
 
-        /// <summary>切换净化后重算窗口：当前章之后重算 4 章。</summary>
-        private const int RepurifyWindowAfter = 4;
+        /// <summary>窗口：当前章之后重算的章数（约定值 5，与 TextCacheFormat.WindowAfter 一致）。</summary>
+        private const int RepurifyWindowAfter = 5;
         /// <para>刻意走 <see cref="LoadTextFileAsync"/> 这条<b>本地文件</b>通路而不是
         /// <c>OpenLegadoBookAsync</c>：下载的意义就是"从此不依赖网络与书源"，
         /// 打开已下好的文件才能兑现这一点。副作用一并复用：进最近记录、侧栏选中、

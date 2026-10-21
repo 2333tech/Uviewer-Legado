@@ -70,6 +70,22 @@ namespace Uviewer.Services
                 return true;
             }
 
+            // 阅读模式接管 ↑ / ↓（含 PageUp / PageDown）：上一章 / 下一章，而非上/下一个文件。
+            // 章节由顶栏目录下拉栏定义；关闭阅读模式时下面两个分支恢复原语义。
+            // EN: In reading mode arrow keys navigate chapters instead of files.
+            if (context.IsReadingMode)
+            {
+                if (input.Key == VirtualKey.Up || input.Key == VirtualKey.PageUp)
+                {
+                    return Set(out route, AppCommand.NavigateReadingChapter, -1);
+                }
+
+                if (input.Key == VirtualKey.Down || input.Key == VirtualKey.PageDown)
+                {
+                    return Set(out route, AppCommand.NavigateReadingChapter, 1);
+                }
+            }
+
             if (input.Key == VirtualKey.Up || input.Key == VirtualKey.PageUp)
             {
                 return Set(out route, AppCommand.NavigateToFile, -1);

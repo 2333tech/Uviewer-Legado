@@ -230,6 +230,63 @@ namespace Uviewer.Services.Legado.Tests
         }
 
         [Fact]
+        public void AssembleWindow_Indexed_Overload_Passes_Chapter_Index_And_Reuses_Cache()
+        {
+            var text = TextCacheLogic.NormalizeNewlines(BuildBook(5));
+            var chapters = Map(text);
+            var purifiedIndices = new List<int>();
+
+            // 带下标的净化委托：模拟"虚拟窗口按章缓存"——已缓存的章不再走净化
+            var cache = new Dictionary<int, string>();
+            var assembly = TextCacheLogic.AssembleWindow(text, chapters, 1, 4, (index, slice) =>
+            {
+                if (cache.TryGetValue(index, out var hit))
+                {
+                    return hit;
+                }
+
+                purifiedIndices.Add(index);
+                var pure = slice.Replace("ａ", "a");
+                cache[index] = pure;
+                return pure;
+            });
+
+            // 只对窗口内的 3 章发起净化，且索引就是章节表下标
+            Assert.Equal(new[] { 1, 2, 3 }, purifiedIndices.ToArray());
+            Assert.DoesNotContain("ａ", assembly.Text);
+
+            // 第二次装配同一窗口：全部命中缓存，一次净化都不做
+            purifiedIndices.Clear();
+            var again = TextCacheLogic.AssembleWindow(text, chapters, 1, 4, (index, slice) =>
+                cache.TryGetValue(index, out var hit) ? hit : slice.Replace("ａ", "a"));
+
+            Assert.Empty(purifiedIndices);
+            Assert.Equal(assembly.Text, again.Text);
+        }
+
+        [Fact]
+        public void BuildChapterMap_Applies_Title_Purifier_Before_Splitting()
+        {
+            // 标题带装饰前缀：不预净化时标题规则匹配不到
+            var text = "【玄幻】第1节 甲\n正文一\n【玄幻】第2节 乙\n正文二";
+            var rule = new TitleRule
+            {
+                Id = 1, Name = "第N节", Pattern = @"^第\s*[0-9]+\s*节.*$", Order = 10, Level = 1, IsEnabled = true,
+            };
+
+            Assert.Empty(TextCacheLogic.BuildChapterMap(text, new[] { rule }));
+
+            var chapters = TextCacheLogic.BuildChapterMap(
+                text,
+                new[] { rule },
+                line => line.StartsWith("【玄幻】", StringComparison.Ordinal) ? line["【玄幻】".Length..].Trim() : line);
+
+            Assert.Equal(2, chapters.Count);
+            Assert.Equal("第1节 甲", chapters[0].Name);
+            Assert.Equal("第2节 乙", chapters[1].Name);
+        }
+
+        [Fact]
         public void AssembleWindow_Volume_Chapters_Are_Skipped()
         {
             // 卷规则：第N卷

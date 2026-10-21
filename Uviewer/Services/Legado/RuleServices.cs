@@ -43,12 +43,22 @@ namespace Uviewer.Services.Legado
         }
 
         /// <summary>规则清单（供 RuleManagerDialog 罗列）。</summary>
-        public IReadOnlyList<RuleListItem> List() => _service.ReplaceRules.GetAll()
+        public IReadOnlyList<RuleListItem> List() => ListWithMarkers(null);
+
+        // EN: Rule list with an optional per-rule badge marking rules that take effect in the current chapter.
+        /// <summary>
+        /// 规则清单 + 「本章生效」标记。
+        /// <para>只有同时满足"已启用"且"在当前章节的原文上真的改写了文本"才打标记
+        /// （探测由 <see cref="BookSourceService.FindEffectiveReplaceRuleIds"/> 完成，口径与净化管线完全一致）。</para>
+        /// </summary>
+        /// <param name="effectiveRuleIds">当前章节命中的规则主键；null = 不探测、不打标记。</param>
+        public IReadOnlyList<RuleListItem> ListWithMarkers(IReadOnlyCollection<long>? effectiveRuleIds) => _service.ReplaceRules.GetAll()
             .Select(r => new RuleListItem(
                 r.Id,
                 NameOf(r),
                 DetailOf(r),
-                r.IsEnabled))
+                r.IsEnabled,
+                r.IsEnabled && effectiveRuleIds is not null && effectiveRuleIds.Contains(r.Id) ? "本章生效" : null))
             .ToList();
 
         /// <summary>列表/表单共用的规则名（空名兜底为"(未命名规则)"）。</summary>
