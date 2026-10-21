@@ -151,8 +151,9 @@ namespace Uviewer.Services.Legado
         {
             try
             {
-                var search = new SearchService();
-                return await search.SearchAsync(source, keyword, 1, token).ConfigureAwait(false);
+                // 复用服务里的 SearchService 实例：与阅读引擎共用同一份 JS 状态仓库
+                //（阶段 4-2 起 source.getVariable / java.put 在搜索链与阅读链之间可见）。
+                return await _service.Search.SearchAsync(source, keyword, 1, token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
             {

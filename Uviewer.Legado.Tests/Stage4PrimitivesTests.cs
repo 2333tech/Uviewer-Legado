@@ -237,7 +237,8 @@ public class Stage4PrimitivesTests
     public async Task Capabilities_Raw_Sample_Baseline()
     {
         // 这条是全量基线：口径再变时会立刻红，逼你同步文档与 ROI 数字。
-        // 2026-10-21（4-1 落地后）实测值写在这里。
+        // 2026-10-21（4-2 落地后）实测值写在这里：全局对象 source/book/cache/cookie 注入后
+        // 阅读链路可跑 304 → 321（+17，与方案 §0 的 ROI 预测一致），html 不再参与判定。
         var all = await SampleData.AllAsync();
         Assert.Equal(408, all.Count);
 
@@ -270,9 +271,9 @@ public class Stage4PrimitivesTests
             }
         }
 
-        Assert.Equal(304, readingOk);
-        Assert.Equal(237, allOk);
-        Assert.Equal(104, needsStage4);
+        Assert.Equal(321, readingOk);
+        Assert.Equal(258, allOk);
+        Assert.Equal(87, needsStage4);
 
         // 阅读链路 Top 缺口（阶段 4 后续步骤的 ROI 依据）
         var top = missingApiHistogram.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal)
@@ -280,11 +281,11 @@ public class Stage4PrimitivesTests
         Assert.Equal(new[] { "ajax", "startBrowser", "getElements", "aesBase64DecodeToString", "getStringList" }, top);
     }
 
-    /// <summary>阅读链路当前可跑的原始条目数（2026-10-21，4-1 落地后）。</summary>
-    private const int ExpectedReadingOk = 304;
+    /// <summary>阅读链路当前可跑的原始条目数（2026-10-21，4-2 落地后；4-1 为 304）。</summary>
+    private const int ExpectedReadingOk = 321;
 
-    /// <summary>整源（含搜索/详情链）当前可跑的原始条目数。</summary>
-    private const int ExpectedAllOk = 237;
+    /// <summary>整源（含搜索/详情链）当前可跑的原始条目数（4-2 落地后；4-1 为 237）。</summary>
+    private const int ExpectedAllOk = 258;
 
     // ============================================================
     // 辅助

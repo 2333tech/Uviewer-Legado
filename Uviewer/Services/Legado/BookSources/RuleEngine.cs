@@ -49,15 +49,35 @@ public sealed class RuleEngine
     }
 
     /// <summary>
-    /// 记录"当前在跑哪个书源的哪条链"（诊断归组用）。
+    /// 脚本状态仓库（<c>java.put/get</c>、<c>source/book/chapter/cache/cookie</c> 的落点，阶段 4-2）。
+    /// <para>默认 <see cref="SourceStateStore.InMemory"/>：<b>刻意不落盘</b>，避免引擎单测污染
+    /// 用户的 <c>%LocalAppData%</c>；生产路径由 <c>BookSourceService</c> 按数据目录构造持久实例并注入
+    /// （落 <c>legado/sources</c>）。</para>
+    /// <para>必须在第一次解析前设置：链入口会用它构造 <see cref="JsScope"/>。</para>
+    /// </summary>
+    public SourceStateStore Store { get; set; } = SourceStateStore.InMemory;
+
+    /// <summary>
+    /// 记录"当前在跑哪个书源的哪条链"（诊断归组用），并装配本链的 JS 作用域。
     /// <para>链名固定为 search / bookInfo / toc / content：粒度到链而不是到字段，
     /// 因为 <see cref="RunJs"/> 是唯一出口，逐字段传参会把签名污染到十几处。</para>
+    /// <para><b>作用域每链新建一个</b>：<see cref="JsScope"/> 里带的是"这一链的书/章"快照，
+    /// 并行正文时每个线程持有自己的那份（互不干扰）；状态本身由
+    /// <see cref="SourceStateStore"/> 按书源共享。</para>
     /// </summary>
-    private void BeginChain(BookSourceModel source, string field)
+    private void BeginChain(
+        BookSourceModel source, string field, JsBookState? book = null, string? chapterUrl = null)
     {
         _jsSource = source;
         _js.SourceKey = source.BookSourceUrl;
         _js.Field = field;
+        _js.Scope = new JsScope(
+            source.BookSourceUrl,
+            source,
+            book,
+            chapterUrl,
+            Store,
+            _js.Diagnostics);
     }
 
     // 模板正则常量：每次展开 {{...}} 都会用到，缓存并预编译。
@@ -67,10 +87,11 @@ public sealed class RuleEngine
     /// 搜索入口（对标 reader search_books）。步骤：
     /// ① 无 ruleSearch → 空列表；② 列表规则归一化（- 前缀 = 倒序）；
     /// ③ 走列表解析；④ 按需倒序（reader：reverse 在拼接后生效）。
+    /// <para>搜索链没有书籍上下文（<c>book</c> 对象字段为空），与 legado/reader 一致。</para>
     /// </summary>
     public List<SearchResult> SearchBooks(BookSourceModel source, string body, string baseUrl)
     {
-        // 记录当前书源与链名：RunJs 需要它的 jsLib（jsLib 注入）+ 诊断归组
+        // 记录当前书源与链名：RunJs 需要它的 jsLib（jsLib 注入）+ 诊断归组 + 全局对象作用域
         BeginChain(source, "search");
         if (source.RuleSearch is null)
         {
@@ -515,9 +536,11 @@ public sealed class RuleEngine
     /// <para>name 的三层兜底（书架名 → URL 末段）在编排层 BookSourceEngine.GetBookInfoAsync，
     /// 因为需要 shelfName 入参。</para>
     /// </summary>
-    public BookInfo? ParseBookInfo(BookSourceModel source, string body, string baseUrl, string? bookUrl = null)
+    public BookInfo? ParseBookInfo(
+        BookSourceModel source, string body, string baseUrl, string? bookUrl = null, JsBookState? book = null)
     {
-        BeginChain(source, "bookInfo");
+        // 详情链的书籍上下文：入参优先，其次用 bookUrl 兜底（至少让 book.bookUrl 可用）
+        BeginChain(source, "bookInfo", book ?? JsBookState.FromBookUrl(bookUrl));
         var rule = source.RuleBookInfo;
         if (rule is null)
         {
@@ -576,9 +599,10 @@ public sealed class RuleEngine
     ///（优化前 DetectMode 嗅探、FragmentContext、QueryNodes 各解析一次，大目录页要被解析 3~4 遍）。</para>
     /// </summary>
     public (List<TocItem> Chapters, List<string> NextUrls) ParseTocPage(
-        BookSourceModel source, string body, string baseUrl)
+        BookSourceModel source, string body, string baseUrl, JsBookState? book = null)
     {
-        BeginChain(source, "toc");
+        // 目录链有书籍上下文（book.bookUrl / book.name / book.durChapterIndex 常用），但没有"当前章"
+        BeginChain(source, "toc", book);
         var rule = source.RuleToc;
         if (rule is null)
         {
@@ -601,8 +625,9 @@ public sealed class RuleEngine
     /// 正文解析（对标 reader rule_engine::content）：
     /// sourceRegex 裁响应体 → webJs → 前导 JS 循环 → 选择器（为空则整份 body）→ 尾随 JS → replaceRegex。
     /// </summary>
-    public string ParseContent(BookSourceModel source, string body, string baseUrl) =>
-        ParseContentPage(source, body, baseUrl).Text;
+    public string ParseContent(
+        BookSourceModel source, string body, string baseUrl, JsBookState? book = null, string? chapterUrl = null) =>
+        ParseContentPage(source, body, baseUrl, book, chapterUrl).Text;
 
     /// <summary>
     /// 正文页一次性解析（正文 + 标题 + 下一页），三者共用同一份片段解析结果，
@@ -615,9 +640,12 @@ public sealed class RuleEngine
     /// ⑥ 尾随 JS 处理；⑦ ReplaceRegex 清洗（JS 形态的 replaceRegex 先跑脚本）。
     /// </summary>
     internal (string Text, string Title, string? Next) ParseContentPage(
-        BookSourceModel source, string body, string baseUrl)
+        BookSourceModel source, string body, string baseUrl, JsBookState? book = null, string? chapterUrl = null)
     {
-        BeginChain(source, "content");
+        // 正文链作用域：有书籍上下文（book.*）+ 当前章 URL（chapter 变量 / java.put 的落点）。
+        // chapterUrl 缺省用 baseUrl：正文首页 URL 就是章节 URL（分页跟随的后续页会换 baseUrl，
+        // 但章节变量应挂在"这一章"，故以首次传入的 chapterUrl 为准）。
+        BeginChain(source, "content", book, chapterUrl ?? baseUrl);
         var rule = source.RuleContent;
         if (rule is null)
         {
@@ -723,7 +751,8 @@ public sealed class RuleEngine
     /// <para>注意：formatJs 会改章节名，执行它的 Jint 引擎必须串行——编排层把它放在
     /// 所有并发抓取之后统一做（见 BookSourceEngine.ApplyFormatJs）。</para>
     /// </summary>
-    public void ApplyFormatJs(BookSourceModel source, List<TocItem> chapters, string baseUrl)
+    public void ApplyFormatJs(
+        BookSourceModel source, List<TocItem> chapters, string baseUrl, JsBookState? book = null)
     {
         var script = source.RuleToc?.FormatJs;
         if (chapters.Count == 0 || string.IsNullOrWhiteSpace(script))
@@ -731,8 +760,10 @@ public sealed class RuleEngine
             return;
         }
 
-        // formatJs 属于目录链：同样要带 jsLib 与诊断归组（否则会沿用上一条链的 _jsSource）
-        BeginChain(source, "toc");
+        // formatJs 属于目录链：同样要带 jsLib 与诊断归组（否则会沿用上一条链的 _jsSource）。
+        // 章节上下文不逐条切换：每章重建一次作用域 = 每章重绑五个全局对象（2000 章会明显变慢），
+        // 而 formatJs 里读 chapter 变量的写法在原始样本里为 0 例（只有 index/title 两个 globals）。
+        BeginChain(source, "toc", book);
 
         var globals = new Dictionary<string, object?>();
         for (var i = 0; i < chapters.Count; i++)

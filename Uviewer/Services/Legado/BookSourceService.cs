@@ -39,6 +39,13 @@ namespace Uviewer.Services.Legado
         private readonly BookSourceEngine _engine;
 
         /// <summary>
+        /// 书源 JS 状态仓库（阶段 4-2）：<c>java.put/get</c>、<c>source/book/cache/cookie</c> 的落点。
+        /// <para>目录 = <c>&lt;数据目录&gt;\legado\sources\&lt;sha1(书源URL)&gt;.json</c>。
+        /// 引擎与搜索服务共用同一实例，故"搜索/目录链写的变量，阅读链读得到"。</para>
+        /// </summary>
+        private readonly SourceStateStore _jsStateStore;
+
+        /// <summary>
         /// 替换净化总开关（用户级，持久化到 <c>legadoSettings.json</c>）。
         /// <para><b>与逐条规则开关的关系</b>：总开关关掉 = 整条净化管线空转
         /// （等价于"没有任何规则生效"），但<b>不改动</b>各条规则的 <c>IsEnabled</c>。
@@ -78,11 +85,14 @@ namespace Uviewer.Services.Legado
 
             // 引擎在构造时就绑定净化器实例：净化器的规则列表可在加载后整体替换
             //（ContentPurifier 内部按引用比较失效编译快照），无需重建引擎。
-            _engine = new BookSourceEngine(purifier: _purifier);
+            // 阶段 4-2：JS 状态仓库随数据目录走（<数据目录>\legado\sources），引擎与搜索共用同一实例，
+            // 这样"搜索链写下的变量 → 阅读链读得到"，且重启后仍在。
+            _jsStateStore = new SourceStateStore(Path.Combine(dir, "legado", "sources"));
+            _engine = new BookSourceEngine(purifier: _purifier, store: _jsStateStore);
 
             // 搜索服务自建引擎池：每次搜索新建 RuleEngine（Jint 非线程安全），
             // 并发度由 BookSourceLimits 控制。
-            _search = new SearchService();
+            _search = new SearchService(store: _jsStateStore);
         }
 
         /// <summary>书源管理（导入/查询/启停）。</summary>
@@ -102,6 +112,14 @@ namespace Uviewer.Services.Legado
 
         /// <summary>取数/解析编排引擎（详情、目录、正文、图片）。</summary>
         public BookSourceEngine Engine => _engine;
+
+        /// <summary>搜索服务（与引擎共用 JS 状态仓库，供搜索对话框复用同一实例）。</summary>
+        // EN: Shared search service so the search chain writes variables to the same JS state store.
+        public SearchService Search => _search;
+
+        /// <summary>书源 JS 状态仓库（阶段 4-2；退出登录/清理书源状态时使用）。</summary>
+        // EN: Per-source JS state store (variables, cookies, cache) backed by files on disk.
+        public SourceStateStore JsStateStore => _jsStateStore;
 
         /// <summary>是否已初始化（UI 据此决定是否显示"加载中"）。</summary>
         public bool IsInitialized { get; private set; }

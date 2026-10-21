@@ -100,6 +100,14 @@ namespace Uviewer.Services.Legado
         /// <summary>书名（详情解析后填充，供 UI 展示）。</summary>
         public string BookName { get; private set; } = string.Empty;
 
+        /// <summary>
+        /// 书籍 JS 上下文（阶段 4-2）：脚本里 <c>book.name/author/durChapterIndex</c> 的取值来源。
+        /// <para>详情解析成功后填充；书名兜底（书架名/URL 末段）只出现在这里，不影响
+        /// <see cref="BookName"/> 的 UI 语义。取章节正文时再按章派生 <c>durChapterIndex</c>。</para>
+        /// </summary>
+        // EN: Book context handed to rule scripts (book.name/author/durChapterIndex...).
+        private JsBookState _jsBook = new();
+
         /// <summary>目录（加载后填充）。</summary>
         public IReadOnlyList<CoreTocItem> Chapters { get; private set; } = Array.Empty<CoreTocItem>();
 
@@ -117,11 +125,17 @@ namespace Uviewer.Services.Legado
                 .GetBookInfoAsync(_source, _bookUrl, null, token).ConfigureAwait(false);
             BookName = FirstNonEmpty(info?.Name, NameFromUrl(_bookUrl), _source.BookSourceName);
 
+            // ①b 书籍 JS 上下文：此后目录链/正文链的 book.* 都从这里取（book.name 用最终书名）
+            _jsBook = JsBookState.FromBookInfo(info, _bookUrl, BookName);
+
             // ② 目录：优先用详情页给出的 tocUrl，退化时用书籍 URL 本身
             var tocUrl = FirstNonEmpty(info?.TocUrl, _bookUrl);
             var chapters = await _service.Engine
-                .GetTocAsync(_source, tocUrl, token).ConfigureAwait(false);
+                .GetTocAsync(_source, tocUrl, token, _jsBook).ConfigureAwait(false);
             Chapters = chapters;
+
+            // ②b 目录已知总章数：补进上下文（book.totalChapterNum）
+            _jsBook = _jsBook with { TotalChapterNum = chapters.Count };
 
             // ③ 断点续读：命中则回到上次章节，否则从第一章开始
             var saved = _service.GetReadingPosition(_source.BookSourceUrl, _bookUrl);
@@ -174,7 +188,12 @@ namespace Uviewer.Services.Legado
 
             var chapter = Chapters[index];
             var content = await _service.Engine
-                .GetContentAsync(_source, chapter.ChapterUrl ?? string.Empty, _bookUrl, token)
+                .GetContentAsync(
+                    _source,
+                    chapter.ChapterUrl ?? string.Empty,
+                    _bookUrl,
+                    token,
+                    _jsBook.WithChapter(index, chapter.ChapterName, Chapters.Count))
                 .ConfigureAwait(false);
             if (content is null)
             {
@@ -264,7 +283,7 @@ namespace Uviewer.Services.Legado
         public Task<Uviewer.Services.Legado.Models.ChapterContent?[]> FetchContentsAsync(
             IReadOnlyList<CoreTocItem> chapters, CancellationToken token = default) =>
             _service.Engine.GetContentsIndexedAsync(
-                _source, chapters, _bookUrl, BatchFetchConcurrency, null, token);
+                _source, chapters, _bookUrl, BatchFetchConcurrency, null, token, _jsBook);
 
         /// <summary>整本下载时的章节抓取并发度（比搜索的 16 保守，下载是长任务）。</summary>
         private const int BatchFetchConcurrency = 8;
@@ -414,7 +433,12 @@ namespace Uviewer.Services.Legado
 
             var chapter = Chapters[index];
             var content = await _service.Engine
-                .GetContentAsync(_source, chapter.ChapterUrl ?? string.Empty, _bookUrl, token)
+                .GetContentAsync(
+                    _source,
+                    chapter.ChapterUrl ?? string.Empty,
+                    _bookUrl,
+                    token,
+                    _jsBook.WithChapter(index, chapter.ChapterName, Chapters.Count))
                 .ConfigureAwait(false);
             if (token.IsCancellationRequested || content is null)
             {

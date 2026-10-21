@@ -138,7 +138,8 @@ public sealed record SourceCapabilityReport
 /// <list type="number">
 /// <item>用 <see cref="JsApiSurfaceScanner"/> 抽取脚本上下文里的 <c>java.X</c> 与全局对象用法；</item>
 /// <item>逐个查 <see cref="JsApiCatalog"/>，只有**未实现**的才算缺口；</item>
-/// <item>全局对象（source/book/cache/cookie/html）当前全部未注入 → 用到即算缺口（4-2 会逐项转真）；</item>
+/// <item>全局对象：阶段 4-2 起 <c>source/book/cache/cookie</c> 已注入真实实现，不再算缺口；
+///   <c>html</c> 不作为判定依据（样本里的用法全是局部变量，见 <see cref="JsGlobalCatalog.IsGated"/>）；</item>
 /// <item>阅读链路与全源分开统计，搜索/详情链的缺口不再连坐阅读。</item>
 /// </list>
 ///
@@ -270,7 +271,14 @@ public static class BookSourceCapabilities
 
         foreach (var root in JsGlobalCatalog.Roots)
         {
+            // 已注入真实实现（4-2：source/book/cache/cookie）→ 不是缺口
             if (JsGlobalCatalog.IsImplemented(root))
+            {
+                continue;
+            }
+
+            // 不作为判定依据的根（html）：样本里的 html.* 全是局部变量，legado 也无此全局对象
+            if (!JsGlobalCatalog.IsGated(root))
             {
                 continue;
             }

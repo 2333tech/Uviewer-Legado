@@ -22,6 +22,9 @@ public enum JsDiagnosticKind
 
     /// <summary><c>java.toast</c> / <c>java.longToast</c> 输出。</summary>
     Toast,
+
+    /// <summary>状态仓库读写失败/被拒（阶段 4-2：值超长、键数超限、磁盘不可写）。</summary>
+    StateError,
 }
 
 /// <summary>一条诊断（同源/同字段/同类/同细节会聚合成 <see cref="Count"/> 次）。</summary>
@@ -82,6 +85,14 @@ public sealed class JsDiagnostics
     /// <summary>记录 <c>java.toast</c> / <c>java.longToast</c> 输出。</summary>
     public void RecordToast(string? sourceKey, string? field, string message) =>
         Record(sourceKey, field, JsDiagnosticKind.Toast, "toast", message);
+
+    /// <summary>
+    /// 记录状态仓库的读写失败（阶段 4-2）。
+    /// <para>状态读写失败**不中断解析**（书源脚本拿到的仍是可用值/空值），但必须可见：
+    /// "为什么登录态没记住 / 为什么变量跨链读不到"直接可查。</para>
+    /// </summary>
+    public void RecordStateError(string? sourceKey, string? field, string detail, string? sample = null) =>
+        Record(sourceKey, field, JsDiagnosticKind.StateError, detail, sample);
 
     /// <summary>取快照（按次数降序；界面/测试用，调用频率低）。</summary>
     public IReadOnlyList<JsDiagnosticEntry> Snapshot()

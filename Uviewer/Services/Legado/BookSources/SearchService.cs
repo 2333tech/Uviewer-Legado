@@ -14,9 +14,13 @@ public sealed class SearchService
 {
     private readonly IBookSourceFetcher _fetcher;
 
-    public SearchService(IBookSourceFetcher? fetcher = null)
+    /// <summary>脚本状态仓库（阶段 4-2）：搜索链里 <c>source.getVariable</c>/<c>java.put</c> 的落点。</summary>
+    private readonly SourceStateStore _store;
+
+    public SearchService(IBookSourceFetcher? fetcher = null, SourceStateStore? store = null)
     {
         _fetcher = fetcher ?? new HttpBookSourceFetcher();
+        _store = store ?? SourceStateStore.InMemory;
     }
 
     /// <summary>
@@ -49,7 +53,7 @@ public sealed class SearchService
         var (content, baseUrl) = await _fetcher
             .FetchAsync(url, spec, source.BookSourceUrl, cancellationToken).ConfigureAwait(false);
 
-        return new RuleEngine().SearchBooks(source, content, baseUrl);
+        return new RuleEngine { Store = _store }.SearchBooks(source, content, baseUrl);
     }
 
     /// <summary>

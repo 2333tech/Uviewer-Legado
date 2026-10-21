@@ -40,6 +40,14 @@ public sealed class BookSourceEngine
     private readonly RuleEngine _engine = new();
 
     /// <summary>
+    /// 书源 JS 状态仓库（阶段 4-2）：<c>java.put/get</c>、<c>source/book/chapter/cache/cookie</c> 的落点。
+    /// <para>默认内存态（<see cref="SourceStateStore.InMemory"/>）——单测不写用户目录；
+    /// 生产由 <c>BookSourceService</c> 按数据目录构造持久实例并注入（<c>legado/sources</c>）。
+    /// 并行正文租借的引擎也指向同一个仓库，故"目录链 put、正文链 get"跨引擎可见。</para>
+    /// </summary>
+    private readonly SourceStateStore _store;
+
+    /// <summary>
     /// 正文净化管线（可选注入，对标 reader 前端在内容展示前应用替换规则）。
     /// null = 不净化（向后兼容：既有调用方无感）。
     /// </summary>
@@ -48,10 +56,16 @@ public sealed class BookSourceEngine
     /// <param name="fetcher">取数实现（默认 HTTP）。</param>
     /// <param name="purifier">净化管线（可选；宿主通常持 ReplaceRuleManager，规则变更时把
     /// 新快照赋给 <see cref="ContentPurifier.Rules"/> 即可，引擎无需重建）。</param>
-    public BookSourceEngine(IBookSourceFetcher? fetcher = null, ContentPurifier? purifier = null)
+    /// <param name="store">JS 状态仓库（可选；默认内存态，生产传入按数据目录构造的持久实例）。</param>
+    public BookSourceEngine(
+        IBookSourceFetcher? fetcher = null,
+        ContentPurifier? purifier = null,
+        SourceStateStore? store = null)
     {
         _fetcher = fetcher ?? new HttpBookSourceFetcher();
         _purifier = purifier;
+        _store = store ?? SourceStateStore.InMemory;
+        _engine.Store = _store;
     }
 
     // ==================== 详情 ====================
@@ -67,7 +81,8 @@ public sealed class BookSourceEngine
         BookSourceModel source,
         string bookUrl,
         string? shelfName = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        JsBookState? book = null)
     {
         if (string.IsNullOrWhiteSpace(bookUrl) || source.RuleBookInfo is null)
         {
@@ -82,7 +97,7 @@ public sealed class BookSourceEngine
         }
 
         var info = await ParseAsync(
-            () => _engine.ParseBookInfo(source, body, finalUrl, bookUrl), cancellationToken).ConfigureAwait(false);
+            () => _engine.ParseBookInfo(source, body, finalUrl, bookUrl, book), cancellationToken).ConfigureAwait(false);
         if (info is null)
         {
             return null;
@@ -121,7 +136,8 @@ public sealed class BookSourceEngine
     public async Task<List<TocItem>> GetTocAsync(
         BookSourceModel source,
         string tocUrl,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        JsBookState? book = null)
     {
         if (string.IsNullOrWhiteSpace(tocUrl))
         {
@@ -135,7 +151,7 @@ public sealed class BookSourceEngine
         }
 
         var (firstPage, nextUrls) = await ParseAsync(
-            () => _engine.ParseTocPage(source, body, finalUrl), cancellationToken).ConfigureAwait(false);
+            () => _engine.ParseTocPage(source, body, finalUrl, book), cancellationToken).ConfigureAwait(false);
 
         var chapters = new List<TocItem>(firstPage);
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -154,7 +170,7 @@ public sealed class BookSourceEngine
         if (pending.Count > 1)
         {
             // 多个下一页 URL（典型：下拉卷页）——reader 是串行 for，这里有界并行后按 URL 顺序合并
-            var pages = await FetchTocPagesAsync(source, pending, cancellationToken).ConfigureAwait(false);
+            var pages = await FetchTocPagesAsync(source, pending, book, cancellationToken).ConfigureAwait(false);
             foreach (var (page, _, pageUrl) in pages)
             {
                 if (page is null)
@@ -186,7 +202,7 @@ public sealed class BookSourceEngine
 
                 // 链式跟随是串行的：复用实例引擎（与首页、formatJs 同一份 JS 作用域，对标 reader 每源共享）
                 var (pageChapters, pageNext) = await ParseAsync(
-                    () => _engine.ParseTocPage(source, pageBody, pageUrl), cancellationToken).ConfigureAwait(false);
+                    () => _engine.ParseTocPage(source, pageBody, pageUrl, book), cancellationToken).ConfigureAwait(false);
                 Append(chapters, pageChapters, seen);
 
                 var next = pageNext.FirstOrDefault(u => u.Length > 0 && !visited.Contains(u));
@@ -206,7 +222,7 @@ public sealed class BookSourceEngine
         }
 
         // formatJs 在所有页合并后统一应用（reader 只在首页应用，这里对全部章节生效）
-        ApplyFormatJs(source, chapters, finalUrl, cancellationToken);
+        ApplyFormatJs(source, chapters, finalUrl, book, cancellationToken);
         return chapters;
     }
 
@@ -229,10 +245,18 @@ public sealed class BookSourceEngine
         BookSourceModel source,
         string chapterUrl,
         string? bookUrl = null,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        JsBookState? book = null) =>
         // 与批量链路共用同一实现（分页跟随/拼接/剥标题抽图的逻辑只此一份）；
         // 差异仅两点：用实例引擎（串行链路复用 Jint 引擎）、标题无目录章名可兜底。
-        LoadContentCoreAsync(_engine, source, chapterUrl, titleFallback: null, cancellationToken);
+        // book：书籍上下文（book.name/author/durChapterIndex…），缺省时用 bookUrl 兜底成最小上下文。
+        LoadContentCoreAsync(
+            _engine,
+            source,
+            chapterUrl,
+            titleFallback: null,
+            book ?? JsBookState.FromBookUrl(bookUrl),
+            cancellationToken);
 
     /// <summary>
     /// 批量并行拉取正文（对标 reader 批量缓存章节的并发窗口，默认 16）。
@@ -247,7 +271,8 @@ public sealed class BookSourceEngine
         string? bookUrl = null,
         int? maxConcurrency = null,
         IProgress<int>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        JsBookState? book = null)
     {
         if (chapters.Count == 0)
         {
@@ -258,6 +283,8 @@ public sealed class BookSourceEngine
         // 并发度同时是引擎池容量上限：并行度越高需要的独立 Jint 引擎越多
         var limit = Math.Clamp(maxConcurrency ?? BookSourceLimits.DefaultConcurrency, 1, BookSourceLimits.MaxConcurrency);
         var done = 0;
+        // 书籍上下文按章派生：每章带上自己的"当前章"，并行线程各自持有（互不干扰）
+        var bookContext = book ?? JsBookState.FromBookUrl(bookUrl);
 
         // 并发度即池容量上限：租借为空才新建，用完归还（池本身有界，随调用结束被回收）
         var pool = new ConcurrentBag<RuleEngine>();
@@ -267,11 +294,12 @@ public sealed class BookSourceEngine
             async (i, ct) =>
             {
                 var item = chapters[i];
-                var engine = pool.TryTake(out var taken) ? taken : new RuleEngine();
+                var engine = RentEngine(pool);
                 try
                 {
                     var content = await LoadContentCoreAsync(
-                        engine, source, item.ChapterUrl, item.ChapterName, ct).ConfigureAwait(false);
+                        engine, source, item.ChapterUrl, item.ChapterName, ChapterBook(bookContext, item), ct)
+                        .ConfigureAwait(false);
                     results[i] = content;
                 }
                 finally
@@ -310,7 +338,8 @@ public sealed class BookSourceEngine
         string? bookUrl = null,
         int? maxConcurrency = null,
         IProgress<int>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        JsBookState? book = null)
     {
         if (chapters.Count == 0)
         {
@@ -320,6 +349,7 @@ public sealed class BookSourceEngine
         var results = new ChapterContent?[chapters.Count];
         var limit = Math.Clamp(maxConcurrency ?? BookSourceLimits.DefaultConcurrency, 1, BookSourceLimits.MaxConcurrency);
         var done = 0;
+        var bookContext = book ?? JsBookState.FromBookUrl(bookUrl);
 
         var pool = new ConcurrentBag<RuleEngine>();
         await Parallel.ForEachAsync(
@@ -328,11 +358,12 @@ public sealed class BookSourceEngine
             async (i, ct) =>
             {
                 var item = chapters[i];
-                var engine = pool.TryTake(out var taken) ? taken : new RuleEngine();
+                var engine = RentEngine(pool);
                 try
                 {
                     results[i] = await LoadContentCoreAsync(
-                        engine, source, item.ChapterUrl, item.ChapterName, ct).ConfigureAwait(false);
+                        engine, source, item.ChapterUrl, item.ChapterName, ChapterBook(bookContext, item), ct)
+                        .ConfigureAwait(false);
                 }
                 catch (OperationCanceledException)
                 {
@@ -409,11 +440,13 @@ public sealed class BookSourceEngine
     /// <param name="engine">规则引擎（串行链路传实例引擎，并行链路传池化租借的实例）。</param>
     /// <param name="chapterUrl">章节首页 URL（null/空白 → 直接返回 null）。</param>
     /// <param name="titleFallback">页面标题缺失时的兜底（批量场景用目录章名）。</param>
+    /// <param name="book">书籍上下文（<c>book.*</c>；可为 null）。</param>
     private async Task<ChapterContent?> LoadContentCoreAsync(
         RuleEngine engine,
         BookSourceModel source,
         string? chapterUrl,
         string? titleFallback,
+        JsBookState? book,
         CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(chapterUrl))
@@ -441,9 +474,11 @@ public sealed class BookSourceEngine
             }
 
             // ② 一次解析同时得到正文 / 标题 / 下一页
+            //    章节上下文固定用"章节首页 URL"（chapterUrl）：分页跟随的第 2/3 页共享同一章的
+            //    chapter 变量作用域，而 baseUrl 仍按当前页解析相对地址（两者的差异是有意的）。
             var parseBase = current.Length > 0 ? current : finalUrl;
             var (text, pageTitle, next) = await ParseAsync(
-                () => engine.ParseContentPage(source, body, parseBase), ct).ConfigureAwait(false);
+                () => engine.ParseContentPage(source, body, parseBase, book, chapterUrl), ct).ConfigureAwait(false);
 
             // ③ 追加本页正文
             if (text.Length > 0)
@@ -535,7 +570,7 @@ public sealed class BookSourceEngine
     /// 每页解析用池化引擎（同 GetContentsAsync 的池化理由）。</para>
     /// </summary>
     private async Task<(List<TocItem>? Chapters, List<string> Next, string Url)[]> FetchTocPagesAsync(
-        BookSourceModel source, List<string> urls, CancellationToken cancellationToken)
+        BookSourceModel source, List<string> urls, JsBookState? book, CancellationToken cancellationToken)
     {
         var results = new (List<TocItem>?, List<string>, string)[urls.Count];
         var limit = Math.Min(BookSourceLimits.TocPageConcurrency, urls.Count);
@@ -553,11 +588,11 @@ public sealed class BookSourceEngine
                     return;
                 }
 
-                var engine = pool.TryTake(out var taken) ? taken : new RuleEngine();
+                var engine = RentEngine(pool);
                 try
                 {
                     var (chapters, next) = await ParseAsync(
-                        () => engine.ParseTocPage(source, body, finalUrl), ct).ConfigureAwait(false);
+                        () => engine.ParseTocPage(source, body, finalUrl, book), ct).ConfigureAwait(false);
                     results[i] = (chapters, next, finalUrl);
                 }
                 finally
@@ -574,7 +609,7 @@ public sealed class BookSourceEngine
     /// 故放在所有并发抓取之后，用实例引擎（_engine）统一做。
     /// </summary>
     private void ApplyFormatJs(
-        BookSourceModel source, List<TocItem> chapters, string baseUrl, CancellationToken ct)
+        BookSourceModel source, List<TocItem> chapters, string baseUrl, JsBookState? book, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(source.RuleToc?.FormatJs) || chapters.Count == 0)
         {
@@ -582,8 +617,24 @@ public sealed class BookSourceEngine
         }
 
         // formatJs 会改章节名：与其执行的 Jint 引擎必须串行，放在并发抓取之后统一做
-        _engine.ApplyFormatJs(source, chapters, baseUrl);
+        _engine.ApplyFormatJs(source, chapters, baseUrl, book);
     }
+
+    /// <summary>
+    /// 从池里取一个规则引擎（空池才新建），并把状态仓库接上。
+    /// <para>池化引擎同样要指向 <see cref="_store"/>：否则并行正文里的
+    /// <c>java.get('bid')</c> 读不到目录链写下的值。</para>
+    /// </summary>
+    private RuleEngine RentEngine(ConcurrentBag<RuleEngine> pool)
+    {
+        var engine = pool.TryTake(out var taken) ? taken : new RuleEngine();
+        engine.Store = _store;
+        return engine;
+    }
+
+    /// <summary>给一本书的某一章派生书籍上下文（补 <c>durChapterIndex</c>/<c>durChapterTitle</c>）。</summary>
+    private static JsBookState ChapterBook(JsBookState book, TocItem chapter) =>
+        book.WithChapter(chapter.Index, chapter.ChapterName);
 
     /// <summary>把解析（CPU 密集）放到线程池，避免阻塞调用方线程（对标 reader 的 spawn_blocking）。</summary>
     private static Task<T> ParseAsync<T>(Func<T> parse, CancellationToken cancellationToken) =>

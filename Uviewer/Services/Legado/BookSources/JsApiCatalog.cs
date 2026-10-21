@@ -203,9 +203,12 @@ public static class JsApiCatalog
             ("toURL", JsApiTier.Rule, JsApiStatus.Missing, "URL 相对解析辅助对象"),
 
             // ── T3 宿主状态 ─────────────────────────────────────────────────────
-            ("get", JsApiTier.State, JsApiStatus.Implemented, "取变量（当前按 JsBridge 实例作用域，4-2 起按书源持久化）"),
-            ("put", JsApiTier.State, JsApiStatus.Implemented, "存变量（同上）"),
-            ("getCookie", JsApiTier.State, JsApiStatus.Missing, "按域取 Cookie（需 Cookie 仓库 + 登录链路）"),
+            ("get", JsApiTier.State, JsApiStatus.Implemented,
+                "取变量：章节变量 → 书籍变量 → 书源变量（4-2 起跨链、跨进程，落 legado/sources）"),
+            ("put", JsApiTier.State, JsApiStatus.Implemented,
+                "存变量：有章节写章节、否则写书籍、再否则写书源（同 get 的作用域链）"),
+            ("getCookie", JsApiTier.State, JsApiStatus.Implemented,
+                "按域取 Cookie（4-2 的 Cookie 仓库；4-3 起与 HTTP 会话共用同一份）"),
             ("io", JsApiTier.State, JsApiStatus.Missing, "java.io 命名空间（文件读写）"),
 
             // ── T4 浏览器 ───────────────────────────────────────────────────────
@@ -245,15 +248,20 @@ public static class JsApiCatalog
 }
 
 /// <summary>
-/// 书源 JS 全局对象目录（<c>source</c> / <c>book</c> / <c>cache</c> / <c>cookie</c> / <c>html</c>）。
-/// <para>阶段 4-1 全部未注入，因此"用到任一成员"即视为该源仍需阶段 4 能力（4-2 落地后本表逐个转 True）。</para>
+/// 书源 JS 全局对象目录（<c>source</c> / <c>book</c> / <c>chapter</c> / <c>cache</c> / <c>cookie</c> / <c>html</c>）。
+/// <para><b>阶段 4-2：除 <c>html</c> 外全部注入真实实现</b>（见 <see cref="JsContextObjects"/>），
+/// 能力评估据此不再把它们算作缺口；<c>html</c> 只有"记录型空桩"，且<b>不参与能力判定</b>
+/// （见 <see cref="IsGated"/> 的说明）。</para>
+/// <para><c>chapter</c> 是方案 §3.2.3 之外顺带补的：约 10 个视频类书源的正文规则依赖
+/// <c>chapter.index/title</c>，只有 <c>book</c> 没有 <c>chapter</c> 时脚本仍会
+/// <c>ReferenceError</c>（半修复）。</para>
 /// <para>成员表来自原始样本 408 条的实调用统计；不在表内的成员名不参与判定
 /// （防止把脚本里的同名字符串/局部变量误判成全局对象用法）。</para>
 /// </summary>
 public static class JsGlobalCatalog
 {
     /// <summary>全局对象根名（判定顺序固定，便于诊断输出稳定）。</summary>
-    public static readonly string[] Roots = { "source", "book", "cache", "cookie", "html" };
+    public static readonly string[] Roots = { "source", "book", "chapter", "cache", "cookie", "html" };
 
     /// <summary>各根对象在样本里真实出现过的成员名。</summary>
     private static readonly Dictionary<string, string[]> Members = new(StringComparer.Ordinal)
@@ -261,20 +269,28 @@ public static class JsGlobalCatalog
         ["source"] = new[]
         {
             "key", "getVariable", "putVariable", "setVariable", "get", "put",
-            "getLoginInfoMap", "putLoginInfo", "putLoginHeader", "loginUrl",
-            "bookSourceUrl", "bookSourceName", "bookSourceComment", "bookSourceType",
-            "getKey", "refreshExplore", "lastUpdateTime",
+            "getLoginInfo", "getLoginInfoMap", "putLoginInfo", "removeLoginInfo",
+            "getLoginHeader", "getLoginHeaderMap", "putLoginHeader", "removeLoginHeader",
+            "loginUrl", "bookSourceUrl", "bookSourceName", "bookSourceComment", "bookSourceType",
+            "getKey", "refreshExplore", "refreshJSLib", "login", "header", "variableComment",
+            "lastUpdateTime",
         },
         ["book"] = new[]
         {
-            "name", "author", "bookUrl", "tocUrl", "intro", "kind", "type", "coverUrl",
+            "name", "author", "bookUrl", "tocUrl", "intro", "kind", "type", "coverUrl", "origin",
+            "originName", "lastChapter", "group", "totalChapterNum",
             "durChapterIndex", "durChapterTitle", "getVariable", "putVariable", "setVariable",
-            "customIntro", "readConfig", "setReverseToc", "variableMap",
+            "customIntro", "readConfig", "setReverseToc", "variableMap", "getKey",
+            "putCustomVariable", "getUseReplaceRule", "setUseReplaceRule",
         },
         ["cache"] = new[]
         {
             "get", "put", "delete", "getFromMemory", "putMemory", "deleteMemory",
             "getFile", "putFile", "deleteFile",
+        },
+        ["chapter"] = new[]
+        {
+            "title", "url", "index", "getVariable", "putVariable", "setVariable", "getKey",
         },
         ["cookie"] = new[]
         {
@@ -286,8 +302,24 @@ public static class JsGlobalCatalog
         },
     };
 
-    /// <summary>该根对象是否已注入（4-1 全 false）。</summary>
-    public static bool IsImplemented(string root) => false;
+    /// <summary>
+    /// 该根对象是否已注入<b>真实实现</b>（阶段 4-2：source/book/chapter/cache/cookie 为 true）。
+    /// <para><c>html</c> 恒为 false：legado 的 JS 绑定里没有这个全局对象（只有
+    /// <c>java/cookie/cache/source/book/chapter</c> 等），我们只放一个记录型空桩避免
+    /// <c>html.xxx</c> 抛 TypeError，不算"已实现"。</para>
+    /// </summary>
+    public static bool IsImplemented(string root) =>
+        root is "source" or "book" or "chapter" or "cache" or "cookie";
+
+    /// <summary>
+    /// 该根对象是否作为"能力缺口"的判定依据。
+    /// <para><b>为什么 <c>html</c> 不判定</b>：原始样本里 15 处 <c>html.match(…)</c> 经逐条核对
+    /// <b>全部是脚本内的局部变量</b>（<c>let html = java.ajax(…)</c>），legado 本身也没有
+    /// <c>html</c> 全局对象。把它算作缺口等于把 4 个本来能跑的源误判成"需要阶段 4"
+    /// （与 4-1 修掉的 D1 误杀同类）。</para>
+    /// </summary>
+    public static bool IsGated(string root) =>
+        root is "source" or "book" or "chapter" or "cache" or "cookie";
 
     /// <summary>该根对象是否有这个成员（用于把"疑似全局用法"收紧成"确定用法"）。</summary>
     public static bool HasMember(string root, string member) =>

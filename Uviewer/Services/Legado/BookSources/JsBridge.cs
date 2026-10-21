@@ -1,22 +1,23 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
 using System.Threading;
 using Jint;
 using Jint.Native;
 using Jint.Native.Object;
-using Jint.Runtime.Interop;
 
 namespace Uviewer.Services.Legado.BookSources;
 
 /// <summary>
 /// legado 内联 JS / 脚本段执行宿主（基于 Jint）。
-/// 暴露 <c>result</c> / <c>baseUrl</c> / <c>java.*</c> API。
+/// 暴露 <c>result</c> / <c>baseUrl</c> / <c>java.*</c> 以及（阶段 4-2 起）<c>source</c>/<c>book</c>/
+/// <c>chapter</c>/<c>cache</c>/<c>cookie</c>/<c>html</c> 全局对象（见 <see cref="JsContextObjects"/>）。
 /// <c>java.getString(rule)</c> 回灌规则引擎，作用于当前 result 内容（由 RuleEngine 注入 EvaluateRule）。
 ///
 /// <para><b>生命周期</b>：一个 JsBridge 实例服务一条解析链（一次搜索 / 一次目录 / 一次正文），
-/// <see cref="_store"/>（java.put/get 仓库）按实例共享——对标 reader js.rs 的共享作用域：
-/// ruleToc.init 里 put 的变量，后续字段规则里 get 得到。</para>
+/// 另由 <see cref="RuleEngine"/> 在每个解析链入口换一份 <see cref="Scope"/>（书源/书籍/章节 + 状态仓库）。
+/// <c>java.put/get</c> 与 <c>book.*</c>/<c>source.*</c> 的变量全部落到 <see cref="SourceStateStore"/>：
+/// 阶段 4-2 起它们<b>跨链、跨引擎实例、跨进程</b>可见（legado 语义：变量属于书源/书籍，不属于一次解析）。
+/// 无 <see cref="Scope"/> 时（纯脚本单测）退化为此前的实例内字典。</para>
 ///
 /// <para><b>重入保护</b>：java.getString 会再次触发规则求值（→ 可能再 RunJs）。
 /// 同一 Jint 引擎嵌套求值会互相污染全局状态，故 <see cref="_inUse"/> 为真时
@@ -52,6 +53,13 @@ internal sealed class JsBridge
     /// <summary>当前解析链名（search / bookInfo / toc / content，诊断归组用）。</summary>
     public string? Field { get; set; }
 
+    /// <summary>
+    /// 当前解析作用域（书源/书籍/章节 + 状态仓库，阶段 4-2 新增）。
+    /// <para>null = 未绑定：全局对象不注入、<c>java.put/get</c> 退回实例内字典
+    /// （供只测脚本片段的单测使用）。<see cref="RuleEngine"/> 在每个链入口赋一个新实例。</para>
+    /// </summary>
+    public JsScope? Scope { get; set; }
+
     // 主引擎上的库初始化状态：库文本变化或引擎更换才重新执行（对标 reader 的
     // "上下文按 (身份, jsLib md5) 缓存，库代码只在上下文初始化时执行一次"）。
     private string? _libInitText;
@@ -69,16 +77,21 @@ internal sealed class JsBridge
     private Engine? _engine;
     private bool _inUse;
 
-    // java.put/get 的变量仓库必须跨多次 Run 共享：legado 书源常见写法是
+    // java.put/get 的变量仓库（仅在未绑定 Scope 时兜底用）：legado 书源常见写法是
     // ruleToc.init / ruleBookInfo.init 里 java.put(key, value)，后续字段规则里 java.get(key)。
-    // reader 侧对应 js.rs 的共享作用域；这里按 JsBridge 实例共享（一个书源一条解析链）。
+    // 绑定 Scope 后走 SourceStateStore（跨链/跨进程），这里只剩"纯脚本单测"这条退化路径。
     private readonly Dictionary<string, object?> _store = new();
 
     // 每个引擎一份 java 对象（含 Proxy 兜底）；引擎更换即重建。
     private JavaBinding? _binding;
 
-    /// <summary>Proxy 兜底回调名的自增后缀（每个被代理对象一个回调，避免互相覆盖）。</summary>
-    private int _missingCallbackSeq;
+    // 全局对象的绑定缓存：同一个 Scope 只需要绑一次（换链/换书才重建）。
+    // 每次 Run 都重建六个代理 = 六次 engine.Evaluate，正文链每章都付这笔钱。
+    private Engine? _globalsEngine;
+    private JsScope? _globalsScope;
+
+    /// <summary>阶段 4-2 注入的全局对象名（解绑时统一置 undefined）。</summary>
+    private static readonly string[] GlobalNames = { "source", "book", "chapter", "cache", "cookie", "html" };
 
     /// <summary>
     /// 执行脚本。<paramref name="globals"/> 用于注入额外全局变量（如 formatJs 的 index/title/chapter）。
@@ -119,6 +132,11 @@ internal sealed class JsBridge
                 engine.SetValue("result", value);
                 engine.SetValue("baseUrl", baseUrl);
                 engine.SetValue("java", EnsureJava(engine));
+
+                // ②a 全局对象（source/book/chapter/cache/cookie/html）：有作用域才注入。
+                //     同一 Scope 只绑一次（见 EnsureGlobals）。
+                EnsureGlobals(engine);
+
                 if (globals is not null)
                 {
                     foreach (var (k, v) in globals)
@@ -263,6 +281,43 @@ internal sealed class JsBridge
         return wrapped;
     }
 
+    /// <summary>
+    /// 绑定/刷新五个全局对象（阶段 4-2）。
+    /// <para>只在"引擎换了"或"作用域换了"时重建：正文链每章都会 Run 多次，但同一章的
+    /// Scope 是同一个实例，故重建次数 = 链数而不是 Run 次数。</para>
+    /// <para>无 <see cref="Scope"/>（纯脚本单测）时什么都不做：保持 4-1 的行为（只有 result/baseUrl/java）。</para>
+    /// </summary>
+    private void EnsureGlobals(Engine engine)
+    {
+        var scope = Scope;
+        if (scope is null)
+        {
+            // 解绑：上一个作用域注入的对象绝不能留给下一次无作用域调用（跨链/跨书串味）。
+            // 显式置 undefined 而不是只清缓存——引擎里残留的 source/book 会指向旧书。
+            if (_globalsScope is not null)
+            {
+                foreach (var name in GlobalNames)
+                {
+                    engine.SetValue(name, JsValue.Undefined);
+                }
+
+                _globalsEngine = null;
+                _globalsScope = null;
+            }
+
+            return;
+        }
+
+        if (ReferenceEquals(_globalsEngine, engine) && ReferenceEquals(_globalsScope, scope))
+        {
+            return;
+        }
+
+        JsContextObjects.Bind(engine, scope, Diagnostics, Field);
+        _globalsEngine = engine;
+        _globalsScope = scope;
+    }
+
     /// <summary>已实现原语的运行时派发（需要访问 Bridge 状态的走这里，其余交给 <see cref="JsPureApi"/>）。</summary>
     private object? InvokeImplemented(string name, object?[] args)
     {
@@ -272,26 +327,52 @@ internal sealed class JsBridge
                 return EvaluateRule?.Invoke(JsPureApi.AsString(args, 0)) ?? string.Empty;
 
             case "get":
+                // legado AnalyzeRule.get：章节变量 → 书籍变量 → 书源 sp: 键（阶段 4-2 起跨链持久）
+                if (Scope is { } getScope)
+                {
+                    return JsContextObjects.RuleGet(getScope, JsPureApi.AsString(args, 0));
+                }
+
                 lock (_store)
                 {
-                    return _store.TryGetValue(JsPureApi.AsString(args, 0), out var v) ? v : null;
+                    return _store.TryGetValue(JsPureApi.AsString(args, 0), out var legacy) ? legacy : null;
                 }
 
             case "put":
-                lock (_store)
+                // legado AnalyzeRule.put：有章节写章节、否则写书籍、再否则写书源（返回值 = 写入值）
+                var putKey = JsPureApi.AsString(args, 0);
+                var putValue = JsPureApi.AsString(args, 1);
+                if (Scope is { } putScope)
                 {
-                    _store[JsPureApi.AsString(args, 0)] = args.Length > 1 ? args[1] : null;
+                    return JsContextObjects.RulePut(putScope, putKey, putValue);
                 }
 
-                return null;
+                lock (_store)
+                {
+                    _store[putKey] = putValue;
+                }
+
+                return putValue;
+
+            case "getCookie":
+                // java.getCookie(url[, key])：无 key 返回整串，有 key 返回该键的值（reader 语义）
+                if (Scope is { } cookieScope)
+                {
+                    var url = JsPureApi.AsString(args, 0);
+                    return args.Length > 1
+                        ? JsCookieJar.GetKey(cookieScope, url, JsPureApi.AsString(args, 1))
+                        : JsCookieJar.GetCookie(cookieScope, url);
+                }
+
+                return string.Empty;
 
             case "log":
-                Diagnostics.RecordLog(SourceKey, Field, FormatArgs(args));
+                Diagnostics.RecordLog(SourceKey, Field, JsContextObjects.FormatArgs(args));
                 return null;
 
             case "toast":
             case "longToast":
-                Diagnostics.RecordToast(SourceKey, Field, FormatArgs(args));
+                Diagnostics.RecordToast(SourceKey, Field, JsContextObjects.FormatArgs(args));
                 return null;
 
             default:
@@ -419,98 +500,27 @@ internal sealed class JsBridge
     }
 
     /// <summary>
-    /// 把一个对象包成"未知成员自动兜底"的 Proxy。
+    /// 把一个对象包成"未知成员自动兜底"的 Proxy（实现见 <see cref="JsContextObjects"/>，
+    /// <c>java</c> 与 <c>source/book/cache/cookie/html</c> 共用同一份）。
     /// <para>兜底行为：记一条 <see cref="JsDiagnosticKind.MissingApi"/>，返回 <c>null</c>。
     /// 这样 <c>java.不存在的方法()</c> 不再抛 TypeError 把整段脚本废掉。</para>
-    /// <para>Proxy 不可用时（Jint 版本变化）原样返回对象——退化为旧行为，但不会崩。</para>
+    /// <para>回调在<b>调用时</b>读 <see cref="Diagnostics"/>/<see cref="SourceKey"/>/<see cref="Field"/>：
+    /// java 对象按引擎缓存，若在构建时捕获这些值，换链/换源后诊断会张冠李戴（4-1 的潜在缺陷）。</para>
     /// </summary>
-    private JsValue WrapWithMissingFallback(Engine engine, JsValue target, string prefix)
-    {
-        var seq = Interlocked.Increment(ref _missingCallbackSeq);
-        var callbackName = "__legado_missing_" + seq;
-        engine.SetValue(callbackName, new Action<string>(name =>
-            Diagnostics.RecordMissingApi(SourceKey, Field, prefix + name)));
-
-        engine.SetValue("__legado_proxy_target", target);
-        engine.SetValue("__legado_proxy_cb", engine.GetValue(callbackName));
-
-        // 刻意用字符串拼 JS（不用模板字符串），避免 C# 侧 {} 转义噪音。
-        var proxy = engine.Evaluate(
-            "(function(){var t=__legado_proxy_target,cb=__legado_proxy_cb;" +
-            "if(typeof Proxy==='undefined')return t;" +
-            "return new Proxy(t,{get:function(o,k){if(k in o)return o[k];" +
-            "if(typeof k!=='string')return undefined;" +
-            "return function(){cb(k);return null;};}});})()");
-
-        engine.SetValue("__legado_proxy_target", JsValue.Undefined);
-        engine.SetValue("__legado_proxy_cb", JsValue.Undefined);
-        return proxy;
-    }
+    private JsValue WrapWithMissingFallback(Engine engine, JsValue target, string prefix) =>
+        JsContextObjects.WrapWithMissingFallback(
+            engine, target, prefix, member => Diagnostics.RecordMissingApi(SourceKey, Field, member));
 
     /// <summary>
-    /// 把一个 CLR 委托包成 JS 函数：参数统一转成 <c>object?[]</c>（字符串/数值/bool/null），
-    /// 返回值再由 <see cref="JsValue.FromObject"/> 转回 JS。
+    /// 把一个 CLR 委托包成 JS 函数（实现见 <see cref="JsContextObjects.CreateFunction"/>）。
+    /// <para>异常吞在函数内部（记诊断 + 返回 null），不让单个原语把整段脚本作废。</para>
     /// </summary>
-    private static JsValue CreateFunction(Engine engine, string name, Func<object?[], object?> body) =>
-        new ClrFunction(engine, name, (_, args) =>
-        {
-            var converted = new object?[args.Length];
-            for (var i = 0; i < args.Length; i++)
-            {
-                converted[i] = args[i].ToObject();
-            }
-
-            object? result;
-            try
-            {
-                result = body(converted);
-            }
-            catch (Exception ex)
-            {
-                // 单个原语内部异常不能让整段脚本作废：记录并返回 null（JS 侧表现为 null）
-                JsDiagnostics.Shared.RecordScriptError(string.Empty, name, ex);
-                return JsValue.Null;
-            }
-
-            return result switch
-            {
-                null => JsValue.Null,
-                JsValue js => js,
-                string s => JsValue.FromObject(engine, s),
-                bool b => JsValue.FromObject(engine, b),
-                long l => JsValue.FromObject(engine, (double)l),
-                int i => JsValue.FromObject(engine, (double)i),
-                double d => JsValue.FromObject(engine, d),
-                _ => JsValue.FromObject(engine, result),
-            };
-        });
+    private JsValue CreateFunction(Engine engine, string name, Func<object?[], object?> body) =>
+        JsContextObjects.CreateFunction(
+            engine, name, body, new JsContextObjects.JsErrorSink(Diagnostics, SourceKey, Field));
 
     /// <summary>把参数拼成一行文本（诊断样本用；过长的由 <see cref="JsDiagnostics"/> 截断）。</summary>
-    private static string FormatArgs(object?[] args)
-    {
-        if (args.Length == 0)
-        {
-            return string.Empty;
-        }
-
-        var sb = new StringBuilder();
-        for (var i = 0; i < args.Length; i++)
-        {
-            if (i > 0)
-            {
-                sb.Append(' ');
-            }
-
-            sb.Append(args[i] switch
-            {
-                null => "null",
-                double d => d.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
-                _ => args[i]!.ToString(),
-            });
-        }
-
-        return sb.ToString();
-    }
+    private static string FormatArgs(object?[] args) => JsContextObjects.FormatArgs(args);
 
     /// <summary>引擎与其对应 <c>java</c> 对象的绑定（引擎换了就重建）。</summary>
     private sealed record JavaBinding(Engine Engine, JsValue Java);
