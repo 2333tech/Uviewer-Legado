@@ -1,0 +1,77 @@
+{
+  "Sample": {
+    "BookName": "\u592A\u53E4\u4E5D\u9F99\u8BC0",
+    "SourceName": "\u75AF\u8BFB\u5C0F\u8BF4\uFF08\u4F18\u002B\u002B\uFF09",
+    "Chapters": 60,
+    "TotalBytes": 405790,
+    "FullBookBytes": 405850,
+    "ReplaceRuleCount": 12,
+    "TitleRuleCount": 7
+  },
+  "Window": {
+    "Before": 2,
+    "After": 5
+  },
+  "Results": [
+    {
+      "Name": "purify_all_chapters",
+      "ElapsedMs": 53.5201,
+      "AllocatedMb": 0.5355072021484375,
+      "ResultSize": 133495
+    },
+    {
+      "Name": "purify_window_7_chapters",
+      "ElapsedMs": 7.7063,
+      "AllocatedMb": 0.090087890625,
+      "ResultSize": 17690
+    },
+    {
+      "Name": "split_all_chapters",
+      "ElapsedMs": 23.9823,
+      "AllocatedMb": 0.9849624633789062,
+      "ResultSize": 60
+    },
+    {
+      "Name": "split_window_7_chapters",
+      "ElapsedMs": 19.8001,
+      "AllocatedMb": 0.30889129638671875,
+      "ResultSize": 8
+    },
+    {
+      "Name": "rewrite_all_chapters",
+      "ElapsedMs": 0.1338,
+      "AllocatedMb": 0.5331268310546875,
+      "ResultSize": 138666
+    },
+    {
+      "Name": "rewrite_window_7_chapters",
+      "ElapsedMs": 0.013,
+      "AllocatedMb": 0.08644866943359375,
+      "ResultSize": 18366
+    },
+    {
+      "Name": "next_chapter_full_refresh",
+      "ElapsedMs": 71.1872,
+      "AllocatedMb": 1.764312744140625,
+      "ResultSize": 60
+    },
+    {
+      "Name": "next_chapter_window_refresh",
+      "ElapsedMs": 27.6416,
+      "AllocatedMb": 0.3419189453125,
+      "ResultSize": 0
+    },
+    {
+      "Name": "toggle_purify_full_recompute",
+      "ElapsedMs": 43.7779,
+      "AllocatedMb": 0.2728729248046875,
+      "ResultSize": 133495
+    },
+    {
+      "Name": "toggle_purify_window_recompute",
+      "ElapsedMs": 6.0032,
+      "AllocatedMb": 0.03792572021484375,
+      "ResultSize": 15509
+    }
+  ]
+}

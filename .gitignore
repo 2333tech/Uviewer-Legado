@@ -13,8 +13,9 @@
 .agents/
 *codex*
 AGENTS.md
-tests/
-validation/
+# 注意：不要在此忽略 tests/ 、validation/ 、bench/ 等目录名——
+# 本仓库的测试工程（Uviewer.Legado.Tests）与基准工程（Uviewer.Bench）
+# 属于产品代码的一部分，必须入库。只忽略编译产物，规则见文件末尾「本仓库跟踪策略」。
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -421,3 +422,29 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# ---------------------------------------------------------------------------
+# 本仓库跟踪策略（分支 Legado-Builtin）
+#
+# 原则：只忽略「编译产物 / 工具产物」，源码、测试、基准、样例一律入库。
+#
+# 忽略（编译结果，规则由上面的 VisualStudio 模板提供）：
+#   **/bin/   **/obj/   artifacts/   .vs/   TestResults/   *.binlog   *.pdb
+# 必须跟踪：
+#   Uviewer/               WinUI 宿主 + Services/Legado 引擎源码
+#   Uviewer.Legado.Tests/  引擎单元/集成测试（含 SampleBookSource.json 小样例）
+#   Uviewer.Bench/         性能基准（含 results/ 下的基准输出）
+#   Sample/                真实书源样例（bookSource_*.json）与 PerfBenchmark
+#                          （= Uviewer/Sample/，测试与基准均从这里取数）
+# ---------------------------------------------------------------------------
+
+# 显式反忽略：防止日后新增的目录名规则把测试 / 基准 / 样例吞掉
+!Uviewer/
+!Uviewer.Legado.Tests/
+!Uviewer.Bench/
+!Uviewer.Bench/results/
+!Sample/
+
+# 兜底：任意层级的编译中间产物都不入库（含旧基准 Sample/PerfBenchmark/tools）
+**/bin/
+**/obj/
