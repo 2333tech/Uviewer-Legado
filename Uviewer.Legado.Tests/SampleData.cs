@@ -77,4 +77,41 @@ internal static class SampleData
     /// </summary>
     public static async Task<string> SliceJsonAsync(int take) =>
         BookSourceSerializer.SerializeList(await SliceAsync(take));
+
+    /// <summary>
+    /// <b>原始条目</b>口径：按 bookSourceUrl 直接从导出文件取条目（不读 <c>booksources.json</c>、
+    /// 不经过导入与用户编辑）。找不到直接抛异常，避免测试静默跑空。
+    /// <para>为什么强制原始条目：导入副本可能被用户改过、被旧版本截断，或被"启用/禁用"过滤掉；
+    /// 用它做能力断言会把"数据问题"误判成"代码问题"。</para>
+    /// </summary>
+    public static async Task<BookSourceModel> RequireAsync(string bookSourceUrl)
+    {
+        await foreach (var source in EnumerateAsync())
+        {
+            if (string.Equals(source.BookSourceUrl, bookSourceUrl, StringComparison.Ordinal))
+            {
+                return source;
+            }
+        }
+
+        throw new InvalidOperationException($"原始样例里没有这个书源：{bookSourceUrl}");
+    }
+
+    /// <summary>原始条目口径：按谓词从导出文件里筛子集（参数化测试用）。</summary>
+    public static async Task<List<BookSourceModel>> WhereAsync(Func<BookSourceModel, bool> predicate)
+    {
+        var list = new List<BookSourceModel>();
+        await foreach (var source in EnumerateAsync())
+        {
+            if (predicate(source))
+            {
+                list.Add(source);
+            }
+        }
+
+        return list;
+    }
+
+    /// <summary>原始条目口径：全部条目（408 条，4.7MB，只应在少量"全量基线"测试里用）。</summary>
+    public static Task<List<BookSourceModel>> AllAsync() => WhereAsync(static _ => true);
 }

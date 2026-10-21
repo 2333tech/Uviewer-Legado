@@ -265,9 +265,13 @@ public class Phase5LibraryTests
     [Fact]
     public void Capabilities_Detects_Java_Call_Only_In_Script_Context()
     {
-        // 规则值里的 java.* 且带 JS 标记 → 需要阶段 4
-        var marked = Source(contentRule: new ContentRule { Content = "<js>java.getString('x')</js>" });
+        // 规则值里的 java.* 且带 JS 标记，且该原语**尚未实现** → 需要阶段 4
+        var marked = Source(contentRule: new ContentRule { Content = "<js>java.ajax('x')</js>" });
         Assert.True(BookSourceCapabilities.Assess(marked).HasFlag(BookSourceCapability.RequiresJsEngine));
+
+        // 阶段 4-1 口径修正：已实现的原语（getString/get/put/md5/base64/timeFormat…）不再算缺口
+        var implemented = Source(contentRule: new ContentRule { Content = "<js>java.getString('x')</js>" });
+        Assert.False(BookSourceCapabilities.Assess(implemented).HasFlag(BookSourceCapability.RequiresJsEngine));
 
         // 纯 URL 模板里出现 "java." 字样（真实样例常见）→ 不误报
         var urlish = Source(tocRule: new TocRule { ChapterUrl = "https://host/java.lang/book/{{id}}" });

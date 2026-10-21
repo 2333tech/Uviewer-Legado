@@ -236,10 +236,10 @@ namespace Uviewer.Services.Legado
 
                 _draft = Clone(source);
                 detailTitle.Text = source.BookSourceName;
-                var caps = BookSourceCapabilities.Assess(source);
-                detailSubtitle.Text = caps == BookSourceCapability.None || caps == BookSourceCapability.HasJsLib
+                var report = BookSourceCapabilities.AssessDetailed(source);
+                detailSubtitle.Text = report.AllSupported
                     ? $"URL: {source.BookSourceUrl}　·　当前引擎可完整支持"
-                    : $"URL: {source.BookSourceUrl}　·　⚠ 需要完整 JavaScript 支持（{Describe(caps)}）";
+                    : $"URL: {source.BookSourceUrl}　·　⚠ {report.DescribeMissing(maxNames: 4, readingOnly: false)}";
 
                 // 基本信息：书源 URL 只读（它是主键，改了等于换一条源）
                 var basic = new StackPanel { Spacing = 6 };
@@ -428,8 +428,9 @@ namespace Uviewer.Services.Legado
         /// </summary>
         private UIElement BuildListItemContent(BookSourceModel source, Action<string?> refreshList)
         {
-            var caps = BookSourceCapabilities.Assess(source);
-            var supported = caps == BookSourceCapability.None || caps == BookSourceCapability.HasJsLib;
+            // 徽标按「阅读链路」判定：搜索/详情链的缺口不连坐（与搜索候选过滤同口径）
+            var report = BookSourceCapabilities.AssessDetailed(source);
+            var supported = report.ReadingSupported;
 
             var badge = new TextBlock
             {
@@ -441,6 +442,11 @@ namespace Uviewer.Services.Legado
                 FontSize = 14,
                 VerticalAlignment = VerticalAlignment.Center,
             };
+            if (!supported)
+            {
+                // 悬停显示具体缺什么（阶段 4-1 起不再是笼统的"需要完整 JavaScript 支持"）
+                ToolTipService.SetToolTip(badge, report.DescribeMissing(maxNames: 6, readingOnly: true));
+            }
 
             var group = string.IsNullOrWhiteSpace(source.BookSourceGroup)
                 ? ""
@@ -513,16 +519,6 @@ namespace Uviewer.Services.Legado
                 _notify($"切换启用状态失败：{ex.Message}", "\uE783", "Red");
                 refreshList(source.BookSourceUrl);
             }
-        }
-
-        private static string Describe(BookSourceCapability caps)
-        {
-            var parts = new List<string>(4);
-            if (caps.HasFlag(BookSourceCapability.RequiresJsEngine)) parts.Add("java.*");
-            if (caps.HasFlag(BookSourceCapability.RequiresWebView)) parts.Add("WebView");
-            if (caps.HasFlag(BookSourceCapability.RequiresLogin)) parts.Add("登录");
-            if (caps.HasFlag(BookSourceCapability.RequiresRemoteJsLib)) parts.Add("远程 jsLib");
-            return string.Join("/", parts);
         }
 
         /// <summary>

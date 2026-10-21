@@ -37,6 +37,29 @@ public sealed class RuleEngine
     /// </summary>
     private BookSourceModel? _jsSource;
 
+    /// <summary>
+    /// 诊断接收器（默认进程级单例 <see cref="JsDiagnostics.Shared"/>）。
+    /// <para>阶段 4-1 起，脚本里"缺哪个原语 / 调了哪个空桩 / 为什么抛错"全部落到这里；
+    /// 编排层/界面只读它即可解释"这个源为什么读不出正文"，不必再靠猜。</para>
+    /// </summary>
+    public JsDiagnostics Diagnostics
+    {
+        get => _js.Diagnostics;
+        set => _js.Diagnostics = value ?? JsDiagnostics.Shared;
+    }
+
+    /// <summary>
+    /// 记录"当前在跑哪个书源的哪条链"（诊断归组用）。
+    /// <para>链名固定为 search / bookInfo / toc / content：粒度到链而不是到字段，
+    /// 因为 <see cref="RunJs"/> 是唯一出口，逐字段传参会把签名污染到十几处。</para>
+    /// </summary>
+    private void BeginChain(BookSourceModel source, string field)
+    {
+        _jsSource = source;
+        _js.SourceKey = source.BookSourceUrl;
+        _js.Field = field;
+    }
+
     // 模板正则常量：每次展开 {{...}} 都会用到，缓存并预编译。
     private static readonly Regex TemplateRegex = new(@"\{\{(.*?)\}\}", RegexOptions.Compiled);
 
@@ -47,8 +70,8 @@ public sealed class RuleEngine
     /// </summary>
     public List<SearchResult> SearchBooks(BookSourceModel source, string body, string baseUrl)
     {
-        // 记录当前书源：RunJs 需要它的 jsLib（阶段 5 注入）
-        _jsSource = source;
+        // 记录当前书源与链名：RunJs 需要它的 jsLib（jsLib 注入）+ 诊断归组
+        BeginChain(source, "search");
         if (source.RuleSearch is null)
         {
             return new List<SearchResult>();
@@ -494,7 +517,7 @@ public sealed class RuleEngine
     /// </summary>
     public BookInfo? ParseBookInfo(BookSourceModel source, string body, string baseUrl, string? bookUrl = null)
     {
-        _jsSource = source;
+        BeginChain(source, "bookInfo");
         var rule = source.RuleBookInfo;
         if (rule is null)
         {
@@ -555,7 +578,7 @@ public sealed class RuleEngine
     public (List<TocItem> Chapters, List<string> NextUrls) ParseTocPage(
         BookSourceModel source, string body, string baseUrl)
     {
-        _jsSource = source;
+        BeginChain(source, "toc");
         var rule = source.RuleToc;
         if (rule is null)
         {
@@ -594,6 +617,7 @@ public sealed class RuleEngine
     internal (string Text, string Title, string? Next) ParseContentPage(
         BookSourceModel source, string body, string baseUrl)
     {
+        BeginChain(source, "content");
         var rule = source.RuleContent;
         if (rule is null)
         {
@@ -706,6 +730,9 @@ public sealed class RuleEngine
         {
             return;
         }
+
+        // formatJs 属于目录链：同样要带 jsLib 与诊断归组（否则会沿用上一条链的 _jsSource）
+        BeginChain(source, "toc");
 
         var globals = new Dictionary<string, object?>();
         for (var i = 0; i < chapters.Count; i++)

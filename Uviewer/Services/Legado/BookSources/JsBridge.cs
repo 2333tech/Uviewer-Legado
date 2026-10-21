@@ -1,6 +1,11 @@
-using System.Security.Cryptography;
+using System;
+using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 using Jint;
+using Jint.Native;
+using Jint.Native.Object;
+using Jint.Runtime.Interop;
 
 namespace Uviewer.Services.Legado.BookSources;
 
@@ -8,12 +13,23 @@ namespace Uviewer.Services.Legado.BookSources;
 /// legado 内联 JS / 脚本段执行宿主（基于 Jint）。
 /// 暴露 <c>result</c> / <c>baseUrl</c> / <c>java.*</c> API。
 /// <c>java.getString(rule)</c> 回灌规则引擎，作用于当前 result 内容（由 RuleEngine 注入 EvaluateRule）。
-/// <para>生命周期：一个 JsBridge 实例服务一条解析链（一次搜索 / 一次目录 / 一次正文），
+///
+/// <para><b>生命周期</b>：一个 JsBridge 实例服务一条解析链（一次搜索 / 一次目录 / 一次正文），
 /// <see cref="_store"/>（java.put/get 仓库）按实例共享——对标 reader js.rs 的共享作用域：
 /// ruleToc.init 里 put 的变量，后续字段规则里 get 得到。</para>
-/// <para>重入保护：java.getString 会再次触发规则求值（→ 可能再 RunJs）。
+///
+/// <para><b>重入保护</b>：java.getString 会再次触发规则求值（→ 可能再 RunJs）。
 /// 同一 Jint 引擎嵌套求值会互相污染全局状态，故 <see cref="_inUse"/> 为真时
 /// 新建临时引擎跑内层脚本（temp=true，用完即弃），外层仍用主引擎。</para>
+///
+/// <para><b>阶段 4-1 的两处结构性变化</b>：</para>
+/// <list type="number">
+/// <item><b>动态 <c>java</c> 对象</b>：不再用"CLR 类 + 反射方法"（未知名 → TypeError → 整段脚本被
+///   <see cref="Run"/> 的 catch 回退原文，静默失真）。改为按 <see cref="JsApiCatalog"/> 注册真实实现 /
+///   桩，并用 Proxy 兜底：未知成员返回"记录诊断后返回 null 的空函数"，脚本继续跑完；</item>
+/// <item><b><see cref="Diagnostics"/></b>：把"缺哪个原语 / 调了哪个空桩 / 脚本为什么抛错"记录成可查询数据，
+///   不再只留一个 <c>catch</c>。</item>
+/// </list>
 /// </summary>
 internal sealed class JsBridge
 {
@@ -26,6 +42,15 @@ internal sealed class JsBridge
     /// 编译与加载语义见 <see cref="EnsureJsLib"/>。</para>
     /// </summary>
     public string? JsLib { get; set; }
+
+    /// <summary>诊断接收器（默认进程级单例；RuleEngine 可按链替换）。</summary>
+    public JsDiagnostics Diagnostics { get; set; } = JsDiagnostics.Shared;
+
+    /// <summary>当前书源主键（诊断归组用，由 RuleEngine 设置）。</summary>
+    public string? SourceKey { get; set; }
+
+    /// <summary>当前解析链名（search / bookInfo / toc / content，诊断归组用）。</summary>
+    public string? Field { get; set; }
 
     // 主引擎上的库初始化状态：库文本变化或引擎更换才重新执行（对标 reader 的
     // "上下文按 (身份, jsLib md5) 缓存，库代码只在上下文初始化时执行一次"）。
@@ -48,13 +73,18 @@ internal sealed class JsBridge
     // ruleToc.init / ruleBookInfo.init 里 java.put(key, value)，后续字段规则里 java.get(key)。
     // reader 侧对应 js.rs 的共享作用域；这里按 JsBridge 实例共享（一个书源一条解析链）。
     private readonly Dictionary<string, object?> _store = new();
-    private JavaApi? _api;
+
+    // 每个引擎一份 java 对象（含 Proxy 兜底）；引擎更换即重建。
+    private JavaBinding? _binding;
+
+    /// <summary>Proxy 兜底回调名的自增后缀（每个被代理对象一个回调，避免互相覆盖）。</summary>
+    private int _missingCallbackSeq;
 
     /// <summary>
     /// 执行脚本。<paramref name="globals"/> 用于注入额外全局变量（如 formatJs 的 index/title/chapter）。
     /// <para>步骤：① 取引擎（重入 → 临时引擎）；② 绑定 result/baseUrl/java 及 globals；
     /// ③ Evaluate；④ 结果转字符串（null → 空串）；⑤ 异常时**返回原始 value**
-    /// （legado：脚本异常回退为原始内容，不中断解析）。</para>
+    /// （legado：脚本异常回退为原始内容，不中断解析），同时写一条 <see cref="JsDiagnosticKind.ScriptError"/>。</para>
     /// </summary>
     public string Run(
         string script,
@@ -88,7 +118,7 @@ internal sealed class JsBridge
                 // ② 绑定全局：result（当前内容）/ baseUrl / java API / 调用方 globals
                 engine.SetValue("result", value);
                 engine.SetValue("baseUrl", baseUrl);
-                engine.SetValue("java", _api ??= new JavaApi(this));
+                engine.SetValue("java", EnsureJava(engine));
                 if (globals is not null)
                 {
                     foreach (var (k, v) in globals)
@@ -114,9 +144,10 @@ internal sealed class JsBridge
                 }
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // ⑤ legado：脚本异常时回退为原始内容
+            // ⑤ legado：脚本异常时回退为原始内容；同时记录"谁抛了什么"，避免静默失真
+            Diagnostics.RecordScriptError(SourceKey, Field, ex);
             return value;
         }
     }
@@ -138,6 +169,7 @@ internal sealed class JsBridge
             if (_libInitEngine is not null)
             {
                 _engine = null;
+                _binding = null;
                 _libInitEngine = null;
                 _libInitText = null;
             }
@@ -187,77 +219,299 @@ internal sealed class JsBridge
         }
     }
 
+    // ============================================================
+    // 动态 java 对象
+    // ============================================================
+
     /// <summary>
-    /// java.* API 桥（Jint 通过反射暴露给 JS 的 CLR 对象）。
-    /// <para>离线语义说明：ajax / startBrowserAwait / getElements 等需要网络或浏览器的原语
-    /// 在本环境返回空值/空对象，由脚本自行兜底——真实环境由宿主（阶段 4 的 WebView2 管道）替换。</para>
+    /// 取（必要时构建）该引擎的 <c>java</c> 对象。
+    /// <para>构建规则：① <see cref="JsApiStatus.Implemented"/> → 真实实现；
+    /// ② <see cref="JsApiStatus.Stub"/> → 返回空值 + 记 <see cref="JsDiagnosticKind.StubCalled"/>；
+    /// ③ <see cref="JsApiStatus.Missing"/> / 未登记 → 不注册，由 Proxy 兜底成"记诊断后返回 null"的空函数。
+    /// 这样任何脚本都能跑完，缺什么在诊断里一目了然。</para>
     /// </summary>
-    private sealed class JavaApi
+    private JsValue EnsureJava(Engine engine)
     {
-        private readonly JsBridge _bridge;
-
-        public JavaApi(JsBridge bridge) => _bridge = bridge;
-
-        /// <summary>java.getString(rule)：对当前 result 回灌规则引擎求值（Reader 侧最常用原语）。</summary>
-        public string getString(string rule) => _bridge.EvaluateRule?.Invoke(rule) ?? string.Empty;
-
-        /// <summary>java.put(key, value)：存变量仓库（加锁：JS 单线程但仓库跨 Run 共享）。</summary>
-        public void put(string key, object? value)
+        if (_binding is not null && ReferenceEquals(_binding.Engine, engine))
         {
-            lock (_bridge._store)
+            return _binding.Java;
+        }
+
+        var java = new JsObject(engine);
+        foreach (var info in JsApiCatalog.All)
+        {
+            switch (info.Status)
             {
-                _bridge._store[key] = value;
+                case JsApiStatus.Implemented:
+                    // lang 是命名空间对象：循环里先占位，下面用真实对象覆盖
+                    java.FastSetDataProperty(info.Name, CreateFunction(engine, info.Name, args => InvokeImplemented(info.Name, args)));
+                    break;
+                case JsApiStatus.Stub:
+                    java.FastSetDataProperty(info.Name, CreateFunction(engine, info.Name, args => InvokeStub(info.Name, args)));
+                    break;
+                default:
+                    // Missing：不注册（Proxy 兜底），保证诊断能区分"从未实现"与"实现了但返回空"
+                    break;
             }
         }
 
-        /// <summary>java.get(key)：取变量仓库（无则 null → JS 侧表现为 null）。</summary>
-        public object? get(string key)
+        // java.lang 命名空间（Rhino 下书源常写 java.lang.System.currentTimeMillis()）
+        java.FastSetDataProperty("lang", BuildLangNamespace(engine));
+
+        var wrapped = WrapWithMissingFallback(engine, java, string.Empty);
+        _binding = new JavaBinding(engine, wrapped);
+        return wrapped;
+    }
+
+    /// <summary>已实现原语的运行时派发（需要访问 Bridge 状态的走这里，其余交给 <see cref="JsPureApi"/>）。</summary>
+    private object? InvokeImplemented(string name, object?[] args)
+    {
+        switch (name)
         {
-            lock (_bridge._store)
-            {
-                return _bridge._store.TryGetValue(key, out var v) ? v : null;
-            }
+            case "getString":
+                return EvaluateRule?.Invoke(JsPureApi.AsString(args, 0)) ?? string.Empty;
+
+            case "get":
+                lock (_store)
+                {
+                    return _store.TryGetValue(JsPureApi.AsString(args, 0), out var v) ? v : null;
+                }
+
+            case "put":
+                lock (_store)
+                {
+                    _store[JsPureApi.AsString(args, 0)] = args.Length > 1 ? args[1] : null;
+                }
+
+                return null;
+
+            case "log":
+                Diagnostics.RecordLog(SourceKey, Field, FormatArgs(args));
+                return null;
+
+            case "toast":
+            case "longToast":
+                Diagnostics.RecordToast(SourceKey, Field, FormatArgs(args));
+                return null;
+
+            default:
+                return JsPureApi.TryInvoke(name, args, out var result) ? result : null;
         }
+    }
 
-        /// <summary>java.base64Encode(s)：UTF-8 → Base64。</summary>
-        public string base64Encode(string s) => Convert.ToBase64String(Encoding.UTF8.GetBytes(s));
-
-        /// <summary>java.base64Decode(s)：Base64 → UTF-8（非法输入返回空串，不抛）。</summary>
-        public string base64Decode(string s)
+    /// <summary>
+    /// 桩原语的返回值：保持"不抛错 + 返回空值"的既有行为，并记录一次
+    /// <see cref="JsDiagnosticKind.StubCalled"/>（"结果为什么是空的"直接可查）。
+    /// <para>返回值按原语语义给最小可用默认值：<c>ajax</c> → 空串、<c>getElements/getStringList</c> → <c>[]</c>、
+    /// <c>getElement</c> → <c>{}</c>、<c>t2s/s2t</c> → 原文（恒等比空串更安全）。</para>
+    /// </summary>
+    private object? InvokeStub(string name, object?[] args)
+    {
+        Diagnostics.RecordStubCalled(SourceKey, Field, name);
+        return name switch
         {
+            "ajaxJson" => "{}",
+            "getElements" or "getStringList" => "[]",
+            "getElement" => "{}",
+            "t2s" or "s2t" => JsPureApi.AsString(args, 0),
+            _ => string.Empty,
+        };
+    }
+
+    /// <summary>构建 <c>java.lang</c> 命名空间子集（System / Thread / Integer / Long / Double / String / Math / Boolean）。</summary>
+    private JsValue BuildLangNamespace(Engine engine)
+    {
+        var lang = new JsObject(engine);
+
+        var system = new JsObject(engine);
+        system.FastSetDataProperty("currentTimeMillis", CreateFunction(engine, "currentTimeMillis",
+            _ => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+        var println = CreateFunction(engine, "println", args =>
+        {
+            Diagnostics.RecordLog(SourceKey, Field, "lang: " + FormatArgs(args));
+            return null;
+        });
+        system.FastSetDataProperty("out", NamespaceWith(engine, ("println", println), ("print", println)));
+        system.FastSetDataProperty("err", NamespaceWith(engine, ("println", println), ("print", println)));
+        lang.FastSetDataProperty("System", WrapWithMissingFallback(engine, system, "lang.System."));
+
+        var thread = new JsObject(engine);
+        thread.FastSetDataProperty("sleep", CreateFunction(engine, "sleep", args =>
+        {
+            // 上限 5s：书源用它做"限速"，但无上限会把解析线程挂死（尤其并发批量下载时）
+            var ms = Math.Clamp(JsPureApi.AsLong(args, 0), 0, 5000);
+            if (ms > 0)
+            {
+                Thread.Sleep((int)ms);
+            }
+
+            return null;
+        }));
+        lang.FastSetDataProperty("Thread", WrapWithMissingFallback(engine, thread, "lang.Thread."));
+
+        var integer = new JsObject(engine);
+        integer.FastSetDataProperty("parseInt", CreateFunction(engine, "parseInt", args =>
+        {
+            var text = JsPureApi.AsString(args, 0).Trim();
+            var radix = args.Length > 1 ? (int)JsPureApi.AsLong(args, 1) : 10;
             try
             {
-                return Encoding.UTF8.GetString(Convert.FromBase64String(s));
+                return Convert.ToInt64(text, radix is >= 2 and <= 36 ? radix : 10);
             }
             catch
             {
-                return string.Empty;
+                return 0L;
             }
-        }
+        }));
+        integer.FastSetDataProperty("valueOf", CreateFunction(engine, "valueOf", args => JsPureApi.AsLong(args, 0)));
+        integer.FastSetDataProperty("MAX_VALUE", JsValue.FromObject(engine, int.MaxValue));
+        lang.FastSetDataProperty("Integer", WrapWithMissingFallback(engine, integer, "lang.Integer."));
 
-        /// <summary>java.md5(s)：UTF-8 字节的 MD5，输出小写 Hex。</summary>
-        public string md5(string s)
+        var longType = new JsObject(engine);
+        longType.FastSetDataProperty("parseLong", CreateFunction(engine, "parseLong", args => JsPureApi.AsLong(args, 0)));
+        longType.FastSetDataProperty("valueOf", CreateFunction(engine, "valueOf", args => JsPureApi.AsLong(args, 0)));
+        lang.FastSetDataProperty("Long", WrapWithMissingFallback(engine, longType, "lang.Long."));
+
+        var doubleType = new JsObject(engine);
+        doubleType.FastSetDataProperty("parseDouble", CreateFunction(engine, "parseDouble", args => ToDouble(args, 0)));
+        doubleType.FastSetDataProperty("valueOf", CreateFunction(engine, "valueOf", args => ToDouble(args, 0)));
+        lang.FastSetDataProperty("Double", WrapWithMissingFallback(engine, doubleType, "lang.Double."));
+
+        var stringType = new JsObject(engine);
+        stringType.FastSetDataProperty("valueOf", CreateFunction(engine, "valueOf", args => JsPureApi.AsString(args, 0)));
+        lang.FastSetDataProperty("String", WrapWithMissingFallback(engine, stringType, "lang.String."));
+
+        var math = new JsObject(engine);
+        math.FastSetDataProperty("random", CreateFunction(engine, "random", _ => Random.Shared.NextDouble()));
+        math.FastSetDataProperty("abs", CreateFunction(engine, "abs", args => Math.Abs(JsPureApi.AsLong(args, 0))));
+        math.FastSetDataProperty("floor", CreateFunction(engine, "floor", args => Math.Floor(ToDouble(args, 0))));
+        math.FastSetDataProperty("ceil", CreateFunction(engine, "ceil", args => Math.Ceiling(ToDouble(args, 0))));
+        math.FastSetDataProperty("round", CreateFunction(engine, "round", args => Math.Round(ToDouble(args, 0), MidpointRounding.AwayFromZero)));
+        lang.FastSetDataProperty("Math", WrapWithMissingFallback(engine, math, "lang.Math."));
+
+        var booleanType = new JsObject(engine);
+        booleanType.FastSetDataProperty("valueOf", CreateFunction(engine, "valueOf", args =>
         {
-            using var m = MD5.Create();
-            var b = m.ComputeHash(Encoding.UTF8.GetBytes(s));
-            return Convert.ToHexString(b).ToLowerInvariant();
+            var text = JsPureApi.AsString(args, 0).Trim();
+            return string.Equals(text, "true", StringComparison.OrdinalIgnoreCase) || text == "1";
+        }));
+        lang.FastSetDataProperty("Boolean", WrapWithMissingFallback(engine, booleanType, "lang.Boolean."));
+
+        return WrapWithMissingFallback(engine, lang, "lang.");
+    }
+
+    private static double ToDouble(object?[] args, int index) =>
+        double.TryParse(JsPureApi.AsString(args, index), System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture, out var d)
+            ? d
+            : 0d;
+
+    /// <summary>把若干 (名字, 函数) 装成一个小对象（给 <c>System.out</c> 这类二级命名空间用）。</summary>
+    private static JsValue NamespaceWith(Engine engine, params (string Name, JsValue Fn)[] members)
+    {
+        var obj = new JsObject(engine);
+        foreach (var (name, fn) in members)
+        {
+            obj.FastSetDataProperty(name, fn);
         }
 
-        // 离线环境无网络：ajax / 浏览器交互返回空，由脚本自行兜底。
-
-        /// <summary>java.ajax(url)：同步取文本（离线返回空串；阶段 4 接真实管道）。</summary>
-        public string ajax(string url) => string.Empty;
-
-        /// <summary>java.ajaxJson(url)：同步取 JSON（离线返回空对象字面量）。</summary>
-        public string ajaxJson(string url) => "{}";
-
-        /// <summary>java.startBrowserAwait(url, name)：打开浏览器等待（离线返回空串）。</summary>
-        public string startBrowserAwait(string url, string name) => string.Empty;
-
-        /// <summary>java.getElements(rule)：取元素快照列表（离线返回空数组）。</summary>
-        public string getElements(string rule) => "[]";
-
-        /// <summary>java.getElement(rule)：取单个元素快照（离线返回空对象）。</summary>
-        public string getElement(string rule) => "{}";
+        return obj;
     }
+
+    /// <summary>
+    /// 把一个对象包成"未知成员自动兜底"的 Proxy。
+    /// <para>兜底行为：记一条 <see cref="JsDiagnosticKind.MissingApi"/>，返回 <c>null</c>。
+    /// 这样 <c>java.不存在的方法()</c> 不再抛 TypeError 把整段脚本废掉。</para>
+    /// <para>Proxy 不可用时（Jint 版本变化）原样返回对象——退化为旧行为，但不会崩。</para>
+    /// </summary>
+    private JsValue WrapWithMissingFallback(Engine engine, JsValue target, string prefix)
+    {
+        var seq = Interlocked.Increment(ref _missingCallbackSeq);
+        var callbackName = "__legado_missing_" + seq;
+        engine.SetValue(callbackName, new Action<string>(name =>
+            Diagnostics.RecordMissingApi(SourceKey, Field, prefix + name)));
+
+        engine.SetValue("__legado_proxy_target", target);
+        engine.SetValue("__legado_proxy_cb", engine.GetValue(callbackName));
+
+        // 刻意用字符串拼 JS（不用模板字符串），避免 C# 侧 {} 转义噪音。
+        var proxy = engine.Evaluate(
+            "(function(){var t=__legado_proxy_target,cb=__legado_proxy_cb;" +
+            "if(typeof Proxy==='undefined')return t;" +
+            "return new Proxy(t,{get:function(o,k){if(k in o)return o[k];" +
+            "if(typeof k!=='string')return undefined;" +
+            "return function(){cb(k);return null;};}});})()");
+
+        engine.SetValue("__legado_proxy_target", JsValue.Undefined);
+        engine.SetValue("__legado_proxy_cb", JsValue.Undefined);
+        return proxy;
+    }
+
+    /// <summary>
+    /// 把一个 CLR 委托包成 JS 函数：参数统一转成 <c>object?[]</c>（字符串/数值/bool/null），
+    /// 返回值再由 <see cref="JsValue.FromObject"/> 转回 JS。
+    /// </summary>
+    private static JsValue CreateFunction(Engine engine, string name, Func<object?[], object?> body) =>
+        new ClrFunction(engine, name, (_, args) =>
+        {
+            var converted = new object?[args.Length];
+            for (var i = 0; i < args.Length; i++)
+            {
+                converted[i] = args[i].ToObject();
+            }
+
+            object? result;
+            try
+            {
+                result = body(converted);
+            }
+            catch (Exception ex)
+            {
+                // 单个原语内部异常不能让整段脚本作废：记录并返回 null（JS 侧表现为 null）
+                JsDiagnostics.Shared.RecordScriptError(string.Empty, name, ex);
+                return JsValue.Null;
+            }
+
+            return result switch
+            {
+                null => JsValue.Null,
+                JsValue js => js,
+                string s => JsValue.FromObject(engine, s),
+                bool b => JsValue.FromObject(engine, b),
+                long l => JsValue.FromObject(engine, (double)l),
+                int i => JsValue.FromObject(engine, (double)i),
+                double d => JsValue.FromObject(engine, d),
+                _ => JsValue.FromObject(engine, result),
+            };
+        });
+
+    /// <summary>把参数拼成一行文本（诊断样本用；过长的由 <see cref="JsDiagnostics"/> 截断）。</summary>
+    private static string FormatArgs(object?[] args)
+    {
+        if (args.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < args.Length; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(' ');
+            }
+
+            sb.Append(args[i] switch
+            {
+                null => "null",
+                double d => d.ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+                _ => args[i]!.ToString(),
+            });
+        }
+
+        return sb.ToString();
+    }
+
+    /// <summary>引擎与其对应 <c>java</c> 对象的绑定（引擎换了就重建）。</summary>
+    private sealed record JavaBinding(Engine Engine, JsValue Java);
 }
