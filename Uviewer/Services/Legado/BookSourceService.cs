@@ -67,6 +67,20 @@ namespace Uviewer.Services.Legado
         /// </summary>
         private volatile string _downloadDirectory = DefaultDownloadDirectory;
 
+        /// <summary>
+        /// 多源书籍搜索的并发度（用户级，持久化到 <c>legadoSettings.json</c> 的
+        /// <c>searchConcurrency</c>）。搜索打的是几十上百个<b>不同站点</b>，全局并发调大
+        /// 不放大对单一站点的压力（每源自身仍是 1 个并发请求 + 各自的限速）。
+        /// </summary>
+        private volatile int _searchConcurrency = BookSourceLimits.SearchConcurrency;
+
+        /// <summary>
+        /// 整本下载的章节抓取并发度（用户级，持久化到 <c>legadoSettings.json</c> 的
+        /// <c>downloadConcurrency</c>）。下载打的是<b>同一个站点</b>，默认保守（8）、
+        /// 上限也压得低（16）——调太高容易触发站点风控。
+        /// </summary>
+        private volatile int _downloadConcurrency = BookSourceLimits.DownloadConcurrencyDefault;
+
         /// <summary>总开关等 Legado 侧设置的落盘路径。</summary>
         private readonly string _settingsPath;
         private readonly SearchService _search;
@@ -334,6 +348,34 @@ namespace Uviewer.Services.Legado
             return _downloadDirectory;
         }
 
+        /// <summary>多源搜索并发度（1..<see cref="BookSourceLimits.SearchMaxConcurrency"/>）。</summary>
+        public int SearchConcurrency => _searchConcurrency;
+
+        /// <summary>整本下载并发度（1..<see cref="BookSourceLimits.DownloadMaxConcurrency"/>）。</summary>
+        public int DownloadConcurrency => _downloadConcurrency;
+
+        /// <summary>
+        /// 一次设置搜索与下载并发并落盘（并行设置对话框用）。返回钳制后的实际生效值
+        /// （UI 可直接回填文本框）。值不变时不重写文件。
+        /// </summary>
+        public async Task<(int Search, int Download)> SetParallelismAsync(
+            int search, int download, CancellationToken token = default)
+        {
+            // 钳制而不是拒绝：用户输入越界时落到边界值，比弹错误更省事也更不容易劝退
+            var s = Math.Clamp(search, 1, BookSourceLimits.SearchMaxConcurrency);
+            var d = Math.Clamp(download, 1, BookSourceLimits.DownloadMaxConcurrency);
+
+            var changed = s != _searchConcurrency || d != _downloadConcurrency;
+            _searchConcurrency = s;
+            _downloadConcurrency = d;
+            if (changed)
+            {
+                await SaveSettingsAsync(token).ConfigureAwait(false);
+            }
+
+            return (s, d);
+        }
+
         /// <summary>读回 Legado 侧设置。文件不存在 = 用默认值（总开关开 + 默认下载目录）。</summary>
         private void LoadSettings()
         {
@@ -343,6 +385,8 @@ namespace Uviewer.Services.Legado
                 {
                     _purifyEnabled = true;
                     _downloadDirectory = DefaultDownloadDirectory;
+                    _searchConcurrency = BookSourceLimits.SearchConcurrency;
+                    _downloadConcurrency = BookSourceLimits.DownloadConcurrencyDefault;
                     return;
                 }
 
@@ -365,6 +409,23 @@ namespace Uviewer.Services.Legado
                 {
                     _downloadDirectory = DownloadPathRules.Resolve(dir.GetString());
                 }
+
+                // 并发数：缺失/非法 → 保持默认值（同样是"改坏配置不该让功能不可用"）
+                if (doc.RootElement.TryGetProperty("searchConcurrency", out var sc) &&
+                    sc.ValueKind == System.Text.Json.JsonValueKind.Number &&
+                    sc.TryGetInt32(out var searchValue))
+                {
+                    _searchConcurrency = Math.Clamp(
+                        searchValue, 1, BookSourceLimits.SearchMaxConcurrency);
+                }
+
+                if (doc.RootElement.TryGetProperty("downloadConcurrency", out var dc) &&
+                    dc.ValueKind == System.Text.Json.JsonValueKind.Number &&
+                    dc.TryGetInt32(out var downloadValue))
+                {
+                    _downloadConcurrency = Math.Clamp(
+                        downloadValue, 1, BookSourceLimits.DownloadMaxConcurrency);
+                }
             }
             catch (Exception ex)
             {
@@ -372,6 +433,8 @@ namespace Uviewer.Services.Legado
                 System.Diagnostics.Debug.WriteLine($"Load legado settings failed: {ex.Message}");
                 _purifyEnabled = true;
                 _downloadDirectory = DefaultDownloadDirectory;
+                _searchConcurrency = BookSourceLimits.SearchConcurrency;
+                _downloadConcurrency = BookSourceLimits.DownloadConcurrencyDefault;
             }
         }
 
@@ -391,7 +454,10 @@ namespace Uviewer.Services.Legado
                 // "同一份配置在不同来源（Android 导出 / 本机写入）之间逐字节 diff"的噪音。
                 // 路径用 JsonSerializer.Serialize 转义（反斜杠必须成对），不手拼字符串。
                 var dirJson = System.Text.Json.JsonSerializer.Serialize(_downloadDirectory ?? string.Empty);
-                var json = $"{{\n  \"purifyEnabled\": {(_purifyEnabled ? "true" : "false")},\n  \"downloadDirectory\": {dirJson}\n}}\n";
+                var json = $"{{\n  \"purifyEnabled\": {(_purifyEnabled ? "true" : "false")},\n" +
+                           $"  \"downloadDirectory\": {dirJson},\n" +
+                           $"  \"searchConcurrency\": {_searchConcurrency},\n" +
+                           $"  \"downloadConcurrency\": {_downloadConcurrency}\n}}\n";
                 await File.WriteAllTextAsync(temp, json, token).ConfigureAwait(false);
                 File.Move(temp, _settingsPath, overwrite: true);
             }

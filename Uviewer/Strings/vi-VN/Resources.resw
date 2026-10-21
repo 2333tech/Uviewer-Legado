@@ -736,6 +736,8 @@
   <data name="LegadoImportSources" xml:space="preserve"><value>Nhập JSON nguồn sách…</value></data>
   <data name="LegadoDownloadSettings" xml:space="preserve"><value>Cài đặt tải xuống…</value></data>
   <data name="LegadoDownloadSettingsHint" xml:space="preserve"><value>Chọn thư mục lưu khi tải toàn bộ sách (mặc định: thư mục "Downloads")</value></data>
+  <data name="LegadoParallelSettings" xml:space="preserve"><value>Cài đặt song song…</value></data>
+  <data name="LegadoParallelSettingsHint" xml:space="preserve"><value>Điều chỉnh số luồng tìm kiếm / tải toàn bộ song song (tìm kiếm 1–64, tải xuống 1–16). Số càng cao càng nhanh nhưng gây tải lớn hơn cho trang nguồn.</value></data>
   <data name="LegadoManageSourcesHint" xml:space="preserve"><value>Nguồn sách, quy tắc lọc và quy tắc tiêu đề tại một chỗ</value></data>
   <data name="LegadoImportReplaceRules" xml:space="preserve"><value>Nhập quy tắc lọc JSON…</value></data>
   <data name="LegadoShowReplaceRules" xml:space="preserve"><value>Xem / bật tắt quy tắc lọc</value></data>

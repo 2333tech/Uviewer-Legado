@@ -27,6 +27,7 @@ namespace Uviewer
                             ShowLegadoManagerAsync = () => window._documentReaderController.ShowBookSourceManagerAsync(),
                             ImportLegadoSourcesAsync = () => window._documentReaderController.ImportBookSourcesAsync(),
                             ShowLegadoDownloadSettingsAsync = () => window._documentReaderController.ShowDownloadSettingsAsync(),
+                            ShowLegadoParallelSettingsAsync = () => window._documentReaderController.ShowParallelSettingsAsync(),
                             ImportLegadoReplaceRulesAsync = () => window._documentReaderController.ImportReplaceRulesAsync(),
                             ShowLegadoReplaceRulesAsync = () => window._documentReaderController.ShowReplaceRulesAsync(),
                             ImportLegadoTitleRulesAsync = () => window._documentReaderController.ImportTitleRulesAsync(),

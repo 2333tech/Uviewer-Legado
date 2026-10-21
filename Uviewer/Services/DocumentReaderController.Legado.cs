@@ -983,6 +983,120 @@ namespace Uviewer
         }
 
         /// <summary>
+        /// 并行设置对话框：输入式调整「多源搜索」与「整本下载」的并发数。
+        /// <para><b>范围语义</b>：搜索打不同站点可放开（1–64），下载打同一站点须保守（1–16）；
+        /// 提示文本把范围写清楚，越界输入在保存时钳制到边界（不弹错、不拒收）。
+        /// 数值立即持久化（<c>legadoSettings.json</c>），下一次搜索 / 下载即生效——
+        /// 进行中的任务不受影响（并发闸门在每次任务开始时读取）。</para>
+        /// </summary>
+        internal async Task ShowParallelSettingsAsync()
+        {
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+
+            const double DesiredContentWidth = 560;
+
+            var palette = LegadoTheme.For(RootGrid);
+
+            // 数字输入：NumberBox 自带前后步进与输入校验（SpinButtonPlacementMode 内联），
+            // 比 TextBox + 手写 int.TryParse 少一大段胶水代码。
+            var searchInput = new Microsoft.UI.Xaml.Controls.NumberBox
+            {
+                Value = service.SearchConcurrency,
+                MinWidth = 120,
+                SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Inline,
+                SmallChange = 4,
+                LargeChange = 16,
+            };
+
+            var downloadInput = new Microsoft.UI.Xaml.Controls.NumberBox
+            {
+                Value = service.DownloadConcurrency,
+                MinWidth = 120,
+                SpinButtonPlacementMode = Microsoft.UI.Xaml.Controls.NumberBoxSpinButtonPlacementMode.Inline,
+                SmallChange = 1,
+                LargeChange = 4,
+            };
+
+            // 两行"标签 + 输入框"：标签靠左、输入靠右对齐成列，比纯竖排省高度
+            Grid Row(string label, FrameworkElement editor, string range)
+            {
+                var grid = new Grid { ColumnSpacing = 8 };
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                var text = new TextBlock
+                {
+                    Text = label,
+                    VerticalAlignment = VerticalAlignment.Center,
+                };
+                var rangeText = new TextBlock
+                {
+                    Text = range,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Opacity = 0.75,
+                    FontSize = 12,
+
+                    // 文字色必须灰度（LegadoTheme 约定），语义靠文案本身表达
+                    Foreground = palette.TextSecondary,
+                };
+                Grid.SetColumn(text, 0);
+                Grid.SetColumn(editor, 1);
+                Grid.SetColumn(rangeText, 2);
+                grid.Children.Add(text);
+                grid.Children.Add(editor);
+                grid.Children.Add(rangeText);
+                return grid;
+            }
+
+            var panel = new StackPanel
+            {
+                Spacing = 10,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "并发数立即保存，下一次搜索 / 下载生效；进行中的任务不受影响。"
+                             + "并发越高越快，但对站点压力也越大。",
+                        TextWrapping = TextWrapping.Wrap,
+                        FontSize = 12,
+                        Foreground = palette.TextSecondary,
+                    },
+                    Row("多源搜索", searchInput, "1 – 64（打不同站点，可放开）"),
+                    Row("整本下载", downloadInput, "1 – 16（打同一站点，须保守）"),
+                },
+            };
+
+            var dialog = new ContentDialog
+            {
+                XamlRoot = RootGrid.XamlRoot,
+                RequestedTheme = RootGrid.ActualTheme,
+                Title = "并行设置",
+                Content = panel,
+                PrimaryButtonText = "保存",
+                CloseButtonText = "取消",
+                DefaultButton = ContentDialogButton.Primary,
+            };
+
+            LegadoDialogLayout.Fit(dialog, RootGrid, DesiredContentWidth, preferredContentHeight: 260);
+
+            var result = await dialog.ShowAsync();
+            if (result != ContentDialogResult.Primary)
+            {
+                return;
+            }
+
+            // NumberBox 非法输入（空/非数字）时 Value 会回落为 NaN —— 兜底回当前值
+            var search = double.IsNaN(searchInput.Value) ? service.SearchConcurrency : (int)searchInput.Value;
+            var download = double.IsNaN(downloadInput.Value) ? service.DownloadConcurrency : (int)downloadInput.Value;
+
+            var (s, d) = await service.SetParallelismAsync(search, download).ConfigureAwait(true);
+            ShowNotification($"并行数已保存：搜索 {s} / 下载 {d}", "\uE73E", "Green");
+        }
+
+        /// <summary>
         /// 取主窗口句柄（FileOpenPicker 在 WinUI3 里必须绑定窗口才能正确弹出）。
         /// <para><b>不能用 <c>AppWindow</c> 换算</b>：<c>WindowNative.GetWindowHandle</c> 只有一个
         /// <c>(object)</c> 重载，内部转 <c>IWindowNative</c>；<c>Microsoft.UI.Windowing.AppWindow</c>

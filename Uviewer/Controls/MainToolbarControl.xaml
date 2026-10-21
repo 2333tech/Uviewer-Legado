@@ -132,6 +132,12 @@
                                         <FontIcon Glyph="&#xE838;"/>
                                     </MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
+                                <!-- 搜索 / 下载并发数调整（输入式，带范围提示） -->
+                                <MenuFlyoutItem x:Name="LegadoParallelSettingsMenuItem" Text="{x:Bind app:Strings.LegadoParallelSettings}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE9D5;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
                                 <MenuFlyoutSeparator/>
                                 <MenuFlyoutItem x:Name="LegadoImportReplaceRulesMenuItem" Text="{x:Bind app:Strings.LegadoImportReplaceRules}">
                                     <MenuFlyoutItem.Icon>

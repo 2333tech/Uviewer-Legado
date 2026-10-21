@@ -286,6 +286,12 @@ namespace Uviewer
         /// <summary>下载设置菜单项的悬停提示。</summary>
         public static string LegadoDownloadSettingsHint => GetString("LegadoDownloadSettingsHint");
 
+        /// <summary>并行设置菜单项文案（搜索 / 下载并发数）。</summary>
+        public static string LegadoParallelSettings => GetString("LegadoParallelSettings");
+
+        /// <summary>并行设置菜单项的悬停提示。</summary>
+        public static string LegadoParallelSettingsHint => GetString("LegadoParallelSettingsHint");
+
         /// <summary>书源管理二级菜单的悬停提示（概括其下含哪些能力）。</summary>
         public static string LegadoManageSourcesHint => GetString("LegadoManageSourcesHint");
 

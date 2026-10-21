@@ -102,6 +102,15 @@ namespace Uviewer.Services.Legado
 
             var searchButton = new Button { Content = "搜索书籍", MinWidth = 96 };
 
+            // 取消按钮：仅搜索进行中可见。点击立刻打断搜索任务，输入框马上恢复可编辑
+            // ——"取消后换个关键词重搜"是最常见的下一步，不该等任务收尾。
+            var cancelButton = new Button
+            {
+                Content = "取消",
+                MinWidth = 64,
+                Visibility = Visibility.Collapsed,
+            };
+
             var progressBar = new ProgressBar
             {
                 IsIndeterminate = false,
@@ -131,10 +140,13 @@ namespace Uviewer.Services.Legado
             var header = new Grid { ColumnSpacing = 8 };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             Grid.SetColumn(input, 0);
             Grid.SetColumn(searchButton, 1);
+            Grid.SetColumn(cancelButton, 2);
             header.Children.Add(input);
             header.Children.Add(searchButton);
+            header.Children.Add(cancelButton);
 
             var panel = new StackPanel
             {
@@ -189,6 +201,9 @@ namespace Uviewer.Services.Legado
                 running = true;
                 searchButton.IsEnabled = false;
                 input.IsEnabled = false;
+                cancelButton.Visibility = Visibility.Visible;
+                cancelButton.IsEnabled = true;
+                cancelButton.Content = "取消";
                 completed = 0;
                 totalSources = 0;
                 hitCount = 0;
@@ -200,7 +215,10 @@ namespace Uviewer.Services.Legado
                 progressText.Text = string.Empty;
                 status.Text = $"正在搜索“{keyword}”…";
 
-                var stopped = false;
+                // "本次搜索还是不是当前搜索"：取消后用户立刻重搜时，runSearch 会换新的
+                // CancellationTokenSource——旧任务的收尾（状态文字/控件复位）必须让位，
+                // 否则会把新一轮搜索的进度条和提示覆盖掉。
+                bool IsCurrent() => ReferenceEquals(_cts, cts);
 
                 try
                 {
@@ -261,9 +279,8 @@ namespace Uviewer.Services.Legado
 
                     var groups = await _search.SearchAsync(keyword, null, progress, OnGroup, cts.Token);
 
-                    if (cts.IsCancellationRequested)
+                    if (cts.IsCancellationRequested || !IsCurrent())
                     {
-                        stopped = true;
                         return;
                     }
 
@@ -281,26 +298,46 @@ namespace Uviewer.Services.Legado
                 }
                 catch (OperationCanceledException)
                 {
-                    status.Text = "搜索已取消。";
+                    if (IsCurrent())
+                    {
+                        status.Text = "搜索已取消。已命中的结果保留在列表里。";
+                    }
                 }
                 catch (Exception ex)
                 {
-                    status.Text = $"搜索失败：{ex.Message}";
+                    if (IsCurrent())
+                    {
+                        status.Text = $"搜索失败：{ex.Message}";
+                    }
                 }
                 finally
                 {
-                    if (!stopped)
+                    // 只有"仍是当前搜索"才复位控件与 running：取消后立刻重搜时，
+                    // 旧任务的 finally 不能把新搜索的 running 复位（否则并发守卫失效）。
+                    // 注意 running 必须在取消路径上也复位——旧实现里 stopped 分支不重置，
+                    // 导致"取消一次后就永远不能再搜索"。
+                    if (IsCurrent())
                     {
                         running = false;
+                        searchButton.IsEnabled = true;
+                        input.IsEnabled = true;
+                        cancelButton.Visibility = Visibility.Collapsed;
+                        progressBar.Visibility = Visibility.Collapsed;
                     }
-
-                    searchButton.IsEnabled = true;
-                    input.IsEnabled = true;
-                    progressBar.Visibility = Visibility.Collapsed;
                 }
             });
 
             searchButton.Click += async (s, e) => await runSearch();
+
+            // 取消：打断当前搜索；输入框立即恢复可编辑并聚焦（不等任务收尾）
+            cancelButton.Click += (s, e) =>
+            {
+                _cts?.Cancel();
+                cancelButton.IsEnabled = false;
+                cancelButton.Content = "取消中…";
+                input.IsEnabled = true;
+                input.Focus(FocusState.Programmatic);
+            };
             input.KeyDown += async (s, e) =>
             {
                 if (e.Key == Windows.System.VirtualKey.Enter)

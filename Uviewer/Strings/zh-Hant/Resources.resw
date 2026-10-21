@@ -736,6 +736,8 @@
   <data name="LegadoImportSources" xml:space="preserve"><value>匯入書源 JSON…</value></data>
   <data name="LegadoDownloadSettings" xml:space="preserve"><value>下載設定…</value></data>
   <data name="LegadoDownloadSettingsHint" xml:space="preserve"><value>設定整本下載的儲存目錄（預設：使用者「下載」資料夾）</value></data>
+  <data name="LegadoParallelSettings" xml:space="preserve"><value>並行設定…</value></data>
+  <data name="LegadoParallelSettingsHint" xml:space="preserve"><value>調整多源搜尋與整本下載的並行數（搜尋 1–64，下載 1–16）。並行越高越快，但對站點壓力也越大。</value></data>
   <data name="LegadoManageSourcesHint" xml:space="preserve"><value>書源、淨化規則與標題規則的統一入口</value></data>
   <data name="LegadoImportReplaceRules" xml:space="preserve"><value>匯入淨化規則 JSON…</value></data>
   <data name="LegadoShowReplaceRules" xml:space="preserve"><value>檢視 / 開關淨化規則</value></data>

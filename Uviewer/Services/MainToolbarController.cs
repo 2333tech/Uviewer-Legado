@@ -23,6 +23,8 @@ namespace Uviewer.Services
         public Func<Task> ImportLegadoSourcesAsync { get; init; } = null!;
         /// <summary>下载设置（整本下载的保存目录）。</summary>
         public Func<Task> ShowLegadoDownloadSettingsAsync { get; init; } = null!;
+        /// <summary>并行设置（搜索 / 下载并发数）。</summary>
+        public Func<Task> ShowLegadoParallelSettingsAsync { get; init; } = null!;
         /// <summary>导入净化（替换）规则 JSON。</summary>
         public Func<Task> ImportLegadoReplaceRulesAsync { get; init; } = null!;
         /// <summary>查看已导入净化规则并逐条开关。</summary>
@@ -112,6 +114,7 @@ namespace Uviewer.Services
             _toolbar.LegadoManageRequested += (_, _) => RunAsync(_handlers.ShowLegadoManagerAsync);
             _toolbar.LegadoImportRequested += (_, _) => RunAsync(_handlers.ImportLegadoSourcesAsync);
             _toolbar.LegadoDownloadSettingsRequested += (_, _) => RunAsync(_handlers.ShowLegadoDownloadSettingsAsync);
+            _toolbar.LegadoParallelSettingsRequested += (_, _) => RunAsync(_handlers.ShowLegadoParallelSettingsAsync);
             _toolbar.LegadoImportReplaceRulesRequested += (_, _) => RunAsync(_handlers.ImportLegadoReplaceRulesAsync);
             _toolbar.LegadoShowReplaceRulesRequested += (_, _) => RunAsync(_handlers.ShowLegadoReplaceRulesAsync);
             _toolbar.LegadoImportTitleRulesRequested += (_, _) => RunAsync(_handlers.ImportLegadoTitleRulesAsync);

@@ -73,10 +73,14 @@ namespace Uviewer.Services.Legado
                 return Array.Empty<SearchGroup>();
             }
 
-            // 限流与库侧 BookSourceLimits 对齐（默认 16）。这里自己控流而不用库的
-            // SearchAllAsync，是因为要"边搜边出"——后者一次性返回全部结果，途中无中间态可展示。
+            // 并发口径：多源搜索打的是几十上百个不同站点，全局并发只影响总时长、
+            // 不放大对单一站点的压力（每源仍是 1 个并发请求 + 自身 concurrentRate 限速），
+            // 因此专用更高的一档（默认 32，上限 64）——与同站并发的 DefaultConcurrency(16)/MaxConcurrency(20) 区分。
+            // 默认值来自用户设置（并行设置对话框，落 legadoSettings.json）；显式传 maxConcurrency 的调用方优先。
+            // 这里自己控流而不用库的 SearchAllAsync，是因为要"边搜边出"——
+            // 后者一次性返回全部结果，途中无中间态可展示。
             var limit = Math.Clamp(
-                maxConcurrency ?? BookSourceLimits.DefaultConcurrency, 1, BookSourceLimits.MaxConcurrency);
+                maxConcurrency ?? _service.SearchConcurrency, 1, BookSourceLimits.SearchMaxConcurrency);
             using var sem = new SemaphoreSlim(limit, limit);
 
             var channel = System.Threading.Channels.Channel.CreateUnbounded<SearchGroup>();

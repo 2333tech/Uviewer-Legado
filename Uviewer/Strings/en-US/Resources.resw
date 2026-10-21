@@ -736,6 +736,8 @@
   <data name="LegadoImportSources" xml:space="preserve"><value>Import book sources JSON…</value></data>
   <data name="LegadoDownloadSettings" xml:space="preserve"><value>Download settings…</value></data>
   <data name="LegadoDownloadSettingsHint" xml:space="preserve"><value>Choose where whole-book downloads are saved (default: your Downloads folder)</value></data>
+  <data name="LegadoParallelSettings" xml:space="preserve"><value>Parallelism settings…</value></data>
+  <data name="LegadoParallelSettingsHint" xml:space="preserve"><value>Adjust concurrent search / download counts (search 1–64, download 1–16). Higher is faster but puts more load on source sites.</value></data>
   <data name="LegadoManageSourcesHint" xml:space="preserve"><value>Book sources, purification rules and title rules in one place</value></data>
   <data name="LegadoImportReplaceRules" xml:space="preserve"><value>Import purification rules JSON…</value></data>
   <data name="LegadoShowReplaceRules" xml:space="preserve"><value>View / toggle purification rules</value></data>

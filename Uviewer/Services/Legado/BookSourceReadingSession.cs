@@ -278,15 +278,13 @@ namespace Uviewer.Services.Legado
         /// 批量抓取若干章正文，<b>与入参下标一一对应</b>（失败章为 null，不压缩数组）。
         /// <para>整本下载用：需要"第 i 章正文配第 i 章标题"，若用会过滤 null 的
         /// <c>GetContentsAsync</c>，中间一章失败就会让后面所有章名错位一格。</para>
-        /// <para>并发度固定 8：整本下载是长时间后台任务，比搜索更保守，避免把站点压太狠。</para>
+        /// <para>并发度来自用户设置（并行设置对话框，默认 8）：整本下载是长时间后台任务，
+        /// 比搜索更保守，避免把单一站点压太狠。</para>
         /// </summary>
         public Task<Uviewer.Services.Legado.Models.ChapterContent?[]> FetchContentsAsync(
             IReadOnlyList<CoreTocItem> chapters, CancellationToken token = default) =>
             _service.Engine.GetContentsIndexedAsync(
-                _source, chapters, _bookUrl, BatchFetchConcurrency, null, token, _jsBook);
-
-        /// <summary>整本下载时的章节抓取并发度（比搜索的 16 保守，下载是长任务）。</summary>
-        private const int BatchFetchConcurrency = 8;
+                _source, chapters, _bookUrl, _service.DownloadConcurrency, null, token, _jsBook);
 
         /// <summary>记录"读到第几章"（仅内存；落盘由 <see cref="BookSourceService"/> 在切书时统一做）。</summary>
         public void ReportPosition(int index)        {
