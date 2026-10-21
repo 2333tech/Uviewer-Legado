@@ -475,10 +475,55 @@ internal sealed class JsBridge
                 Diagnostics.RecordMissingApi(SourceKey, Field, name + "(无解析作用域)");
                 return null;
 
+            // 阶段 4-5b：T0 加解密族（legado JsEncodeUtils 语义 + reader 对称实现）。
+            // 失败抛异常 → CreateFunction 统一记 ScriptError 并返回 null（legado String? null 同义）。
+            case "createSymmetricCrypto":
+                return CryptoJavaApi.CreateSymmetricCrypto(engine, args);
+
+            case "base64DecodeToByteArray":
+                return CryptoJavaApi.Base64DecodeToByteArray(engine, args);
+
+            case "hexDecodeToByteArray":
+                return CryptoJavaApi.HexDecodeToByteArray(engine, args);
+
+            case "aesBase64DecodeToString":
+            case "aesDecodeToString":
+            case "aesEncodeToBase64String":
+            case "aesEncodeToString":
+            case "desEncodeToBase64String":
+            case "desBase64DecodeToString":
+            case "desDecodeToString":
+            case "desEncodeToString":
+                return CryptoDispatch(name, args);
+
+            case "HMacHex":
+            case "HMacBase64":
+            case "digestHex":
+            case "digestBase64Str":
+                return CryptoDispatch(name, args);
+
             default:
                 return JsPureApi.TryInvoke(name, args, out var result) ? result : null;
         }
     }
+
+    /// <summary>加解密族的一元/四元原语派发（<see cref="CryptoJavaApi"/>，签名见 legado JsEncodeUtils）。</summary>
+    private object? CryptoDispatch(string name, object?[] args) => name switch
+    {
+        "aesBase64DecodeToString" => CryptoJavaApi.AesBase64DecodeToString(args),
+        "aesDecodeToString" => CryptoJavaApi.AesDecodeToString(args),
+        "aesEncodeToBase64String" => CryptoJavaApi.AesEncodeToBase64String(args),
+        "aesEncodeToString" => CryptoJavaApi.AesEncodeToString(args),
+        "desEncodeToBase64String" => CryptoJavaApi.DesEncodeToBase64String(args),
+        "desBase64DecodeToString" => CryptoJavaApi.DesBase64DecodeToString(args),
+        "desDecodeToString" => CryptoJavaApi.DesDecodeToString(args),
+        "desEncodeToString" => CryptoJavaApi.DesEncodeToString(args),
+        "HMacHex" => CryptoJavaApi.HMacHex(args),
+        "HMacBase64" => CryptoJavaApi.HMacBase64(args),
+        "digestHex" => CryptoJavaApi.DigestHex(args),
+        "digestBase64Str" => CryptoJavaApi.DigestBase64Str(args),
+        _ => null,
+    };
 
     /// <summary>
     /// 桩原语的返回值：保持"不抛错 + 返回空值"的既有行为，并记录一次

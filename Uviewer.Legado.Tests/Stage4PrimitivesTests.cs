@@ -241,9 +241,9 @@ public class Stage4PrimitivesTests
     public async Task Capabilities_Raw_Sample_Baseline()
     {
         // 这条是全量基线：口径再变时会立刻红，逼你同步文档与 ROI 数字。
-        // 2026-10-21（4-5 落地后）实测值：T2 规则原语（getElements/getElement/getStringList/
-        // setContent）实现后，阅读链路可跑 348 → 363（+15）、整源 330 → 348（+18）；
-        // Rule 层缺口清零，tier 分布只剩 Pure=370 / Browser=38。
+        // 2026-10-21（4-5b 加解密族落地后）实测值：aesBase64DecodeToString/HMacHex/digestHex/
+        // createSymmetricCrypto/字节数组族实现后，阅读链路可跑 363 → 377（+14）；
+        // 阅读链缺口只剩浏览器族（startBrowser 21）与登录依赖（refreshTocUrl 6）、词典类（t2s 5）。
         var all = await SampleData.AllAsync();
         Assert.Equal(408, all.Count);
 
@@ -276,21 +276,21 @@ public class Stage4PrimitivesTests
             }
         }
 
-        Assert.Equal(363, readingOk);
-        Assert.Equal(348, allOk);
-        Assert.Equal(45, needsStage4);
+        Assert.Equal(377, readingOk);
+        Assert.Equal(365, allOk);
+        Assert.Equal(31, needsStage4);
 
-        // 阅读链路 Top 缺口（阶段 4 后续步骤的 ROI 依据；4-5 后 T2 族已清零）
+        // 阅读链路 Top 缺口（后续步骤的 ROI 依据；4-5b 后 T0 加解密族已清零）
         var top = missingApiHistogram.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal)
             .Take(5).Select(p => p.Key).ToArray();
-        Assert.Equal(new[] { "startBrowser", "aesBase64DecodeToString", "refreshTocUrl", "t2s", "HMacHex" }, top);
+        Assert.Equal(new[] { "startBrowser", "refreshTocUrl", "t2s", "openUrl", "startBrowserAwait" }, top);
     }
 
-    /// <summary>阅读链路当前可跑的原始条目数（2026-10-21，4-5 落地后；4-3 为 348、4-2 为 321）。</summary>
-    private const int ExpectedReadingOk = 363;
+    /// <summary>阅读链路当前可跑的原始条目数（2026-10-21，4-5b 落地后；4-5 为 363、4-3 为 348）。</summary>
+    private const int ExpectedReadingOk = 377;
 
-    /// <summary>整源（含搜索/详情链）当前可跑的原始条目数（4-5 落地后；4-3 为 330、4-2 为 258）。</summary>
-    private const int ExpectedAllOk = 348;
+    /// <summary>整源（含搜索/详情链）当前可跑的原始条目数（4-5b 落地后；4-5 为 348、4-3 为 330）。</summary>
+    private const int ExpectedAllOk = 365;
 
     // ============================================================
     // 辅助

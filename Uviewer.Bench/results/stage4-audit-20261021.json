@@ -1,24 +1,19 @@
 {
-  "GeneratedAt": "2026-10-21 15:47:57",
+  "GeneratedAt": "2026-10-21 16:36:28",
   "Sample": "bookSource_202610192010.json",
   "Total": 408,
   "TextSources": 308,
-  "ReadingSupported": 363,
-  "AllSupported": 348,
-  "Searchable": 350,
+  "ReadingSupported": 377,
+  "AllSupported": 365,
+  "Searchable": 364,
   "TierHistogram": {
     "Pure": 370,
     "Browser": 38
   },
   "ReadingMissingTop": {
     "startBrowser": 21,
-    "aesBase64DecodeToString": 8,
     "refreshTocUrl": 6,
     "t2s": 5,
-    "HMacHex": 2,
-    "createSymmetricCrypto": 2,
-    "desEncodeToBase64String": 2,
-    "digestHex": 2,
     "openUrl": 1,
     "startBrowserAwait": 1
   },
@@ -27,22 +22,20 @@
     "webView": 12,
     "t2s": 11,
     "startBrowserAwait": 10,
-    "aesBase64DecodeToString": 8,
     "refreshTocUrl": 6,
-    "createSymmetricCrypto": 5,
     "ruleUrl": 4,
     "s2t": 4,
-    "HMacHex": 3,
-    "digestHex": 3,
     "androidId": 2,
-    "desEncodeToBase64String": 2,
     "initUrl": 2,
     "openUrl": 2,
     "refreshExplore": 2,
-    "base64DecodeToByteArray": 1,
     "getReadBookConfigMap": 1,
     "getThemeConfigMap": 1,
-    "getVerificationCode": 1
+    "getVerificationCode": 1,
+    "key": 1,
+    "readBookConfig": 1,
+    "searchBook": 1,
+    "showBrowser": 1
   },
   "Sources": [
     {
@@ -330,85 +323,69 @@
       "Url": "http://api.jmlldsc.com##@曦灵",
       "Name": "猫眼看书（优++）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "aesBase64DecodeToString"
-      ],
-      "ReadingMissingApis": [
-        "aesBase64DecodeToString"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "http://download.yichnmedia.com",
       "Name": "猫眼看书（优++）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "createSymmetricCrypto"
-      ],
-      "ReadingMissingApis": [
-        "createSymmetricCrypto"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "http://api.lfdapengu.com",
       "Name": "猫眼看书（优++）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "aesBase64DecodeToString"
-      ],
-      "ReadingMissingApis": [
-        "aesBase64DecodeToString"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "http://api.lemiyigou.com",
       "Name": "猫眼看书（优++）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "aesBase64DecodeToString"
-      ],
-      "ReadingMissingApis": [
-        "aesBase64DecodeToString"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://jyapi.jyacg.com",
@@ -576,7 +553,6 @@
       "RequiredTier": "Browser",
       "MissingApis": [
         "androidId",
-        "digestHex",
         "getReadBookConfigMap",
         "getThemeConfigMap",
         "getVerificationCode",
@@ -840,24 +816,18 @@
       "Url": "https://goway.reader.yueyouxs.com/",
       "Name": "阅友小说（优++）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "HMacHex",
-        "desEncodeToBase64String"
-      ],
-      "ReadingMissingApis": [
-        "HMacHex",
-        "desEncodeToBase64String"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://qcbook.taoyuewenhua.net",
@@ -1341,12 +1311,9 @@
       "Name": "书耽小说（优）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "base64DecodeToByteArray",
-        "createSymmetricCrypto"
-      ],
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -1354,7 +1321,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresLogin, HasJsLib"
+      "Flags": "RequiresLogin, HasJsLib"
     },
     {
       "Url": "https://www.ciyuanji.com",
@@ -2335,11 +2302,9 @@
       "Name": "漫播听书（优）",
       "Kind": 1,
       "ReadingSupported": true,
-      "AllSupported": false,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "createSymmetricCrypto"
-      ],
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -2347,7 +2312,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "http://www.ychy.org",
@@ -2709,22 +2674,18 @@
       "Url": "https://www.ncat1.app/",
       "Name": "网飞猫网（优+）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "createSymmetricCrypto"
-      ],
-      "ReadingMissingApis": [
-        "createSymmetricCrypto"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://shasha.one",
@@ -3081,64 +3042,52 @@
       "Url": "https://api-cdn.kaimanhua.com",
       "Name": "全免漫画（优）",
       "Kind": 2,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "aesBase64DecodeToString"
-      ],
-      "ReadingMissingApis": [
-        "aesBase64DecodeToString"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://api-cdn.kaimanhua.com/",
       "Name": "全免漫画（优）",
       "Kind": 2,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "aesBase64DecodeToString"
-      ],
-      "ReadingMissingApis": [
-        "aesBase64DecodeToString"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://api-cdn.kaimanhua.com/##@遇知",
       "Name": "全免漫画（优）",
       "Kind": 2,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "aesBase64DecodeToString"
-      ],
-      "ReadingMissingApis": [
-        "aesBase64DecodeToString"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://www.yydsmh.com/",
@@ -3581,22 +3530,18 @@
       "Url": "https://apiv2hans.aixdzs.com",
       "Name": "爱下电子（优）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "digestHex"
-      ],
-      "ReadingMissingApis": [
-        "digestHex"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://www.83zws.com/",
@@ -4133,24 +4078,18 @@
       "Url": "https://goway.reader.yueyouxs.com",
       "Name": "阅友网络（优）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "HMacHex",
-        "desEncodeToBase64String"
-      ],
-      "ReadingMissingApis": [
-        "HMacHex",
-        "desEncodeToBase64String"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://www.sudugu.org/",
@@ -5946,11 +5885,9 @@
       "Name": "国学書库（优+）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "HMacHex"
-      ],
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -5958,28 +5895,24 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, HasJsLib"
+      "Flags": "HasJsLib"
     },
     {
       "Url": "https://app.kujiang.com",
       "Name": "酷匠网吧（优+）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "aesBase64DecodeToString"
-      ],
-      "ReadingMissingApis": [
-        "aesBase64DecodeToString"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://cxb-pro.cread.com/",
@@ -6218,8 +6151,6 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "createSymmetricCrypto",
-        "hexDecodeToByteArray",
         "initUrl",
         "key",
         "startBrowserAwait",
@@ -6425,22 +6356,18 @@
       "Url": "https://api.ieasou.com",
       "Name": "宜搜小说（优）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "aesBase64DecodeToString"
-      ],
-      "ReadingMissingApis": [
-        "aesBase64DecodeToString"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "http://app.1001p.com",
@@ -6531,22 +6458,18 @@
       "Url": "https://apiv2hans.aixdzs.com##@尐哖",
       "Name": "爱下小说（优）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
+      "ReadingSupported": true,
+      "AllSupported": true,
       "RequiredTier": "Pure",
-      "MissingApis": [
-        "digestHex"
-      ],
-      "ReadingMissingApis": [
-        "digestHex"
-      ],
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "http://www.shubang.net/book/",

@@ -266,8 +266,8 @@ public class Phase5LibraryTests
     public void Capabilities_Detects_Java_Call_Only_In_Script_Context()
     {
         // 规则值里的 java.* 且带 JS 标记，且该原语**尚未实现** → 需要阶段 4
-        // （ajax 在 4-3 已成真实实现，这里改用仍是 T0 缺口的加解密族）
-        var marked = Source(contentRule: new ContentRule { Content = "<js>java.aesBase64DecodeToString('x')</js>" });
+        // （ajax 在 4-3、加解密族在 4-5b 已成真实实现，这里改用仍是缺口的 refreshTocUrl）
+        var marked = Source(contentRule: new ContentRule { Content = "<js>java.refreshTocUrl()</js>" });
         Assert.True(BookSourceCapabilities.Assess(marked).HasFlag(BookSourceCapability.RequiresJsEngine));
 
         // 阶段 4-1 口径修正：已实现的原语（getString/get/put/md5/base64/timeFormat…）不再算缺口
