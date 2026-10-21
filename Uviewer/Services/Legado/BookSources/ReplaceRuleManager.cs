@@ -67,6 +67,12 @@ public sealed class ReplaceRuleManager
     /// <summary>
     /// 从磁盘流式加载（整份读完才原子换入：中途失败/文件损坏保留原有数据）。
     /// 文件不存在 = 清空（与 BookSourceManager 语义一致）。
+    /// <para><b>解析失败不抛</b>：坏文件会让枚举器抛 JsonException，旧实现任其冒泡到
+    /// 初始化链（那里缓存 faulted 任务不重试 → 净化功能整个会话永久退化），
+    /// 这里降级为"保留现有数据 + 记 <see cref="LastLoadError"/>"。</para>
+    /// <para><b>Id &lt;= 0 重新分配</b>：第三方/手写 JSON 常缺 id 字段（默认 0），
+    /// 直接以 Id 为键会让同文件里的多条无 Id 规则互相覆盖只剩最后一条
+    /// （导入路径早有重分配，加载路径对齐）。</para>
     /// </summary>
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
@@ -78,23 +84,46 @@ public sealed class ReplaceRuleManager
                 _snapshot = null;
             }
 
+            LastLoadError = null;
             return;
         }
 
         // 局部累积再原子换入（失败不影响现有数据）
         var fresh = new Dictionary<long, ReplaceRule>();
-        using (var stream = BookSourceJsonReader.OpenRead(_filePath))
+        try
         {
-            await foreach (var rule in BookSourceSerializer.DeserializeReplaceRuleEnumerableAsync(stream, cancellationToken).ConfigureAwait(false))
+            using (var stream = BookSourceJsonReader.OpenRead(_filePath))
             {
-                if (rule is null)
+                await foreach (var rule in BookSourceSerializer.DeserializeReplaceRuleEnumerableAsync(stream, cancellationToken).ConfigureAwait(false))
                 {
-                    continue;
-                }
+                    if (rule is null)
+                    {
+                        continue;
+                    }
 
-                // 同 Id 后者覆盖前者（防御坏文件里的重复 Id）
-                fresh[rule.Id] = rule;
+                    // 同 Id 后者覆盖前者（防御坏文件里的重复 Id）；
+                    // 无 Id 条目重新分配（max+1，保序且不撞已有 Id）——
+                    // 直接以 0 为键会让同文件多条无 Id 规则互相覆盖只剩一条
+                    if (rule.Id <= 0)
+                    {
+                        rule.Id = NextIdIn(fresh);
+                    }
+
+                    fresh[rule.Id] = rule;
+                }
             }
+
+            LastLoadError = null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // 解析失败：保留现有数据不换入，只记错误
+            LastLoadError = ex.Message;
+            return;
         }
 
         lock (_gate)
@@ -104,12 +133,14 @@ public sealed class ReplaceRuleManager
         }
     }
 
+    /// <summary>最近一次加载失败的原因（损坏文件等；null = 上次加载正常）。诊断用。</summary>
+    public string? LastLoadError { get; private set; }
+
     /// <summary>
     /// 全量写回磁盘：流式序列化 + 临时文件原子替换（策略同 BookSourceManager.SaveAsync）。
     /// </summary>
     public async Task SaveAsync(CancellationToken cancellationToken = default)
     {
-        var all = GetAll();
         var dir = Path.GetDirectoryName(_filePath);
         if (!string.IsNullOrEmpty(dir))
         {
@@ -119,6 +150,8 @@ public sealed class ReplaceRuleManager
         await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // 快照在闸内取（同 BookSourceManager：闸外取快照会丢更新）
+            var all = GetAll();
             var temp = _filePath + ".tmp";
             try
             {
@@ -165,7 +198,7 @@ public sealed class ReplaceRuleManager
         {
             if (rule.Id <= 0)
             {
-                rule.Id = NextId();
+                rule.Id = NextIdLocked();
             }
 
             _map[rule.Id] = rule; // Dictionary 索引器：新键追加到尾，覆盖保位
@@ -281,13 +314,10 @@ public sealed class ReplaceRuleManager
     // ---- 内部 ----
 
     /// <summary>分配下一个 Id：max(Id)+1；空表从 1 开始（确定性，不用时间戳避免碰撞）。</summary>
-    private long NextId() => NextIdLocked();
-
-    /// <summary>分配下一个 Id（调用方须已持 <c>_gate</c>）。</summary>
-    private long NextIdLocked()
+    private static long NextIdIn(Dictionary<long, ReplaceRule> map)
     {
         long max = 0;
-        foreach (var id in _map.Keys)
+        foreach (var id in map.Keys)
         {
             if (id > max)
             {
@@ -297,6 +327,9 @@ public sealed class ReplaceRuleManager
 
         return max + 1;
     }
+
+    /// <summary>分配下一个 Id（调用方须已持 <c>_gate</c>）。</summary>
+    private long NextIdLocked() => NextIdIn(_map);
 
     /// <summary>构建不可变快照（保序数组）。</summary>
     private static IReadOnlyList<ReplaceRule> Build(Dictionary<long, ReplaceRule> map)

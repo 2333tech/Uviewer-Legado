@@ -140,7 +140,9 @@ namespace Uviewer
                 if (IsVirtualTextCache)
                 {
                     InvalidateVirtualPurifiedChapters();
-                    var center = Math.Max(0, _textCacheCenter);
+                    // 中心章按可见章取（不是 _textCacheCenter）：窗口内跳章后 center
+                    // 不更新，按它重开窗口会把读者弹回打开窗口时的旧章
+                    var center = GetCurrentVisibleWindowChapter();
                     var offset = GetCurrentChapterLineOffset();
                     ClearTextCacheWindowState();
                     if (await TryOpenVirtualWindowAsync(center, offset).ConfigureAwait(true))
@@ -303,6 +305,14 @@ namespace Uviewer
             _legadoSession = session;
             LegadoBookName = session.BookName;
 
+            // 清掉上一个**本地**文本源的路径字段：HasLocalTextSource() 据此判断"有没有本地
+            // 文本可走窗口路径"，书源阅读中它必须为 false——否则读书源时开关一次阅读模式，
+            // wantVirtualWindow 会按旧本地路径命中磁盘章节缓存，把旧文件的窗口文本装配进来
+            // （会话还活着、目录还是书源目录，内容却是旧文件；无缓存时还会按旧路径的保存行
+            // 定位，甚至给书源章节套上 .json/.log/.csv 的纯文本锁定）。
+            _currentTextFilePath = null;
+            _currentTextArchiveEntryKey = null;
+
             // 断点续读的起始章：命中进度则回到上次位置，否则从第一章开始
             var startIndex = 0;
             var saved = service.GetReadingPosition(source.BookSourceUrl, bookUrl);
@@ -344,10 +354,15 @@ namespace Uviewer
 
             int loadGeneration = BeginTextContentLoad();
             _isNavigatingRecent = true;
+
+            // linked CTS 必须 using：旧实现每次跳章新建一个 linked CTS 既不释放也不字段持有，
+            // 它向两个父 token 注册的回调一直被父源引用（_globalTextCts 下次替换才可回收）——
+            // 连续跳章 = 回调列表无界增长的内存泄漏。
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, local);
             try
             {
                 var text = await _legadoSession
-                    .GetChapterTextAsync(index, CancellationTokenSource.CreateLinkedTokenSource(token, local).Token)
+                    .GetChapterTextAsync(index, linked.Token)
                     .ConfigureAwait(true);
 
                 if (generation != _legadoGeneration || local.IsCancellationRequested)
@@ -852,15 +867,19 @@ namespace Uviewer
 
             var palette = LegadoTheme.For(RootGrid);
 
+            // WinUI 铁律：AcceptsReturn/TextWrapping 必须在 Text **之前**设——
+            // 对象初始化器按书写顺序执行，WinUI 在 AcceptsReturn=False（默认）时
+            // 会按单行规范化 Text，多行串被砍在第一个换行符（之后再打开不还原）。
             var input = new TextBox
             {
-                Text = service.DownloadDirectory,
-                PlaceholderText = @"例如 D:\Books",
                 TextWrapping = TextWrapping.NoWrap,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
 
                 // 纵向拉伸：与右侧"浏览"按钮同高，由 Grid 行高统一决定（不硬编高度值）
                 VerticalAlignment = VerticalAlignment.Stretch,
+
+                Text = service.DownloadDirectory,
+                PlaceholderText = @"例如 D:\Books",
             };
 
             // 按钮沿用项目默认 Button 样式（对话框内的"导入/保存/删除"都是默认样式，

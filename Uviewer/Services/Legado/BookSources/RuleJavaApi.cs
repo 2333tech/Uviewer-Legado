@@ -48,12 +48,18 @@ internal static class RuleJavaApi
     public static JsValue GetElements(Engine engine, JsBridge bridge, IReadOnlyList<object?> items)
     {
         var array = new JsArray(engine, Array.Empty<JsValue>());
+
+        // 首元素只包一次：旧实现 AttachListExtras 里又 WrapItem(items[0])，
+        // 同一个元素被包两个不同 JsObject（委托函数挂的是另一个实例）。
+        JsValue? firstWrapped = null;
         foreach (var item in items)
         {
-            array.Push(WrapItem(engine, bridge, item));
+            var wrapped = WrapItem(engine, bridge, item);
+            firstWrapped ??= wrapped;
+            array.Push(wrapped);
         }
 
-        AttachListExtras(engine, bridge, array, items);
+        AttachListExtras(engine, bridge, array, items, firstWrapped ?? JsValue.Null);
         return array;
     }
 
@@ -61,12 +67,16 @@ internal static class RuleJavaApi
     public static JsValue GetElement(Engine engine, JsBridge bridge, IReadOnlyList<object?> items) =>
         items.Count > 0 ? WrapItem(engine, bridge, items[0]) : JsValue.Null;
 
-    /// <summary>命中项 → JS 值：JSON 节点原样透传、HTML 节点包快照、文本包文本快照。</summary>
+    /// <summary>命中项 → JS 值：JSON 节点原样透传、HTML 元素节点包快照、文本/其余包文本快照。</summary>
     private static JsValue WrapItem(Engine engine, JsBridge bridge, object? item) => item switch
     {
         null => JsValue.Null,
+        // 文本节点必须走文本快照：旧实现把所有 HtmlNode 都当元素包，
+        // 文本节点的 text() 恒为空（ElementText 只递归子节点，文本节点没有子节点）。
+        HtmlNode { NodeType: HtmlNodeType.Text } textNode =>
+            WrapTextElement(engine, bridge, textNode.InnerText),
         HtmlNode node => WrapHtmlElement(engine, bridge, node),
-        JsonNode json => FromJsonNode(engine, json),
+        JsonNode json => FromJsonNode(engine, bridge, json),
         _ => WrapTextElement(engine, bridge, item.ToString() ?? string.Empty),
     };
 
@@ -116,12 +126,12 @@ internal static class RuleJavaApi
     // JSON 节点 → JS 值（reader：原始节点透传 + 退化方法兜底）
     // ============================================================
 
-    private static JsValue FromJsonNode(Engine engine, JsonNode? node) => node switch
+    private static JsValue FromJsonNode(Engine engine, JsBridge bridge, JsonNode? node) => node switch
     {
         null => JsValue.Null,
         JsonValue value => FromJsonValue(engine, value),
-        JsonObject obj => WrapJsonObject(engine, obj),
-        JsonArray array => WrapJsonArray(engine, array),
+        JsonObject obj => WrapJsonObject(engine, bridge, obj),
+        JsonArray array => WrapJsonArray(engine, bridge, array),
         _ => JsValue.Null,
     };
 
@@ -145,34 +155,36 @@ internal static class RuleJavaApi
         return JsValue.FromObject(engine, value.ToJsonString());
     }
 
-    private static JsArray WrapJsonArray(Engine engine, JsonArray array)
+    private static JsArray WrapJsonArray(Engine engine, JsBridge bridge, JsonArray array)
     {
         var result = new JsArray(engine, Array.Empty<JsValue>());
         foreach (var entry in array)
         {
-            result.Push(FromJsonNode(engine, entry));
+            result.Push(FromJsonNode(engine, bridge, entry));
         }
 
         return result;
     }
 
-    private static JsObject WrapJsonObject(Engine engine, JsonObject obj)
+    private static JsObject WrapJsonObject(Engine engine, JsBridge bridge, JsonObject obj)
     {
         var result = new JsObject(engine);
         foreach (var (key, value) in obj)
         {
-            result.FastSetDataProperty(key, FromJsonNode(engine, value));
+            result.FastSetDataProperty(key, FromJsonNode(engine, bridge, value));
         }
 
-        // 退化方法（reader 同款）：只补 JSON 对象没带的同名字段，原生字段优先
-        var sink = new JsContextObjects.JsErrorSink(null, null, null);
-        if (!result.HasOwnTextMethod("text"))
+        // 退化方法（reader 同款）：只补 JSON 对象没带的同名字段，原生字段优先。
+        // sink 带真实诊断信息——旧实现传 (null, null, null)，这些方法里的异常
+        // （attr 的类型错误等）会被静默丢弃，排障时完全看不到。
+        var sink = new JsContextObjects.JsErrorSink(bridge.Diagnostics, bridge.SourceKey, bridge.Field);
+        if (!result.HasOwnFunction("text"))
         {
             var title = obj.TryGetPropertyValue("title", out var t) ? t?.ToString() ?? string.Empty : string.Empty;
             result.FastSetDataProperty("text", JsContextObjects.CreateFunction(engine, "text", _ => title, sink));
         }
 
-        if (!result.HasOwnTextMethod("attr"))
+        if (!result.HasOwnFunction("attr"))
         {
             result.FastSetDataProperty("attr", JsContextObjects.CreateFunction(engine, "attr", args =>
             {
@@ -181,28 +193,28 @@ internal static class RuleJavaApi
             }, sink));
         }
 
-        if (!result.HasOwnTextMethod("hasAttr"))
+        if (!result.HasOwnFunction("hasAttr"))
         {
             result.FastSetDataProperty("hasAttr", JsContextObjects.CreateFunction(engine, "hasAttr", args =>
                 (object)obj.ContainsKey(JsPureApi.AsString(args, 0)), sink));
         }
 
-        if (!result.HasOwnTextMethod("tagName"))
+        if (!result.HasOwnFunction("tagName"))
         {
             result.FastSetDataProperty("tagName", JsContextObjects.CreateFunction(engine, "tagName", _ => string.Empty, sink));
         }
 
-        if (!result.HasOwnTextMethod("html"))
+        if (!result.HasOwnFunction("html"))
         {
             result.FastSetDataProperty("html", JsContextObjects.CreateFunction(engine, "html", _ => string.Empty, sink));
         }
 
-        if (!result.HasOwnTextMethod("select"))
+        if (!result.HasOwnFunction("select"))
         {
             result.FastSetDataProperty("select", JsContextObjects.CreateFunction(engine, "select", _ => new JsArray(engine, Array.Empty<JsValue>()), sink));
         }
 
-        if (!result.HasOwnTextMethod("toString"))
+        if (!result.HasOwnFunction("toString"))
         {
             result.FastSetDataProperty("toString", JsContextObjects.CreateFunction(engine, "toString", _ => obj.ToJsonString(), sink));
         }
@@ -210,8 +222,18 @@ internal static class RuleJavaApi
         return result;
     }
 
-    private static bool HasOwnTextMethod(this JsObject obj, string name) =>
-        obj.Get(name) is Jint.Native.Function.Function;
+    /// <summary>
+    /// 对象是否带**自有**同名函数属性。
+    /// <para>只查自有属性：旧实现用 <c>Get(name)</c>（走原型链），
+    /// <c>Object.prototype.toString/valueOf</c> 会命中 → JSON 元素的自定义
+    /// <c>toString</c>（序列化 JSON）永远挂不上，脚本里拼对象拿到
+    /// "[object Object]"。</para>
+    /// </summary>
+    private static bool HasOwnFunction(this JsObject obj, string name)
+    {
+        var descriptor = obj.GetOwnProperty(name);
+        return descriptor is not null && descriptor.Value is Jint.Native.Function.Function;
+    }
 
     // ============================================================
     // HTML 元素快照（对齐 JSoup Element / reader wrapElement）
@@ -342,10 +364,9 @@ internal static class RuleJavaApi
     /// <c>text/attr/html/select</c>（样本里的真实调用形态）。
     /// <para>只挂<b>数组实例</b>，不动 Array.prototype：不污染同引擎里的其它数组。</para>
     /// </summary>
-    private static void AttachListExtras(Engine engine, JsBridge bridge, JsArray array, IReadOnlyList<object?> items)
+    private static void AttachListExtras(Engine engine, JsBridge bridge, JsArray array, IReadOnlyList<object?> items, JsValue first)
     {
         var sink = new JsContextObjects.JsErrorSink(bridge.Diagnostics, bridge.SourceKey, bridge.Field);
-        var first = items.Count > 0 ? WrapItem(engine, bridge, items[0]) : JsValue.Null;
 
         // 委托函数：首元素有该函数就用它的（list.text() == first.text()）；没有退化为空串
         JsValue Delegate(string name, string fallbackText)

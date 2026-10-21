@@ -196,44 +196,65 @@ internal static class CryptoJavaApi
                 var other => throw new NotSupportedException($"不支持的加密模式：{other}"),
             };
             var paddingRaw = (parts.Length > 2 ? parts[2] : "PKCS5PADDING").Trim().ToUpperInvariant();
+            var iso10126 = string.Equals(paddingRaw, "ISO10126PADDING", StringComparison.Ordinal);
             var (padding, zero) = paddingRaw switch
             {
                 "NOPADDING" => (PaddingMode.None, false),
                 "ZEROPADDING" => (PaddingMode.None, true),
-                // Java 的 PKCS5 对 AES 即 PKCS7（.NET 只有 PKCS7 一名）
+                // Java 的 PKCS5 对 AES 即 PKCS7（.NET 只有 PKCS7 一名）；
+                // ISO10126 解密侧按 PKCS7 兼容处理（随机 padding 的密文可被 PKCS7 解开），
+                // 加密侧见 Transform 的显式拒绝。
                 "PKCS5PADDING" or "PKCS7PADDING" or "ISO10126PADDING" => (PaddingMode.PKCS7, false),
                 var other => throw new NotSupportedException($"不支持的填充：{other}"),
             };
 
-            // 密钥长度校验提前报错（.NET 会抛更晦涩的异常）
+            // 密钥长度校验提前报错（.NET 会抛更晦涩的异常）。
+            // DES 严格 8 字节：Java SunJCE 对非 8 字节密钥抛 InvalidKeyException，
+            // 旧实现把 >8 的密钥静默截断成前 8 字节——"能跑但密钥错了"，
+            // 产出与 Java 不一致的密文且无任何诊断。对齐 Java：明确失败。
             var expected = algorithm switch
             {
                 "AES" => key.Length is 16 or 24 or 32 ? key.Length : -1,
-                "DES" => key.Length,
-                "DESEDE" or "TRIPLEDES" or "3DES" => key.Length,
+                "DES" => key.Length == 8 ? 8 : -1,
+                "DESEDE" or "TRIPLEDES" or "3DES" => key.Length is 16 or 24 ? key.Length : -1,
                 _ => throw new NotSupportedException($"不支持的加密算法：{algorithm}"),
             };
-            if (algorithm is "AES" && expected == -1)
+            if (expected == -1)
             {
-                throw new InvalidOperationException($"AES 密钥长度无效：{key.Length}（须 16/24/32 字节）");
+                throw new InvalidOperationException($"{algorithm} 密钥长度无效：{key.Length} 字节");
             }
 
-            return new CipherSpec { Algorithm = algorithm, Mode = mode, Padding = padding, ZeroPadding = zero };
+            return new CipherSpec
+            {
+                Algorithm = algorithm,
+                Mode = mode,
+                Padding = padding,
+                ZeroPadding = zero,
+                Iso10126Padding = iso10126,
+            };
         }
+
+        /// <summary>是否 ISO10126 随机 padding（加密侧不支持，见 <see cref="Transform"/>）。</summary>
+        public required bool Iso10126Padding { get; init; }
 
         public byte[] Transform(bool encrypt, byte[] key, byte[] iv, byte[] data)
         {
-            // DESede：16 字节密钥按 K1K2K1 扩展（Java SunJCE 拒 16 字节，书源生态里很常见，宽松处理）
+            if (encrypt && Iso10126Padding)
+            {
+                // ISO10126 是随机 padding：.NET 没有实现，按 PKCS7 加密产出的密文
+                // 与 Java 端逐字节不同（Java 侧解不开）。明确失败好过悄悄产出
+                // 不一致的密文；解密侧已按 PKCS7 兼容（见 Parse）。
+                throw new NotSupportedException("ISO10126PADDING 仅支持解密（.NET 无随机 padding 实现）");
+            }
+
+            // DESede：16 字节密钥按 K1K2K1 扩展（.NET TripleDES 与 Java SunJCE 的
+            // DESede 都接受 16 字节即 K1K2，这里显式展开，不依赖运行时解释差异）
             var effectiveKey = key;
             if (Algorithm is "DESEDE" or "TRIPLEDES" or "3DES" && key.Length == 16)
             {
                 effectiveKey = new byte[24];
                 Array.Copy(key, effectiveKey, 16);
                 Array.Copy(key, 0, effectiveKey, 16, 8);
-            }
-            else if (Algorithm == "DES")
-            {
-                effectiveKey = key.Length > 8 ? key[..8] : key;
             }
 
             byte[] payload;
@@ -249,7 +270,7 @@ internal static class CryptoJavaApi
             byte[] cipher;
             using (var alg = CreateAlgorithm())
             {
-                alg.Key = NormalizeKey(alg, effectiveKey);
+                alg.Key = effectiveKey;
                 alg.Mode = Mode;
                 alg.Padding = ZeroPadding ? PaddingMode.None : Padding;
                 if (Mode == CipherMode.CBC)
@@ -275,9 +296,6 @@ internal static class CryptoJavaApi
             "DES" => System.Security.Cryptography.DES.Create(),
             _ => TripleDES.Create(),
         };
-
-        // TripleDES 接受 16/24 字节（16 即 K1K2K1）；AES 16/24/32；DES 8
-        private static byte[] NormalizeKey(SymmetricAlgorithm alg, byte[] key) => key;
 
         private static byte[] PadZero(byte[] data, int blockSize)
         {

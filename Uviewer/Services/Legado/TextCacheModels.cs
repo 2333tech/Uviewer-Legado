@@ -36,8 +36,6 @@ namespace Uviewer.Services.Legado
         /// <summary>窗口：当前章之后重算的章数（前2+后5+当前 = 8 章）。</summary>
         public const int WindowAfter = 5;
 
-        /// <summary>目录条目 Tag：承载章下标（boxed int），点击时按下标重开窗口或直接跳行。</summary>
-        public const string ChapterTag = "TextCacheChapter";
     }
 
     /// <summary>缓存里的一个章节（坐标均为<b>原文</b> 0-based 行号；卷标题坐标为 -1）。</summary>
@@ -95,8 +93,7 @@ namespace Uviewer.Services.Legado
     /// <summary>窗口装配结果。</summary>
     /// <param name="Text">装配后的显示文本（各章已净化）。</param>
     /// <param name="HeadingLines">每章标题在 <paramref name="Text"/> 里的 1-based 行号（卷 = -1）。</param>
-    /// <param name="SliceLineCounts">每章切片贡献的行数（用于计算章内偏移）。</param>
-    internal sealed record WindowAssembly(string Text, int[] HeadingLines, int[] SliceLineCounts);
+    internal sealed record WindowAssembly(string Text, int[] HeadingLines);
 
     /// <summary>
     /// 缓存的纯逻辑：键 / 指纹 / 有效期 / 窗口 / 分章 / 切片 / 装配。
@@ -393,7 +390,6 @@ namespace Uviewer.Services.Legado
             var count = Math.Max(0, toExclusive - from);
             var sb = new StringBuilder();
             var headingLines = new int[count];
-            var sliceLineCounts = new int[count];
             var newlines = 0; // 已发出的换行符数：下一字符所在行 = newlines + 1
 
             for (var i = from; i < toExclusive; i++)
@@ -403,7 +399,6 @@ namespace Uviewer.Services.Legado
                 if (chapter.IsVolume)
                 {
                     headingLines[k] = -1;
-                    sliceLineCounts[k] = 0;
                     continue;
                 }
 
@@ -424,13 +419,12 @@ namespace Uviewer.Services.Legado
                 var sliceLines = purified.Split('\n');
                 var headingInSlice = FindHeadingInSlice(sliceLines, chapter.Name, chapter.HeadingLine - chapter.StartLine);
                 headingLines[k] = newlines + headingInSlice + 1;
-                sliceLineCounts[k] = sliceLines.Length;
 
                 sb.Append(purified);
                 newlines += sliceLines.Length - 1;
             }
 
-            return new WindowAssembly(sb.ToString(), headingLines, sliceLineCounts);
+            return new WindowAssembly(sb.ToString(), headingLines);
         }
 
         /// <summary>由可见行反推当前章（窗口内下标；卷标题与窗口前的内容返回 -1 或窗口首章）。</summary>

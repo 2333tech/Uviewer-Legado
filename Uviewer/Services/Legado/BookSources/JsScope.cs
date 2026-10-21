@@ -47,6 +47,13 @@ public sealed record JsBookState
     /// <summary>当前章节名（<c>book.durChapterTitle</c>）。</summary>
     public string? DurChapterTitle { get; init; }
 
+    /// <summary>
+    /// 书籍类型（legado <c>Book.type</c>：0=文本，1=音频，2=图片，3=Web）。
+    /// <para>与<b>书源类型</b>（<see cref="BookSource.BookSourceType"/>：0 文本/1 音频/2 图片/4 视频）
+    /// 是两套编码，不可互相顶替——旧实现 <c>book.type</c> 取书源类型，音视频源会被误报。</para>
+    /// </summary>
+    public int Type { get; init; }
+
     /// <summary>总章数（<c>book.totalChapterNum</c>；未知为 -1）。</summary>
     public int TotalChapterNum { get; init; } = -1;
 

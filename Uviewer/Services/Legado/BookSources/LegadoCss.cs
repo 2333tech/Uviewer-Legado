@@ -82,7 +82,15 @@ internal static class LegadoCss
     public static string[] SplitChain(string rule)
     {
         var (parts, _) = RuleAnalyzer.SplitTopLevel(rule ?? string.Empty, new[] { "@" });
-        return parts.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => p.Trim()).ToArray();
+        // 裸 "@" 段必须过滤：@@class.x@text 的前导 @@ 会被切成 "@" + "class.x" + "text"
+        // （FindNextDelimiter 只保证不在第一个 @ 上切）。若留着这段，ParsePart 剥完美得到
+        // 空 CSS → SelectPart 恒空 → 整条规则静默返回空。legado RuleAnalyzer.trim() 的
+        // 口径：前导 @ 是"从当前片段根开始"的标记，剥掉即可（样例里几十处
+        // {{@@class.w-100 h-100.0@src}} 依赖这一点）。
+        return parts
+            .Where(p => !string.IsNullOrWhiteSpace(p) && p.Trim() != "@")
+            .Select(p => p.Trim())
+            .ToArray();
     }
 
     /// <summary>该段是否为取值轴词（text/textNodes/html/…）。</summary>

@@ -109,6 +109,7 @@ public sealed class UrlAnalyzer
 
         var sb = new StringBuilder(rule.Length + 32);
         var pos = 0;
+        string? lastResult = null;
         foreach (Match m in matches)
         {
             // 拷贝匹配段之前的原文
@@ -118,6 +119,7 @@ public sealed class UrlAnalyzer
             // 组1 = <js>…</js> 内脚本；组2 = @js: 后脚本（二者必有其一命中）
             var script = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value;
             var result = RunJs(script, key, page);
+            lastResult = result;
             ReplacePlaceholder(sb, result);
             sb.Append(result);
 
@@ -131,7 +133,10 @@ public sealed class UrlAnalyzer
 
         // 拷贝最后一个匹配段之后的原文
         sb.Append(rule, pos, rule.Length - pos);
-        return sb.ToString();
+        // 尾部 @result 兑现为最后一段脚本输出（reader：suffix.replace("@result", &result)）。
+        // 旧实现只有 @js: 分支做整串兑现，<js> 形态尾部写了 @result 会原样漏出去。
+        var tail = sb.ToString();
+        return lastResult is null ? tail : tail.Replace("@result", lastResult);
     }
 
     // ---- ③：{{表达式}} ----
@@ -460,8 +465,11 @@ public sealed class UrlAnalyzer
     // ---- ⑧：编码 ----
 
     /// <summary>
-    /// 对 GET 查询串做百分号编码（reader encode_get_query）。
-    /// 已含 <c>%</c> 的字段视为源已编码，原样保留，避免二次编码（如 %E4%B8%AD 被编成 %25E4...）。
+    /// 对 GET 查询串做百分号编码（reader encode_get_query，行为逐条对齐）。
+    /// <para>整串判定：查询串已含 <c>%</c> 且书源未显式声明非 utf-8 字符集 →
+    /// 视为源已整体编码，原样保留（避免 %E4%B8%AD 被二次编码成 %25E4…）。
+    /// 注意这是**整串**短路而非逐段——reader 同款口径，混合书写
+    /// （一段预编码 + 一段明文）的 URL 不会被部分编码。</para>
     /// <para>逐 &amp; 分段、逐 = 切名值后分别 EscapeDataString；无 = 的段整体编码。</para>
     /// </summary>
     private static string EncodeUrl(string url, string? charset)

@@ -191,14 +191,22 @@ CancelAndResetGlobalTextCts();
         if (DownloadedBookMarker.IsDownloadedFile(file.Path))
         {
             // 书源下载文件：自动开启阅读模式（替换净化 + 标题目录随阅读模式一起生效），
-            // 打开完成后再自动补建章节缓存（_pendingAutoTextCache，见 RunPendingAutoTextCacheAsync）。
+            // 打开完成后再自动补建章节缓存（_pendingAutoTextCachePath，见 RunPendingAutoTextCacheAsync）。
             // 下载文件头部自带 UUID 标记，之后改名/移动也能凭它找回缓存。
             _isAozoraMode = true;
-            _pendingAutoTextCache = true;
+            _pendingAutoTextCachePath = file.Path;
         }
         else
         {
-            ApplyReadingModeForCacheMiss(file.Name);   // 无缓存 ⇒ TXT 不开启阅读模式
+            // 无缓存 ⇒ TXT 不开启阅读模式。**只在本轮加载前阅读模式本就关闭时才应用**：
+            // 重载路径（切编码 ApplyEncodingSelectionAsync / 切替换净化总开关
+            // SetPurifyEnabledAsync → ReloadCurrentTextAsync）也走这里，旧实现无条件把
+            // _isAozoraMode 打回 false——用户对无缓存 .txt 手动开的阅读模式（虚拟窗口）
+            // 被静默关掉，读者掉回纯文本。该策略本意只是"首次打开时"的默认值。
+            if (!_isAozoraMode)
+            {
+                ApplyReadingModeForCacheMiss(file.Name);
+            }
         }
         content = PurifyTextBeforeDisplay(content); // 阅读模式关闭时原样返回
 
@@ -209,9 +217,8 @@ CancelAndResetGlobalTextCts();
                 SyncSidebarSelection(new ImageEntry { FilePath = file.Path, DisplayName = file.Name });
                 UpdateTextCacheMenuState();
 
-                if (_pendingAutoTextCache)
+                if (!string.IsNullOrEmpty(_pendingAutoTextCachePath))
                 {
-                    _pendingAutoTextCache = false;
                     _ = RunPendingAutoTextCacheAsync();   // 尽力而为的后台缓存，不阻塞打开
                 }
             }
@@ -420,14 +427,9 @@ SwitchToTextMode();
                 // Update Text Status
                 UpdateTextStatusBar(name, _textTotalLineCountInSource, 1);
 
-                // Position is now handled inside LoadTextLinesProgressivelyAsync 
+                // Position is now handled inside LoadTextLinesProgressivelyAsync
                 // to avoid double-scrolling Jitter.
                 // ScrollToLine(targetLine) moved there.
-                if (targetLine <= 1 && _isAozoraMode)
-                {
-                    // Only auto-restore for Aozora mode if not explicitly set to 1
-                    _ = RestoreTextPositionAsync(name);
-                }
             }
         }
 
@@ -519,40 +521,6 @@ SwitchToTextMode();
                 _favoritesService.Favorites,
                 name,
                 path);
-        }
-
-        internal async Task RestoreTextPositionAsync(string name)
-        {
-            // For Aozora mode, position is now restored progressively via targetLine in PrepareAozoraDisplayAsync
-            if (_isAozoraMode) return;
-
-            try
-            {
-                // Wait for layout update for normal mode
-                await Task.Delay(100);
-
-                if (TextScrollViewer != null)
-                {
-                    var recent = _recentService.RecentItems.OrderByDescending(r => r.AccessedAt).FirstOrDefault(r => r.Name == name);
-                    if (recent != null)
-                    {
-                        if (recent.SavedLine > 1)
-                        {
-                            ScrollToLine(recent.SavedLine);
-                        }
-                        else if (recent.ScrollOffset.HasValue)
-                        {
-                            TextScrollViewer.ChangeView(null, recent.ScrollOffset.Value, null);
-                        }
-                        else
-                        {
-                            TextScrollViewer.ChangeView(null, 0, null);
-                        }
-                    }
-                }
-                UpdateTextStatusBar();
-            }
-            catch { }
         }
 
         internal void SwitchToTextMode()
@@ -1209,7 +1177,11 @@ SwitchToTextMode();
             {
                 totalLines = _textBlockDocumentService.CountNormalizedLines(_currentTextContent);
                 _textTotalLineCountInSource = totalLines;
-                currentLine = _aozoraBlocks[_currentAozoraStartBlockIndex].SourceLineNumber;
+                // 上界校验（与 UpdateAozoraStatusBar 同款）：块表重建间隙下标可能越界
+                currentLine = _currentAozoraStartBlockIndex >= 0 &&
+                              _currentAozoraStartBlockIndex < _aozoraBlocks.Count
+                    ? _aozoraBlocks[_currentAozoraStartBlockIndex].SourceLineNumber
+                    : 1;
             }
             else if (TextScrollViewer != null)
             {

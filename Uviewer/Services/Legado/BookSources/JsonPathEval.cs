@@ -172,7 +172,7 @@ internal static class JsonPathEval
         return p.TrimStart('.');
     }
 
-    /// <summary>分段类型：Root（$）/ Recursive（..）/ Name（.a 或 ['a']）/ Wildcard（*）/ Index（[n]）/ Slice（[a:b]）。</summary>
+    /// <summary>分段类型：Root（$）/ Recursive（..）/ Name（.a 或 ['a']）/ Wildcard（*）/ Index（[n]）/ Slice（[a:b]）/ Union（[1,2] 并集）。</summary>
     private enum SegType
     {
         Root,
@@ -181,30 +181,33 @@ internal static class JsonPathEval
         Wildcard,
         Index,
         Slice,
+        Union,
     }
 
     /// <summary>
     /// 路径分段（解析后不可变，可跨线程共享——PathCache 的前提）。
-    /// I1/I2/I3 复用为 Index 的下标、Slice 的 start/end/step。
+    /// I1/I2/I3 复用为 Index 的下标、Slice 的 start/end/step；Union 存并集下标表。
     /// </summary>
     private sealed class Seg
     {
         public SegType Type;
         public string? Name;
         public int I1, I2, I3;
+        public int[]? Union;
     }
 
     /// <summary>
     /// 路径解析（手写递归下降，对标 reader jsonpath 的解析子集）。
     /// <para>支持的全部构造：</para>
-    /// <list type="bullet">
-    /// <item>$ 根、.name / ['name'] / ["name"] 属性；</item>
-    /// <item>.* 与 [*] 通配（对象取值集合 / 数组取元素）；</item>
-    /// <item>[n] 索引（支持负数，-1 = 末元素）；</item>
-    /// <item>[a:b] 与 [a:b:c] 切片（负数与越界钳制）；</item>
-    /// <item>..name / ..* / ..[n] 递归下降；</item>
-    /// <item>省略 $ 的相对路径（裸字段名开头）。</item>
-    /// </list>
+/// <list type="bullet">
+/// <item>$ 根、.name / ['name'] / ["name"] 属性；</item>
+/// <item>.* 与 [*] 通配（对象取值集合 / 数组取元素）；</item>
+/// <item>[n] 索引（支持负数，-1 = 末元素）；</item>
+/// <item>[a:b] 与 [a:b:c] 切片（负数与越界钳制；step&lt;=0 视 1，负步长会死循环）；</item>
+/// <item>[1,2] 下标并集（同层求值）；</item>
+/// <item>..name / ..* / ..[n] 递归下降（先序文档序）；</item>
+/// <item>省略 $ 的相对路径（裸字段名开头）。</item>
+/// </list>
     /// </summary>
     private static List<Seg>? Parse(string path)
     {
@@ -313,7 +316,32 @@ internal static class JsonPathEval
                 {
                     segs.Add(new Seg { Type = SegType.Name, Name = inner.Trim('\'', '"') });
                 }
-                else if (inner.Contains(":", StringComparison.Ordinal) || inner.Contains(",", StringComparison.Ordinal))
+                else if (inner.Contains(",", StringComparison.Ordinal))
+                {
+                    // 并集语法 [1,2]（标准 JSONPath；legado 的 jsonpath 库同样支持）：
+                    // 多个下标对**同一层**求值后汇总。
+                    // ⚠ 不能拆成连续多个 Index 段——段与段是"链"（取完 0 再取 2），
+                    // 那不是并集（首版实现就这么错的，[0,2] 恒空）。收敛成单个 Union 段。
+                    // 早先这里把逗号并进切片分支：parts=["1,2"] 两个 TryParse 全失败 →
+                    // Slice(0, MaxValue) 返回整个数组，属于"解析失败伪装成全量"的错误语义。
+                    var indices = new List<int>();
+                    foreach ( var part in inner.Split(',') )
+                    {
+                        var p = part.Trim();
+                        if (p.Length > 0 && int.TryParse(p, out var uidx))
+                        {
+                            indices.Add(uidx);
+                        }
+                        // 非下标成员（引号名 / 切片混排）：本解析子集不支持，跳过
+                        // （与"不支持的构造无输出"的一贯口径一致）
+                    }
+
+                    if (indices.Count > 0)
+                    {
+                        segs.Add(new Seg { Type = SegType.Union, Union = indices.ToArray() });
+                    }
+                }
+                else if (inner.Contains(":", StringComparison.Ordinal))
                 {
                     var parts = inner.Split(':');
                     var a = parts.Length > 0 && int.TryParse(parts[0], out var aa) ? aa : 0;
@@ -438,6 +466,24 @@ internal static class JsonPathEval
                         break;
                     }
 
+                    case SegType.Union:
+                    {
+                        // [1,2] 并集：各下标对同一层求值（负数相对末尾，越界跳过）
+                        if (n is JsonArray arr && seg.Union is not null)
+                        {
+                            foreach ( var ui in seg.Union )
+                            {
+                                var idx = ui < 0 ? arr.Count + ui : ui;
+                                if (idx >= 0 && idx < arr.Count)
+                                {
+                                    next.Add(arr[idx]);
+                                }
+                            }
+                        }
+
+                        break;
+                    }
+
                     case SegType.Slice:
                     {
                         // [a:b:c]：切片（负数相对末尾；start<0 钳到 0；end>count 钳到 count；step<=0 视 1）
@@ -466,7 +512,9 @@ internal static class JsonPathEval
                                 end = count;
                             }
 
-                            var step = seg.I3 == 0 ? 1 : seg.I3;
+                            // step<=0 一律视 1：负步长（[::-1]）若放进 for 会无限循环
+                            // （k 递减永不到达 end），历史上就是这么挂死的
+                            var step = seg.I3 <= 0 ? 1 : seg.I3;
                             for (var k = start; k < end; k += step)
                             {
                                 if (k >= 0 && k < count)
@@ -590,18 +638,26 @@ internal static class JsonPathEval
 
             yield return n;
 
+            // 子节点逆序入栈：LIFO 出栈即恢复文档序（先序 DFS）。
+            // 正序入栈会让递归下降（$..name）的多命中顺序与文档序相反。
             if (n is JsonObject o)
             {
-                foreach (var kv in o)
+                var kids = new List<JsonNode?>(o.Count);
+                foreach ( var kv in o )
                 {
-                    stack.Push(kv.Value);
+                    kids.Add(kv.Value);
+                }
+
+                for ( var i = kids.Count - 1; i >= 0; i-- )
+                {
+                    stack.Push(kids[i]);
                 }
             }
             else if (n is JsonArray a)
             {
-                foreach (var e in a)
+                for ( var i = a.Count - 1; i >= 0; i-- )
                 {
-                    stack.Push(e);
+                    stack.Push(a[i]);
                 }
             }
         }

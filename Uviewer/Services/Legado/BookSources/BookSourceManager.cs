@@ -98,6 +98,10 @@ public sealed class BookSourceManager
     /// <para>原子性：整份读完才换入新 map——中途失败/文件损坏时保留原有数据
     /// （旧 map 仍在 _map 里，读者无感）。序号按文件顺序重新编排（落盘顺序 = 文件顺序）。</para>
     /// <para>文件不存在 = 清空（reader：无文件即无书源，保留原语义）。</para>
+    /// <para><b>解析失败不抛</b>：0 字节/截断的 JSON 会让枚举器抛 JsonException——
+    /// 旧实现任其冒泡到 <c>BookSourceService.EnsureInitializedAsync</c>，而那里缓存了
+    /// faulted 的初始化任务不再重试 → 书源功能整个会话永久退化。这里降级为
+    /// "保留现有数据 + 记 <see cref="LastLoadError"/>"，与阅读进度存储的容错口径一致。</para>
     /// </summary>
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
@@ -110,34 +114,56 @@ public sealed class BookSourceManager
                 _snapshot = null;
             }
 
+            LastLoadError = null;
             return;
         }
 
         // 先在局部 fresh map 上累积，读完再原子换入（失败不影响现有数据）
         var fresh = NewMap();
         long order = 0;
-        using (var stream = BookSourceJsonReader.OpenRead(_filePath))
+        try
         {
-            await foreach (var source in BookSourceSerializer.EnumerateBookSourcesAsync(stream, cancellationToken).ConfigureAwait(false))
+            using (var stream = BookSourceJsonReader.OpenRead(_filePath))
             {
-                // 无主键条目不入库（数据安全，同导入路径）
-                if (!IsValid(source))
+                await foreach (var source in BookSourceSerializer.EnumerateBookSourcesAsync(stream, cancellationToken).ConfigureAwait(false))
                 {
-                    continue;
-                }
+                    // 无主键条目不入库（数据安全，同导入路径）
+                    if (!IsValid(source))
+                    {
+                        continue;
+                    }
 
-                // 同 URL 后者覆盖前者，序号取后者（保持文件内顺序）
-                fresh[source.BookSourceUrl] = new Entry(source, order++);
+                    // 同 URL 后者覆盖前者，序号取后者（保持文件内顺序）
+                    fresh[source.BookSourceUrl] = new Entry(source, order++);
+                }
             }
+
+            LastLoadError = null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // 解析失败：保留现有数据不换入，只记错误（调用方可在诊断面板展示）
+            LastLoadError = ex.Message;
+            return;
         }
 
         lock (_gate)
         {
             _map = fresh;
-            _seq = order;
+            // 取 max 而不是直接赋值：Upsert 的序号分配在锁外（Interlocked），
+            // 并发加载与插入交错时直接重置会让后续 Upsert 发出重复序号
+            // （同 Seq 两条 → 落盘顺序不确定）。
+            _seq = Math.Max(_seq, order);
             _snapshot = null;
         }
     }
+
+    /// <summary>最近一次加载失败的原因（损坏文件等；null = 上次加载正常）。诊断用。</summary>
+    public string? LastLoadError { get; private set; }
 
     /// <summary>
     /// 全量写回磁盘：流式序列化 + 临时文件原子替换（确保父目录存在）。
@@ -147,7 +173,6 @@ public sealed class BookSourceManager
     /// </summary>
     public async Task SaveAsync(CancellationToken cancellationToken = default)
     {
-        var all = Current().All;
         var dir = Path.GetDirectoryName(_filePath);
         if (!string.IsNullOrEmpty(dir))
         {
@@ -157,6 +182,9 @@ public sealed class BookSourceManager
         await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // 快照在闸内取：旧实现在闸外 Current().All，并发导入/启停后
+            // 旧快照可能覆盖新数据（磁盘回退一版，内存还在 → 直到下次保存才恢复）。
+            var all = Current().All;
             var temp = _filePath + ".tmp";
             try
             {
@@ -281,29 +309,7 @@ public sealed class BookSourceManager
     {
         lock (_gate)
         {
-            foreach (var source in batch)
-            {
-                if (!IsValid(source))
-                {
-                    // 无主键的书源会被视为同一条互相覆盖，直接跳过（数据安全）
-                    skipped++;
-                    continue;
-                }
-
-                var seq = Interlocked.Increment(ref _seq);
-                var existed = _map.TryGetValue(source.BookSourceUrl, out var old);
-                // 覆盖时保留原插入位置，顺序稳定
-                _map[source.BookSourceUrl] = new Entry(source, existed ? old.Seq : seq);
-                if (existed)
-                {
-                    updated++;
-                }
-                else
-                {
-                    added++;
-                }
-            }
-
+            MergeCore(batch, ref added, ref updated, ref skipped);
             _snapshot = null;
         }
     }
@@ -323,34 +329,44 @@ public sealed class BookSourceManager
         // 反序列化已在前一步并行完成；这里按原文顺序顺序合并 => 结果与并行度无关。
         lock (_gate)
         {
-            foreach (var source in parsed)
-            {
-                if (!IsValid(source))
-                {
-                    // 无主键的书源会被视为同一条互相覆盖，直接跳过（数据安全）
-                    skipped++;
-                    continue;
-                }
-
-                var seq = Interlocked.Increment(ref _seq);
-                var existed = _map.TryGetValue(source.BookSourceUrl, out var old);
-                // 覆盖时保留原插入位置，顺序稳定
-                _map[source.BookSourceUrl] = new Entry(source, existed ? old.Seq : seq);
-                if (existed)
-                {
-                    updated++;
-                }
-                else
-                {
-                    added++;
-                }
-            }
-
+            MergeCore(parsed, ref added, ref updated, ref skipped);
             _snapshot = null;
         }
 
         await SaveAsync(cancellationToken).ConfigureAwait(false);
         return new ImportResult(added, updated, skipped);
+    }
+
+    /// <summary>
+    /// 合并内核（调用方须已持 <c>_gate</c>）：无主键跳过 / 覆盖保留原序号 / 统计 added/updated。
+    /// <para><see cref="MergeBatch"/> 与 <see cref="ImportParsedAsync"/> 共用——
+    /// 两份逐行复制的循环曾因改一处漏一处出过漂移风险，合并语义只许有一个实现。</para>
+    /// </summary>
+    private void MergeCore(
+        List<BookSourceModel> items, ref int added, ref int updated, ref int skipped)
+    {
+        foreach (var source in items)
+        {
+            if (!IsValid(source))
+            {
+                // 无主键的书源会被视为同一条互相覆盖，直接跳过（数据安全）
+                skipped++;
+                continue;
+            }
+
+            var seq = Interlocked.Increment(ref _seq);
+            var existed = _map.TryGetValue(source.BookSourceUrl, out var old);
+            // 覆盖时保留原插入位置，顺序稳定
+            _map[source.BookSourceUrl] = new Entry(source, existed ? old.Seq : seq);
+            if (existed)
+            {
+                updated++;
+            }
+            else
+            {
+                added++;
+            }
+        }
     }
 
     /// <summary>按主键插入或覆盖。返回是否入库（无主键的书源被拒绝）。</summary>

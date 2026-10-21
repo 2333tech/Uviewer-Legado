@@ -44,8 +44,16 @@ public sealed class LegadoRuntime : IDisposable
     /// WebView2 宿主（阶段 4-7；宿主 UI 在窗口就绪后注入）。
     /// <para>null = 未接线：WebView 类请求自动回退静态取数 + 诊断（<see cref="WebViewFetchDecorator"/>），
     /// <c>java.startBrowser/startBrowserAwait/webView</c> 记诊断降级——测试/无 WebView2 运行时均安全。</para>
+    /// <para>volatile 后端字段：UI 线程写入、取数管线线程读取（装饰器持 lambda 跨线程求值），
+    /// 与存储层对跨线程字段的一致口径。</para>
     /// </summary>
-    public IWebViewHost? WebViewHost { get; set; }
+    private volatile IWebViewHost? _webViewHost;
+
+    public IWebViewHost? WebViewHost
+    {
+        get => _webViewHost;
+        set => _webViewHost = value;
+    }
 
     /// <summary>默认构造：状态落在 <c>&lt;dataDirectory&gt;/legado/sources</c>。</summary>
     public static LegadoRuntime CreateDefault(string dataDirectory, IBookSourceFetcher? httpFetcher = null) =>

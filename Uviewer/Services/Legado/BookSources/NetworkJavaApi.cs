@@ -87,6 +87,8 @@ internal sealed class JsNetworkSession
     /// <summary>
     /// <c>java.post(url, body, headers)</c> → StrResponse。
     /// <para>headers 参数兼容 JS 对象 / JSON 字符串（legado 传 Map，reader 传对象或 JSON）。</para>
+    /// <para>失败返回<b>空响应对象</b>而不是 null：旧实现返回 null，脚本 <c>resp.body()</c>
+    /// 遇 null 抛 TypeError 整段回退——而 ajaxAll 的失败项早就是空响应对象，口径统一。</para>
     /// </summary>
     private object? Post(Engine engine, JsScope scope, object?[] args)
     {
@@ -94,25 +96,31 @@ internal sealed class JsNetworkSession
         var body = JsPureApi.AsString(args, 1);
         var headers = ParseHeaders(args.Length > 2 ? args[2] : null);
         var response = TryFetch(scope, "post", raw, "POST", body, headers, timeoutMs: null);
-        return response is null ? null : BuildResponse(engine, scope, "post", response);
+        return response is null
+            ? BuildResponse(engine, scope, "post", new FetchResponse(string.Empty, raw, 0, EmptyHeaders))
+            : BuildResponse(engine, scope, "post", response);
     }
 
-    /// <summary><c>java.connect(url[, headers])</c> → StrResponse（可带选项块 <c>,{...}</c>）。</summary>
+    /// <summary><c>java.connect(url[, headers])</c> → StrResponse（可带选项块 <c>,{...}</c>）。失败同 post 返空响应。</summary>
     private object? Connect(Engine engine, JsScope scope, object?[] args)
     {
         var raw = JsPureApi.AsString(args, 0);
         var headers = ParseHeaders(args.Length > 1 ? args[1] : null);
         var response = TryFetch(scope, "connect", raw, method: null, body: null, headers, timeoutMs: null);
-        return response is null ? null : BuildResponse(engine, scope, "connect", response);
+        return response is null
+            ? BuildResponse(engine, scope, "connect", new FetchResponse(string.Empty, raw, 0, EmptyHeaders))
+            : BuildResponse(engine, scope, "connect", response);
     }
 
-    /// <summary><c>java.head(url[, headers])</c> → StrResponse。</summary>
+    /// <summary><c>java.head(url[, headers])</c> → StrResponse。失败同 post 返空响应。</summary>
     private object? Head(Engine engine, JsScope scope, object?[] args)
     {
         var raw = JsPureApi.AsString(args, 0);
         var headers = ParseHeaders(args.Length > 1 ? args[1] : null);
         var response = TryFetch(scope, "head", raw, "HEAD", body: null, headers, timeoutMs: null);
-        return response is null ? null : BuildResponse(engine, scope, "head", response);
+        return response is null
+            ? BuildResponse(engine, scope, "head", new FetchResponse(string.Empty, raw, 0, EmptyHeaders))
+            : BuildResponse(engine, scope, "head", response);
     }
 
     /// <summary>
@@ -300,9 +308,21 @@ internal sealed class JsNetworkSession
     /// <para><c>headers</c> 既是函数（<c>resp.headers()</c> 返回映射）又挂同名属性
     /// （<c>resp.headers.Location</c>）——两种历史写法都有人用（样本里两种都出现过）。</para>
     /// </summary>
-    internal static JsValue BuildResponse(Engine engine, JsScope scope, string api, FetchResponse response)
+    internal static JsValue BuildResponse(Engine engine, JsScope scope, string api, FetchResponse response) =>
+        BuildResponseCore(engine, scope.Diagnostics, scope.SourceKey, api, response);
+
+    /// <summary>
+    /// 无作用域时的空 StrResponse（body 空串 / code 0）——失败口径统一：
+    /// 脚本 <c>resp.body()</c> 拿到空串而不是对 null 抛 TypeError。
+    /// </summary>
+    internal static JsValue EmptyResponse(Engine engine, string api) =>
+        BuildResponseCore(engine, JsDiagnostics.Shared, null, api,
+            new FetchResponse(string.Empty, string.Empty, 0, EmptyHeaders));
+
+    private static JsValue BuildResponseCore(
+        Engine engine, JsDiagnostics diagnostics, string? sourceKey, string api, FetchResponse response)
     {
-        var sink = new JsContextObjects.JsErrorSink(scope.Diagnostics, scope.SourceKey, null);
+        var sink = new JsContextObjects.JsErrorSink(diagnostics, sourceKey, null);
         var obj = new JsObject(engine);
 
         obj.FastSetDataProperty("body", JsContextObjects.CreateFunction(engine, "body", _ => response.Content, sink));
@@ -335,7 +355,17 @@ internal sealed class JsNetworkSession
         obj.FastSetDataProperty("header", JsContextObjects.CreateFunction(engine, "header", args =>
         {
             var name = JsPureApi.AsString(args, 0);
-            return response.Headers.TryGetValue(name, out var value) ? value : null;
+            // 头名大小写不敏感（HTTP 语义）：书源里 resp.header("content-type")
+            // 查 Content-Type 是小写查询的常见写法，Ordinal 原样查会查不到
+            foreach (var (k, v) in response.Headers)
+            {
+                if (string.Equals(k, name, StringComparison.OrdinalIgnoreCase))
+                {
+                    return v;
+                }
+            }
+
+            return null;
         }, sink));
 
         return obj;
@@ -391,11 +421,20 @@ internal sealed class JsNetworkSession
 
                 if (list.Count == 0)
                 {
-                    foreach (var part in trimmed.Split(','))
+                    if (trimmed.Contains('{'))
                     {
-                        if (!string.IsNullOrWhiteSpace(part))
+                        // 含选项块（",{...}" 形态）：逗号切分会把选项块切碎，
+                        // 整体作为一条交给 TryFetch 的选项块解析
+                        list.Add(trimmed);
+                    }
+                    else
+                    {
+                        foreach (var part in trimmed.Split(','))
                         {
-                            list.Add(part.Trim());
+                            if (!string.IsNullOrWhiteSpace(part))
+                            {
+                                list.Add(part.Trim());
+                            }
                         }
                     }
                 }

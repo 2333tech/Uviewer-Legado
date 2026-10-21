@@ -6,7 +6,7 @@ using Uviewer.Services.Legado;
 
 namespace Uviewer
 {
-// EN: Reading-mode chapter navigation (previous/next chapter) driven by the TOC dropdown list.
+    // EN: Reading-mode chapter navigation (previous/next chapter) driven by the TOC dropdown list.
     /// <summary>
     /// 阅读模式下的「上一章 / 下一章」导航。
     ///
@@ -19,6 +19,46 @@ namespace Uviewer
     /// </summary>
     internal sealed partial class DocumentReaderController
     {
+        /// <summary>
+        /// 当前排版下的「可见首行」行号：竖排=当前页起始行，青空分页=当前页首块行号，
+        /// 按行滚动=可视区顶端行号；解析不到返回 -1。
+        /// <para><b>为什么必须按可见位置而不是 <c>_textCacheCenter</c></b>：窗口内跳章/翻页
+        /// 只渲染不重开窗口，<c>_textCacheCenter</c>（窗口中心章）保持不变。一切
+        /// "当前在哪一章"的判定（章节导航、规则改动重绘、位置保存、规则探测）
+        /// 都必须按可见章解析——按中心章会出现"连按下一章固定跳同一位置"
+        /// "改完规则被弹回旧章"这类静默回退。</para>
+        /// </summary>
+        private int GetVisibleTopLine()
+        {
+            if (_isVerticalMode)
+            {
+                return _currentVerticalPageInfo.StartLine;
+            }
+
+            if (_isAozoraMode)
+            {
+                return _currentAozoraStartBlockIndex >= 0 &&
+                       _currentAozoraStartBlockIndex < _aozoraBlocks.Count
+                    ? _aozoraBlocks[_currentAozoraStartBlockIndex].SourceLineNumber
+                    : -1;
+            }
+
+            return GetTopVisibleLineIndex();
+        }
+
+        /// <summary>
+        /// 章节缓存窗口内的「当前可见章」下标；可见位置解析不到时兜底窗口中心章
+        /// （与目录高亮同口径，见 <see cref="FindCurrentTocItemIndex"/>）。
+        /// </summary>
+        private int GetCurrentVisibleWindowChapter()
+        {
+            var visible = _textCacheHeadingLines is null
+                ? -1
+                : TextCacheLogic.CurrentChapterInWindow(
+                    _textCacheHeadingLines, _textCacheWindowFrom, GetVisibleTopLine());
+            return visible >= 0 ? visible : Math.Max(0, _textCacheCenter);
+        }
+
         // EN: Moves to the previous/next TOC entry of the current chapter list.
         /// <summary>阅读模式下触发一次"上一章 / 下一章"。返回 false 表示当前不接管。</summary>
         internal async Task<bool> NavigateReadingChapterAsync(bool forward)
@@ -74,31 +114,7 @@ namespace Uviewer
                 // 窗口内跳章/翻页只渲染不重开窗口，_textCacheCenter 保持不变——
                 // 若按它定位，连按"下一章"每次都解析出同一个目标章，表现为
                 // "第一次能跳，之后固定跳回第一次的位置/不再响应"。
-                // 可见位置按排版取：分页画布（阅读模式）看当前页首块行号，其余看滚动顶端行号。
-                int topLine;
-                if (_isVerticalMode)
-                {
-                    topLine = _currentVerticalPageInfo.StartLine;
-                }
-                else if (_isAozoraMode)
-                {
-                    topLine = _currentAozoraStartBlockIndex >= 0 &&
-                               _currentAozoraStartBlockIndex < _aozoraBlocks.Count
-                        ? _aozoraBlocks[_currentAozoraStartBlockIndex].SourceLineNumber
-                        : -1;
-                }
-                else
-                {
-                    topLine = GetTopVisibleLineIndex();
-                }
-
-                var visible = _textCacheHeadingLines is null
-                    ? -1
-                    : TextCacheLogic.CurrentChapterInWindow(
-                        _textCacheHeadingLines, _textCacheWindowFrom, topLine);
-
-                // 兜底：位置解析不到（极端时序）时维持旧的中心章口径
-                var visibleChapter = visible >= 0 ? visible : Math.Max(0, _textCacheCenter);
+                var visibleChapter = GetCurrentVisibleWindowChapter();
 
                 for (int i = 0; i < items.Count; i++)
                 {
@@ -111,21 +127,7 @@ namespace Uviewer
                 return -1;
             }
 
-            int currentLine;
-            if (_isVerticalMode)
-            {
-                currentLine = _currentVerticalPageInfo.StartLine;
-            }
-            else if (_isAozoraMode)
-            {
-                currentLine = _currentAozoraStartBlockIndex >= 0 && _currentAozoraStartBlockIndex < _aozoraBlocks.Count
-                    ? _aozoraBlocks[_currentAozoraStartBlockIndex].SourceLineNumber
-                    : 1;
-            }
-            else
-            {
-                currentLine = GetTopVisibleLineIndex();
-            }
+            var currentLine = GetVisibleTopLine();
 
             int found = -1;
             for (int i = 0; i < items.Count; i++)

@@ -125,11 +125,14 @@ public static class TxtChapterSplitter
             return true;
         }
 
-        // 英文章节："Chapter 3" / "CHAPTER III" / "Part 2"
-        if ((c == 'C' || c == 'c' || c == 'P' || c == 'p') &&
+        // 英文章节："Chapter 3" / "CHAPTER III" / "Part 2" / "Section 5"
+        // （必须与内置默认规则的正则覆盖面对齐：规则认 chapter|part|section，
+        // 前置筛选漏掉某个首字母 = 对应写法永远走不到正则——"Section 5" 就是这样
+        // 静默失效的。）
+        if ((c == 'C' || c == 'c' || c == 'P' || c == 'p' || c == 'S' || c == 's') &&
             trimmed.Length > 1 &&
             (trimmed[1] == 'h' || trimmed[1] == 'H' || trimmed[1] == 'a' || trimmed[1] == 'A' ||
-             trimmed[1] == 'r' || trimmed[1] == 'R' || trimmed[1] == 'a' || trimmed[1] == 'A'))
+             trimmed[1] == 'r' || trimmed[1] == 'R' || trimmed[1] == 'e' || trimmed[1] == 'E'))
         {
             return true;
         }

@@ -50,13 +50,18 @@ namespace Uviewer
             }
 
             if (TextCacheActive && _textCacheEntry is { Chapters.Count: > 0 } entry &&
-                _textCacheCenter >= 0 && _textCacheCenter < entry.Chapters.Count &&
                 !string.IsNullOrEmpty(_textCacheNormalizedRaw))
             {
-                var chapter = entry.Chapters[_textCacheCenter];
-                if (chapter.StartLine >= 0 && chapter.EndLine > chapter.StartLine)
+                // 按**可见章**定位（不是 _textCacheCenter）：窗口内跳章后 center 不变，
+                // 按它探测会给错误的章打「本章生效」标记
+                var chapterSlot = GetCurrentVisibleWindowChapter();
+                if (chapterSlot >= 0 && chapterSlot < entry.Chapters.Count)
                 {
-                    return SliceLines(_textCacheNormalizedRaw, chapter.StartLine, chapter.EndLine);
+                    var chapter = entry.Chapters[chapterSlot];
+                    if (chapter.StartLine >= 0 && chapter.EndLine > chapter.StartLine)
+                    {
+                        return SliceLines(_textCacheNormalizedRaw, chapter.StartLine, chapter.EndLine);
+                    }
                 }
             }
 
@@ -65,7 +70,11 @@ namespace Uviewer
                 var heading = GetCurrentTocHeading();
                 if (!string.IsNullOrEmpty(heading))
                 {
-                    var entries = TextTocBuilder.Build(_currentTextRawContent, GetEnabledTitleRules());
+                    // 带标题行预净化委托：与渲染/建缓存路径同口径——"【玄幻】第12章 …"
+                    // 这类带前缀标题不去前缀会匹配不到，按章名定位失败会退化成拿整本
+                    // 原文探测，「本章生效」标记过度命中
+                    var entries = TextTocBuilder.Build(
+                        _currentTextRawContent, GetEnabledTitleRules(), PurifyTitleLineForToc);
                     for (var i = 0; i < entries.Count; i++)
                     {
                         if (!string.Equals(entries[i].Title?.Trim(), heading!.Trim(), StringComparison.Ordinal))
@@ -148,8 +157,11 @@ namespace Uviewer
                     InvalidateVirtualPurifiedChapters();
 
                     // 缓存窗口：按新规则重新装配 + 净化当前窗口（前 2 后 5 章），不碰全书；
-                    // 顺带把"章内偏移"带过去，重绘后仍停在原来那一行附近
-                    await ShowTextCacheWindowAsync(_textCacheCenter, GetCurrentChapterLineOffset()).ConfigureAwait(true);
+                    // 顺带把"章内偏移"带过去，重绘后仍停在原来那一行附近。
+                    // 中心章按**可见章**取（不是 _textCacheCenter）：窗口内跳到第 12 章后
+                    // 改规则，若按 center（打开窗口时的第 10 章）重开，用户被弹回旧章。
+                    var visible = GetCurrentVisibleWindowChapter();
+                    await ShowTextCacheWindowAsync(visible, GetCurrentChapterLineOffset()).ConfigureAwait(true);
                     return;
                 }
 
@@ -171,14 +183,15 @@ namespace Uviewer
         {
             try
             {
-                var chapterSlot = _textCacheCenter - _textCacheWindowFrom;
+                // 章槽位按可见章算（不是 _textCacheCenter）：偏移相对的是"读者正在看的章"
+                var chapterSlot = GetCurrentVisibleWindowChapter() - _textCacheWindowFrom;
                 if (chapterSlot < 0 || _textCacheHeadingLines is not { Length: > 0 } headings || chapterSlot >= headings.Length)
                 {
                     return 0;
                 }
 
                 var headingLine = headings[chapterSlot];
-                var topLine = GetTopVisibleLineIndex();
+                var topLine = GetVisibleTopLine();
                 return headingLine > 0 && topLine > headingLine ? topLine - headingLine : 0;
             }
             catch

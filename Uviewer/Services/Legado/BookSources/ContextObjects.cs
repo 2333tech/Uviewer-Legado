@@ -237,7 +237,11 @@ internal static class JsContextObjects
         obj.FastSetDataProperty("tocUrl", ToJs(engine, book?.TocUrl ?? string.Empty));
         obj.FastSetDataProperty("intro", ToJs(engine, book?.Intro ?? string.Empty));
         obj.FastSetDataProperty("kind", ToJs(engine, book?.Kind ?? string.Empty));
-        obj.FastSetDataProperty("type", ToJs(engine, scope.Source?.BookSourceType ?? 0));
+        // type = 书籍类型（legado Book.type：0=文本）。**不是**书源类型
+        // （scope.Source.BookSourceType：0/1/2/4）——旧实现张冠李戴，
+        // 音视频书源(1/4)会被误报成"书籍类型 1/4"。JsBookState 暂无 Type
+        // 字段，取不到时回落 0（文本），与 legado 对书源书籍的默认值一致。
+        obj.FastSetDataProperty("type", ToJs(engine, book?.Type ?? 0));
         obj.FastSetDataProperty("coverUrl", ToJs(engine, book?.CoverUrl ?? string.Empty));
         obj.FastSetDataProperty("origin", ToJs(engine, scope.StorageKey));
         obj.FastSetDataProperty("durChapterIndex", ToJs(engine, book?.DurChapterIndex ?? 0));
@@ -666,12 +670,18 @@ internal static class JsContextObjects
                 "if(typeof m.put!=='function'){m.put=function(k,v){m[k]=v;return v;};}" +
                 "if(typeof m.has!=='function'){m.has=function(k){return k in m;};}" +
                 "return m;})()");
-            engine.SetValue("__legado_json_text", JsValue.Undefined);
             return value;
         }
         catch
         {
             return new JsObject(engine);
+        }
+        finally
+        {
+            // 异常路径也要清理：旧实现 catch 直接 return，__legado_json_text 全局
+            // 残留在引擎上——下一次调用（可能已是另一个书源）的脚本能读到
+            // 上一个书源的 loginInfo JSON（跨源串味）。
+            engine.SetValue("__legado_json_text", JsValue.Undefined);
         }
     }
 }

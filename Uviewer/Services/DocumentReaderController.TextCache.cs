@@ -182,6 +182,28 @@ namespace Uviewer
             var generation = ++_textCacheSwitchGeneration;
             _textCacheSwitching = true;
 
+            // 任何退出路径都复位切换标志（仅当自己仍是当前代次——更新的切换已接管）。
+            // 旧实现只在正常收尾复位：DisplayLoadedText 抛异常（取消 / 装配竞态）时
+            // 标志永久卡 true → TextCacheScrollCheck 首行判断整场会话静默 return，
+            // 滚出窗口不再换章。
+            try
+            {
+                await ShowTextCacheWindowCoreAsync(entry, normalized, generation, center, lineInChapter, token)
+                    .ConfigureAwait(true);
+            }
+            finally
+            {
+                if (generation == _textCacheSwitchGeneration)
+                {
+                    _textCacheSwitching = false;
+                }
+            }
+        }
+
+        /// <summary>窗口装配主体（由 <see cref="ShowTextCacheWindowAsync"/> 包住标志复位）。</summary>
+        private async Task ShowTextCacheWindowCoreAsync(
+            TextCacheEntry entry, string normalized, int generation, int center, int lineInChapter, CancellationToken token)
+        {
             var (from, to) = TextCacheLogic.ComputeWindow(
                 entry.Chapters.Count, center, TextCacheFormat.WindowBefore, TextCacheFormat.WindowAfter);
 
@@ -232,14 +254,12 @@ namespace Uviewer
             catch (OperationCanceledException)
             {
                 // 用户已经切走了：安静退出，别把取消渲染成"加载失败"
-                _textCacheSwitching = false;
                 return;
             }
             catch (Exception ex)
             {
                 // 装配/净化异常：本会话内拉黑该源并回退整本路径（缓存路径不该把阅读卡死，
                 // 但也不能"回退后又命中同一缓存再失败"成死循环）
-                _textCacheSwitching = false;
                 if (!string.IsNullOrEmpty(_textCacheSourceKey))
                 {
                     _textCacheBrokenKeys.Add(_textCacheSourceKey);
@@ -252,7 +272,15 @@ namespace Uviewer
                 return;
             }
 
-            if (token.IsCancellationRequested || generation != _textCacheSwitchGeneration)
+            // 代次 + 状态双重校验：装配期间可能已切文件（ClearTextCacheWindowState
+            // 会递增代次）或换了缓存条目——旧实现在此只查代次，而 Clear 旧版不递增
+            // 代次，在途装配会把**旧文档的窗口文本**覆盖到新文档上（DisplayLoadedText
+            // 带新文件名渲染旧内容），随后 BuildTextCacheTocItems 因 _textCacheEntry!
+            // 为 null 抛 NRE。
+            if (token.IsCancellationRequested
+                || generation != _textCacheSwitchGeneration
+                || !ReferenceEquals(_textCacheEntry, entry)
+                || !ReferenceEquals(_textCacheNormalizedRaw, normalized))
             {
                 return;
             }
@@ -287,7 +315,6 @@ namespace Uviewer
             _ = _tocService.LoadTocAsync(token);
 
             _textCacheLastScrollChapter = _textCacheCenter;
-            _textCacheSwitching = false;
 
             if (!_isVirtualTextCache)
             {
@@ -439,7 +466,10 @@ namespace Uviewer
                 return;
             }
 
-            var topLine = GetTopVisibleLineIndex();
+            // 按排版取可见首行：青空/竖排下 _textLines 已清空，GetTopVisibleLineIndex
+            // 恒返回 1 → 旧实现把章内位置算成"窗口首章、偏移 0"，切个文件/切图片模式
+            // 就把正确位置覆盖掉，重开文件阅读位置回退。
+            var topLine = GetVisibleTopLine();
             var current = TextCacheLogic.CurrentChapterInWindow(
                 _textCacheHeadingLines, _textCacheWindowFrom, topLine);
             if (current >= 0)
@@ -452,6 +482,11 @@ namespace Uviewer
         /// <summary>清窗口会话状态（不删缓存文件；换源 / 缓存失效时调）。</summary>
         internal void ClearTextCacheWindowState()
         {
+            // 代次 +1：让所有在途的窗口装配作废。没有这一步，切文件时
+            // （LoadTextFileAsync 先清状态再读新文件）在途装配的代次检查会照样通过，
+            // 把旧文档的窗口文本覆盖到新文档上（详见 ShowTextCacheWindowCoreAsync 的双重校验）。
+            _textCacheSwitchGeneration++;
+
             // 虚拟窗口：窗口文本缓存随文件关闭 / 关闭阅读模式一起释放（目录缓存保留在内存里）
             _isVirtualTextCache = false;
             _virtualPurifiedChapters.Clear();
@@ -551,6 +586,8 @@ namespace Uviewer
             while (VirtualChapterMaps.Count >= VirtualChapterMapLimit && VirtualChapterMapOrder.Count > 0)
             {
                 var evicted = VirtualChapterMapOrder.Dequeue();
+                // 已被后续 Dequeue 删掉的重复项：字典里没有就直接跳过
+                // （旧实现会把重复项逐个丢掉却不删字典项，FIFO 刷新语义失效）
                 if (!string.Equals(evicted, key, StringComparison.Ordinal))
                 {
                     VirtualChapterMaps.Remove(evicted);
@@ -558,7 +595,14 @@ namespace Uviewer
             }
 
             VirtualChapterMaps[key] = chapters;
-            VirtualChapterMapOrder.Enqueue(key);
+            // 已在字典里的 key 不重复入队：旧实现每次都 Enqueue，重复打开同一本书
+            // 会让队列里堆积重复项——淘汰循环逐个 Dequeue 丢弃却不删字典项，
+            // 长时间会话中队列只增不减（内存无界增长）。
+            if (!VirtualChapterMapOrder.Contains(key))
+            {
+                VirtualChapterMapOrder.Enqueue(key);
+            }
+
             return chapters;
         }
 
@@ -674,11 +718,13 @@ namespace Uviewer
             var service = BookSources;
             var titleRules = service.TitleRules.GetEnabledOrdered();
 
-            // 位置快照必须在 ClearTextCacheWindowState() 之前取（那个方法会把 center 清成 -1）
-            var previousCenter = _textCacheCenter;
+            // 位置快照必须在 ClearTextCacheWindowState() 之前取（那个方法会把 center 清成 -1）。
+            // 章按**可见章**取（不是 _textCacheCenter）：窗口内跳到第 12 章后保存缓存，
+            // 按 center（打开窗口时的第 10 章）存会把位置记回旧章，重开文件弹回旧位置。
+            var previousCenter = TextCacheActive ? GetCurrentVisibleWindowChapter() : -1;
             var previousChapterName = _textCacheEntry is { Chapters.Count: > 0 } previousEntry &&
-                                      _textCacheCenter >= 0 && _textCacheCenter < previousEntry.Chapters.Count
-                ? previousEntry.Chapters[_textCacheCenter].Name
+                                      previousCenter >= 0 && previousCenter < previousEntry.Chapters.Count
+                ? previousEntry.Chapters[previousCenter].Name
                 : string.Empty;
             var previousLineInChapter = _textCacheEntry?.LastLineInChapter ?? 0;
 
@@ -799,29 +845,49 @@ namespace Uviewer
             }
         }
 
-        /// <summary>待执行的自动章节缓存（打开书源下载 TXT 时置位；打开完成后消费一次）。</summary>
-        private bool _pendingAutoTextCache;
+    /// <summary>待执行的自动章节缓存（打开书源下载 TXT 时置位；打开完成后消费一次）。</summary>
+    /// <remarks>
+    /// 存**文件路径**而不是布尔：旧实现是全局布尔，延迟 1.5s 执行前若用户又打开了
+    /// 另一个阅读模式开启的文本（.md 等），后一次 LoadTextFileAsync 的
+    /// <c>if (_pendingAutoTextCache)</c> 会替前一个文件消费掉，给用户没要求缓存的文件
+    /// 建章节缓存。绑定路径后执行前核对当前文件，不是同一本就直接跳过。
+    /// </remarks>
+    private string? _pendingAutoTextCachePath;
 
-        /// <summary>
-        /// 自动章节缓存（打开书源下载的 TXT 后触发）：阅读模式已自动开启，
-        /// 这里补上"自动开启本地缓存"——复用手动保存缓存的全部逻辑（识别目录 → 全量校验 → 落盘）。
-        /// <para><b>尽力而为</b>：延迟触发等首屏渲染稳定；失败只记调试日志，不打扰用户。</para>
-        /// </summary>
-        private async Task RunPendingAutoTextCacheAsync()
+    /// <summary>
+    /// 自动章节缓存（打开书源下载的 TXT 后触发）：阅读模式已自动开启，
+    /// 这里补上"自动开启本地缓存"——复用手动保存缓存的全部逻辑（识别目录 → 全量校验 → 落盘）。
+    /// <para><b>尽力而为</b>：延迟触发等首屏渲染稳定；失败只记调试日志，不打扰用户。</para>
+    /// </summary>
+    private async Task RunPendingAutoTextCacheAsync()
+    {
+        var targetPath = _pendingAutoTextCachePath;
+        _pendingAutoTextCachePath = null;
+        if (string.IsNullOrEmpty(targetPath))
         {
-            try
+            return;
+        }
+
+        try
+        {
+            await Task.Delay(1500).ConfigureAwait(true);
+
+            // 1.5s 内用户可能已切走：只给"发起时的那一个文件"建缓存
+            if (!string.Equals(_currentTextFilePath, targetPath, StringComparison.Ordinal))
             {
-                await Task.Delay(1500).ConfigureAwait(true);
-                if (_isAozoraMode && !string.IsNullOrEmpty(_currentTextFilePath))
-                {
-                    await SaveTextCacheAsync().ConfigureAwait(true);
-                }
+                return;
             }
-            catch (Exception ex)
+
+            if (_isAozoraMode)
             {
-                System.Diagnostics.Debug.WriteLine($"自动章节缓存失败: {ex.Message}");
+                await SaveTextCacheAsync().ConfigureAwait(true);
             }
         }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"自动章节缓存失败: {ex.Message}");
+        }
+    }
 
         /// <summary>重新读当前源的原文（保存缓存用；显示中的是净化后文本，不能反推）。</summary>
         private async Task<string?> ReadCurrentTextRawAsync()

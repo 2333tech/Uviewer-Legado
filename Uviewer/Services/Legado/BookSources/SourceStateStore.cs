@@ -420,25 +420,45 @@ public sealed class SourceStateStore
             return;
         }
 
+        var path = _directory is null ? null : FilePathOf(normalized);
+        var tmp = path is null ? null : path + ".tmp";
+
         try
         {
-            System.IO.Directory.CreateDirectory(_directory);
-            var path = FilePathOf(normalized);
-            var tmp = path + ".tmp";
-
+            System.IO.Directory.CreateDirectory(_directory!);
             // 排序输出：同一份状态两次写入字节一致，便于 diff / 排障
             var values = new SortedDictionary<string, string>(bucket.Values, StringComparer.Ordinal);
             var payload = JsonSerializer.Serialize(
                 new PersistedState { Source = normalized, Values = new Dictionary<string, string>(values, StringComparer.Ordinal) },
                 FileJson);
 
-            File.WriteAllBytes(tmp, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(payload));
-            File.Move(tmp, path, overwrite: true);
+            File.WriteAllBytes(tmp!, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(payload));
+            File.Move(tmp!, path!, overwrite: true);
             bucket.SaveError = null;
         }
         catch (Exception ex)
         {
+            // 失败时清掉半截 tmp：磁盘持续不可用时 tmp 会一直残留
+            // （四个管理器的 SaveAsync catch 里都有同样的 TryDelete，这里对齐）
+            if (tmp is not null)
+            {
+                TryDelete(tmp);
+            }
+
             bucket.SaveError = ex.Message;
+        }
+    }
+
+    /// <summary>删临时文件（失败静默；清理是尽力而为，不该盖掉原始异常）。</summary>
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // 清理失败不影响主流程
         }
     }
 

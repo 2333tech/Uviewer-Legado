@@ -12,9 +12,14 @@ namespace Uviewer.Services.Legado.BookSources;
 /// <item>共享静态 <see cref="HttpClient"/>（连接池复用；进程级单例，勿 dispose）；</item>
 /// <item><b>Cookie 由注入的 <see cref="ISourceCookieStore"/> 统一管理</b>（阶段 4-3 修 D3）：
 /// 不再是本实例的私有字典——同一书源的搜索/目录/正文/<c>java.ajax</c> 共用同一份 Cookie；</item>
+/// <item>重定向<b>手动跟随</b>（AllowAutoRedirect=false）：每一跳重新附加 Cookie 并捕获
+/// Set-Cookie——302 上设置会话 Cookie 是常见登录姿势，自动跟随时中间响应不可见会整段丢失；</item>
 /// <item>字符集三级探测：Content-Type → HTML meta（仅扫前 4KB）→ 书源 charset → UTF-8，
-/// 因此 GB18030/GBK 中文站点不会乱码（reader 用 encoding_rs，行为一致）；</item>
-/// <item>重试：最多 3 次尝试、仅 5xx 重试、200ms×(n+1) 线性退避（reader fetcher.rs:237/256）；</item>
+/// 因此 GB18030/GBK 中文站点不会乱码（reader 用 encoding_rs，行为一致）；
+/// 书源 charset 同时参与<b>请求体</b>编码；</item>
+/// <item>重试：最多 3 次尝试、仅 5xx 重试、200ms×(n+1) 线性退避（reader fetcher.rs:237/256）；
+/// 超时由每次尝试的 linked CTS 控制（spec.TimeoutSeconds 优先，否则实例默认 15s），
+/// 共享客户端自身不设超时（避免先于 CTS 触发而截断更长的书源配置）；</item>
 /// <item>逐字节读取响应体：编码未知时不能先按 UTF-8 解码（否则 GBK 会变成替换字符后再也无法还原）。</item>
 /// </list>
 /// <para>线程安全：<see cref="HttpClient"/> 本身线程安全；Cookie 容器由仓库按源串行化；
@@ -38,16 +43,27 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IRichResponseFet
     /// <summary>
     /// 共享 HttpClient：静态单例，连接池跨所有书源请求复用。
     /// UseCookies=false：Cookie 由每源容器手动管理（见 ApplyCookies/SaveCookies）。
+    /// <para>AllowAutoRedirect=false：重定向由 <see cref="SendFollowRedirectsAsync"/>
+    /// 手动跟随——自动跟随时中间响应对调用方不可见，而 Set-Cookie 常常就设在
+    /// 302 上（登录/会话建立），整段丢失会让后续请求裸奔（reader 的
+    /// cookie_provider 同样跨跳共享）。</para>
+    /// <para>Timeout=Infinite：超时统一由每次尝试的 linked CTS 控制
+    /// （spec.TimeoutSeconds 优先，否则实例默认）。旧实现 Shared.Timeout=15s
+    /// 会**先于** CTS 触发，书源显式配置的更长超时（30s/60s）被静默截断，
+    /// 且超时后还会按重试逻辑再跑 2 遍。</para>
     /// </summary>
     private static readonly HttpClient Shared = new(new HttpClientHandler
     {
         AutomaticDecompression = DecompressionMethods.All,
         UseCookies = false, // Cookie 由每源容器手动管理，避免跨源串味
-        AllowAutoRedirect = true,
+        AllowAutoRedirect = false,
     })
     {
-        Timeout = TimeSpan.FromSeconds(DefaultTimeoutSeconds),
+        Timeout = System.Threading.Timeout.InfiniteTimeSpan,
     };
+
+    /// <summary>手动重定向的最大跳数（reqwest Policy::limited(10) / HttpClient 默认同为 10）。</summary>
+    private const int MaxRedirectHops = 10;
 
     /// <summary>
     /// GB18030/GBK 等代码页编码是否已注册（进程级一次性）。
@@ -128,24 +144,27 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IRichResponseFet
 
             try
             {
-                using var request = BuildRequest(url, spec, sourceKey, isImage: false);
-                using var response = await Shared
-                    .SendAsync(request, HttpCompletionOption.ResponseContentRead, cts?.Token ?? cancellationToken).ConfigureAwait(false);
+                var (response, request, requestUri) = await SendFollowRedirectsAsync(
+                    url, spec, sourceKey, cts?.Token ?? cancellationToken).ConfigureAwait(false);
 
-                // reader：仅 5xx 重试，4xx 直接返回
-                if ((int)response.StatusCode >= 500 && attempt < maxRetries)
+                using (response)
+                using (request)
                 {
-                    await DelayAsync(attempt, cancellationToken).ConfigureAwait(false);
-                    continue;
-                }
+                    // reader：仅 5xx 重试，4xx 直接返回
+                    if ((int)response.StatusCode >= 500 && attempt < maxRetries)
+                    {
+                        await DelayAsync(attempt, cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
 
-                var (text, finalUrl) = await DecodeAsync(response, spec?.Charset, request.RequestUri).ConfigureAwait(false);
-                CaptureCookies(response, sourceKey, request.RequestUri);
-                return new FetchResponse(
-                    text,
-                    finalUrl ?? url,
-                    (int)response.StatusCode,
-                    CollectResponseHeaders(response));
+                    var (text, finalUrl) = await DecodeAsync(response, spec?.Charset, requestUri).ConfigureAwait(false);
+                    CaptureCookies(response, sourceKey, requestUri);
+                    return new FetchResponse(
+                        text,
+                        finalUrl ?? url,
+                        (int)response.StatusCode,
+                        CollectResponseHeaders(response));
+                }
             }
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && attempt < maxRetries)
             {
@@ -161,6 +180,75 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IRichResponseFet
     }
 
     /// <summary>
+    /// 发送请求并<b>手动跟随重定向链</b>（对标 reader cookie_provider 的跨跳共享语义）。
+    /// <para>共享客户端的 <c>AllowAutoRedirect=false</c>，由本方法逐跳跟：每一跳都重新
+    /// <see cref="BuildRequest"/>（带上该源最新 Cookie）并把本跳 <c>Set-Cookie</c>
+    /// 交给仓库后再跳下一跳。自动跟随时这些中间响应对调用方不可见，会话 Cookie 会丢。</para>
+    /// <para>301/302/303 且原方法为 POST 时按 RFC 7231 改写为 GET 并丢弃 body
+    /// （307/308 保持原方法与 body）；相对 Location 基于当前跳绝对化。</para>
+    /// <para>返回终响应与其请求（由调用方 Dispose；中间跳的请求/响应已在此处置）。</para>
+    /// </summary>
+    private async Task<(HttpResponseMessage Response, HttpRequestMessage Request, Uri RequestUri)>
+        SendFollowRedirectsAsync(
+        string url,
+        RequestSpec? spec,
+        string? sourceKey,
+        CancellationToken cancellationToken)
+    {
+        var currentUrl = url;
+        var currentSpec = spec;
+
+        for (var hop = 0; ; hop++)
+        {
+            var request = BuildRequest(currentUrl, currentSpec, sourceKey, isImage: false);
+
+            HttpResponseMessage response;
+            try
+            {
+                response = await Shared
+                    .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                request.Dispose();
+                throw;
+            }
+
+            var location = response.Headers.Location;
+            var isRedirect = hop < MaxRedirectHops
+                && location is not null
+                && response.StatusCode is HttpStatusCode.MovedPermanently
+                    or HttpStatusCode.Found
+                    or HttpStatusCode.SeeOther
+                    or HttpStatusCode.TemporaryRedirect
+                    or HttpStatusCode.PermanentRedirect;
+
+            if (!isRedirect)
+            {
+                return (response, request, request.RequestUri!);
+            }
+
+            // 本跳 Set-Cookie 先落库，下一跳的 BuildRequest 才会带上
+            CaptureCookies(response, sourceKey, request.RequestUri);
+            currentUrl = new Uri(request.RequestUri!, location!).ToString();
+
+            if (currentSpec is not null
+                && response.StatusCode is HttpStatusCode.MovedPermanently
+                    or HttpStatusCode.Found
+                    or HttpStatusCode.SeeOther
+                && !string.Equals(currentSpec.Method, "GET", StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(currentSpec.Method, "HEAD", StringComparison.OrdinalIgnoreCase))
+            {
+                currentSpec = currentSpec with { Method = "GET", Body = null };
+            }
+
+            request.Dispose();
+            response.Dispose();
+        }
+    }
+
+    /// <summary>
     /// 抓取图片字节（对标 reader get_cover）：带图片 Accept + UA + Referer 防盗链 + 每源 Cookie。
     /// 失败（非 2xx / 异常）返回 null——图片失败不影响正文阅读。
     /// </summary>
@@ -172,23 +260,30 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IRichResponseFet
     {
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            request.Headers.TryAddWithoutValidation("Accept", ImageAccept);
-            request.Headers.TryAddWithoutValidation("User-Agent", DefaultUserAgent);
+            // 图片头（Accept / Referer 防盗链）走 spec.Headers，与文本路径共用
+            // 同一条重定向跟随 + Cookie 管线（CDN 302 是图片失败的常见原因）
+            var imageHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["Accept"] = ImageAccept,
+            };
             if (!string.IsNullOrEmpty(referer))
             {
-                request.Headers.TryAddWithoutValidation("Referer", referer);
+                imageHeaders["Referer"] = referer!;
             }
 
-            ApplyCookies(request, sourceKey);
-            using var response = await Shared
-                .SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
+            var (response, request, _) = await SendFollowRedirectsAsync(
+                url, new RequestSpec { Headers = imageHeaders }, sourceKey, cancellationToken).ConfigureAwait(false);
+
+            using (response)
+            using (request)
             {
-                return null;
-            }
+                if (!response.IsSuccessStatusCode)
+                {
+                    return null;
+                }
 
-            return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+                return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+            }
         }
         catch
         {
@@ -265,21 +360,24 @@ public sealed class HttpBookSourceFetcher : IBookSourceFetcher, IRichResponseFet
 
         if (!string.IsNullOrEmpty(spec?.Body))
         {
-            var body = spec!.Body!;
+            // 请求体字符集：书源显式声明的 charset 参与请求编码（GBK 站点 POST 表单），
+            // 解析失败/未声明回落 UTF-8（RequestSpec.Charset 文档口径）
+            var body = spec.Body;
+            var encoding = GetEncoding(spec.Charset) ?? Encoding.UTF8;
             if (UrlAnalyzer.NeedsFormEncode(body, spec.Headers))
             {
                 // 表单体：显式 application/x-www-form-urlencoded
-                request.Content = new StringContent(body, Encoding.UTF8, "application/x-www-form-urlencoded");
+                request.Content = new StringContent(body, encoding, "application/x-www-form-urlencoded");
             }
             else
             {
                 // 非表单体：默认按 JSON 发（书源自带 Content-Type 优先）
-                request.Content = new StringContent(body, Encoding.UTF8);
+                request.Content = new StringContent(body, encoding);
                 request.Content.Headers.Remove("Content-Type");
                 request.Content.Headers.TryAddWithoutValidation(
                     "Content-Type", spec.Headers is { } h && h.ContainsKey("Content-Type")
                         ? h["Content-Type"]
-                        : "application/json;charset=UTF-8");
+                        : $"application/json;charset={encoding.WebName}");
             }
         }
 

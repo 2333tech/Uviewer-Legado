@@ -30,13 +30,6 @@ internal static class JsPureApi
     {
         switch (name)
         {
-            case "log":
-            case "toast":
-            case "longToast":
-                // 三者的"输出侧"由 JsBridge 负责（进诊断），这里只保证不抛、返回 undefined。
-                result = null;
-                return true;
-
             case "md5":
             case "md5Encode":
                 result = Md5Hex(AsString(args, 0));
@@ -79,7 +72,7 @@ internal static class JsPureApi
                 return true;
 
             case "hexEncodeToString":
-                result = Convert.ToHexString(Encoding.UTF8.GetBytes(AsString(args, 0))).ToLowerInvariant();
+                result = HexEncodeToString(AsString(args, 0));
                 return true;
 
             case "toNumChapter":
@@ -109,10 +102,16 @@ internal static class JsPureApi
     /// <summary>UTF-8 MD5，小写 32 位 hex（legado <c>MD5Utils.md5Encode</c>）。</summary>
     private static string Md5Hex(string text)
     {
-        using var md5 = System.Security.Cryptography.MD5.Create();
-        var hash = md5.ComputeHash(Encoding.UTF8.GetBytes(text));
-        return Convert.ToHexString(hash).ToLowerInvariant();
+        // MD5.HashData 静态 API（net7+）：免去每次 Create() 的分配；
+        // Convert.ToHexStringLower 免掉 ToLowerInvariant 的二次分配。
+        // md5Encode 在样本里出现 351 次，是书源最高频的加解密原语。
+        var hash = System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes(text));
+        return Convert.ToHexStringLower(hash);
     }
+
+    /// <summary>UTF-8 hex 小写（legado <c>hexEncodeToString</c>）。</summary>
+    private static string HexEncodeToString(string text) =>
+        Convert.ToHexStringLower(Encoding.UTF8.GetBytes(text));
 
     /// <summary>Base64 → UTF-8；非法输入返回空串（legado 侧异常会抛，这里对齐本引擎既有 <c>base64Decode</c> 语义）。</summary>
     private static string Base64Decode(string text)
@@ -232,7 +231,19 @@ internal static class JsPureApi
                     sb.Append("tt");
                     break;
                 default:
-                    sb.Append(c, run);
+                    // 未识别字母：单引号转义成字面量。原样保留会让 .NET 自定义
+                    // 格式串把 'Z'/'D'/'w' 当格式说明符解析 → FormatException
+                    // → 整段脚本回退原文（注释承诺"宁可格式略偏也不抛异常"，
+                    // 原实现恰恰会抛）。
+                    if (char.IsLetter(c))
+                    {
+                        sb.Append('\'').Append(c, run).Append('\'');
+                    }
+                    else
+                    {
+                        sb.Append(c, run);
+                    }
+
                     break;
             }
 
@@ -430,7 +441,10 @@ internal static class JsPureApi
     /// <summary>
     /// 取第 <paramref name="index"/> 个参数为字符串。
     /// <para>JS 里 <c>undefined</c>/<c>null</c> 应表现为空串（书源脚本常直接拼进 URL），
-    /// 数字按不变文化输出（避免 <c>1,5</c> 这类本地化小数点）。</para>
+    /// 数字按不变文化输出（避免 <c>1,5</c> 这类本地化小数点）；
+    /// 布尔输出 <c>true</c>/<c>false</c> 小写——.NET 的 <c>bool.ToString()</c> 是
+    /// <c>True</c>/<c>False</c>，与 JS/Java 口径不一致（书源写
+    /// <c>java.put("k", true)</c> 后 <c>java.get("k") === 'true'</c> 会恒失败）。</para>
     /// </summary>
     internal static string AsString(object?[] args, int index)
     {
@@ -442,6 +456,7 @@ internal static class JsPureApi
         return args[index] switch
         {
             string s => s,
+            bool b => b ? "true" : "false",
             double d => d.ToString("R", CultureInfo.InvariantCulture),
             float f => f.ToString("R", CultureInfo.InvariantCulture),
             IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),

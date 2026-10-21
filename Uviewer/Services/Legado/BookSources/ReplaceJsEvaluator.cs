@@ -62,11 +62,18 @@ internal static class ReplaceJsEvaluator
         {
             // result = 当前匹配串（legado bindings["result"] = matcher.group()）
             engine.SetValue("result", matched);
-            return engine.Evaluate(GetPrepared(script)).ToString();
-        }
-        finally
-        {
+            var output = engine.Evaluate(GetPrepared(script)).ToString();
+
+            // 成功才归还。Jint 3 无 realm/reset，求值抛异常的引擎里可能已残留
+            // 上一段脚本的顶层 var/函数声明；原样归还会把污染传给下一段脚本
+            // （净化是"逐规则 × 逐匹配"的高频路径，串味的静默错误极难排查）。
             Return(engine);
+            return output;
+        }
+        catch
+        {
+            // 异常引擎丢弃（GC 回收），不进池
+            throw;
         }
     }
 

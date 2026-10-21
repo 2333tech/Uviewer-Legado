@@ -152,6 +152,16 @@ internal static class RuleAnalyzer
     /// </summary>
     internal static Regex? GetRegex(string pattern)
     {
+        if (string.IsNullOrEmpty(pattern))
+        {
+            // 空 pattern 在 .NET 是合法正则且在每个位置命中空串：规则写成
+            // "@regex:" / "@regex:##x##"（前缀剥完就没了）时，一次求值会产生
+            // N+1 个空匹配——大目录页上瞬间分配数十万个 FragmentContext，
+            // java.getStringList 也会拿到 N+1 个空串。按"无规则"处理返回 null
+            // （EvaluateRegexRule/SearchBooksRegex 早有同样的空判，这里统一到入口）。
+            return null;
+        }
+
         if (RegexCache.TryGetValue(pattern, out var cached))
         {
             return cached;
@@ -178,11 +188,21 @@ internal static class RuleAnalyzer
 
     // 模式前缀表：StripModePrefix 在每条规则/每个字段上都会走，
     // 表本身缓存为静态只读（每次调用 new 一份数组的开销虽小，但这是热路径）。
-    // 覆盖常见大小写变体（@css:/@CSS:/@Json:…），匹配用 Ordinal 精确比较。
-    private static readonly string[] ModePrefixes =
+    // 大小写不敏感（与 TryDetectModeFromRule 的前缀判定口径一致）：
+    // @CSS:/@Json: 等变体既被识别为对应模式，就必须能被剥掉——否则前缀残留
+    // 在选择器里，QuerySelectorAll 抛异常被 catch 吞成空结果，表现为
+    // "模式识别成功但规则静默失效"。旧实现用 Ordinal + 人工变体表，
+    // 表外的大小写组合（@Css:/@Xpath:/@REGEX:）就会漏剥。
+    private static readonly string[] ModePrefixesIgnoreCase =
     {
-        "@css:", "@CSS:", "@xpath:", "@XPath:", "@XPATH:",
-        "@json:", "@Json:", "@JSON:", "@regex:", "@Regex:", "@js:", "js:",
+        "@css:", "@xpath:", "@json:", "@regex:",
+    };
+
+    // js:/@js: 保持 Ordinal：TryDetectModeFromRule 的 JS 分支就是大小写敏感的
+    // （@JS: 在 legado 与 reader 都不算 JS 前缀），剥不剥必须与识别保持同一口径。
+    private static readonly string[] ModePrefixesOrdinal =
+    {
+        "@js:", "js:",
     };
 
     /// <summary>
@@ -198,7 +218,15 @@ internal static class RuleAnalyzer
             return r.Substring(4, r.Length - 9).Trim();
         }
 
-        foreach (var p in ModePrefixes)
+        foreach (var p in ModePrefixesIgnoreCase)
+        {
+            if (r.StartsWith(p, StringComparison.OrdinalIgnoreCase))
+            {
+                return r.Substring(p.Length).Trim();
+            }
+        }
+
+        foreach (var p in ModePrefixesOrdinal)
         {
             if (r.StartsWith(p, StringComparison.Ordinal))
             {

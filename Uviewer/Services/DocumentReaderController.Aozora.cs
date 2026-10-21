@@ -337,13 +337,27 @@ namespace Uviewer
                     // ① 先用磁盘上的章节缓存（有缓存的文件：继续用它 + 上次阅读位置，也不必重扫目录）。
                     //    注意：这里只"读"缓存，任何情况下都不会删除磁盘缓存文件——
                     //    删除只有一条路径，就是用户主动点设置里的「缓存」菜单项。
-                    var rawForCache = _currentTextRawContent ?? string.Empty;
-                    var displayName = string.IsNullOrEmpty(_currentTextFilePath)
-                        ? "Document"
-                        : System.IO.Path.GetFileName(_currentTextFilePath);
-                    windowRendered = await TryOpenWithTextCacheAsync(
-                        rawForCache, displayName, _currentTextFilePath ?? _currentTextArchiveEntryKey, _globalTextCts!.Token)
-                        .ConfigureAwait(true);
+                    //
+                    //    原文要单独取：命中磁盘缓存打开时 _currentTextRawContent 恒为 null
+                    //    （读后即清，Text.cs:176），关一次阅读模式也不会回填。旧实现直接
+                    //    `?? string.Empty` 传空串 → 按路径命中磁盘缓存却拿空文本切片 →
+                    //    整窗 8 章全空、目录行号全为 1（"打开有缓存的文件 → 关阅读模式 →
+                    //    再开" 必现白屏）。取不到原文就放弃窗口路径，走整本回退。
+                    var rawForCache = _currentTextRawContent;
+                    if (string.IsNullOrEmpty(rawForCache))
+                    {
+                        rawForCache = await ReadCurrentTextRawAsync().ConfigureAwait(true);
+                    }
+
+                    if (!string.IsNullOrEmpty(rawForCache))
+                    {
+                        var displayName = string.IsNullOrEmpty(_currentTextFilePath)
+                            ? "Document"
+                            : System.IO.Path.GetFileName(_currentTextFilePath);
+                        windowRendered = await TryOpenWithTextCacheAsync(
+                            rawForCache, displayName, _currentTextFilePath ?? _currentTextArchiveEntryKey, _globalTextCts!.Token)
+                            .ConfigureAwait(true);
+                    }
 
                     // ② 没有磁盘缓存 → 内存虚拟窗口（目录只算一次，窗口只净化 8 章），从文件头开始
                     if (!windowRendered)
@@ -860,7 +874,10 @@ namespace Uviewer
                     return;
                 }
 
+                // 旧 CTS 先 Cancel + Dispose 再替换（只 Cancel 不 Dispose 会把
+                // 向父源注册的回调一直挂在父 token 上，连续重算 = 无界增长）
                 _aozoraPageCalcCts?.Cancel();
+                _aozoraPageCalcCts?.Dispose();
                 calculationCts = new System.Threading.CancellationTokenSource();
                 _aozoraPageCalcCts = calculationCts;
                 var token = calculationCts.Token;
@@ -1051,11 +1068,22 @@ namespace Uviewer
             var margins = layout.Margins;
             float maxWidth = layout.MaxWidth;
 
-            var imgBlocks = page.Blocks.Where(b => b.HasImage).ToList();
-            if (imgBlocks.Count > 0)
+            // 图片块检测单遍完成：旧实现 page.Blocks.Where(...).ToList() 每次
+            // Invalidate 都分配一个列表（Draw 是每帧热路径）
+            AozoraBindingModel? firstImageBlock = null;
+            foreach ( var b in page.Blocks )
+            {
+                if ( b.HasImage )
+                {
+                    firstImageBlock = b;
+                    break;
+                }
+            }
+
+            if (firstImageBlock is not null)
             {
                 ClearAozoraSelection();
-                var src = imgBlocks[0].Inlines.OfType<AozoraImage>().First().Source;
+                var src = firstImageBlock.Inlines.OfType<AozoraImage>().First().Source;
                 DrawHorizontalImage(ds, size, src);
                 return;
             }
@@ -1064,11 +1092,24 @@ namespace Uviewer
             var selectionRanges = CanvasTextSelectionHelper.BuildRangesForDraw(_aozoraSelection, _aozoraSelectionGeometry, pageToken);
             var selectionGeometry = new CanvasTextGeometry(pageToken);
 
+            // 按列分组一次算好：旧实现列循环内每列一次 Where+ToList，
+            // 双列布局下每帧 3 次列表分配（Draw 每帧都跑）
+            var columnGroups = new Dictionary<int, List<AozoraBindingModel>>();
+            foreach ( var b in page.Blocks )
+            {
+                if ( !columnGroups.TryGetValue(b.HorizontalColumnIndex, out var list) )
+                {
+                    list = new List<AozoraBindingModel>();
+                    columnGroups[b.HorizontalColumnIndex] = list;
+                }
+
+                list.Add(b);
+            }
+
             int selectionBlockOffset = 0;
             for (int column = 0; column < layout.ColumnCount; column++)
             {
-                var columnBlocks = page.Blocks.Where(b => b.HorizontalColumnIndex == column).ToList();
-                if (columnBlocks.Count == 0) continue;
+                if ( !columnGroups.TryGetValue(column, out var columnBlocks) || columnBlocks.Count == 0 ) continue;
                 float contentLeft = margins.Left + column * layout.ColumnStride;
                 float spareWidth = _isMarkdownRenderMode ? 0 : Math.Max(0, layout.ColumnWidth - maxWidth);
                 contentLeft += _settingsManager.Alignment switch
@@ -1291,7 +1332,12 @@ namespace Uviewer
         {
             if (!_isTextMode || !_isAozoraMode || _aozoraBlocks.Count == 0) return;
 
-            int startLine = _aozoraBlocks[_currentAozoraStartBlockIndex].SourceLineNumber;
+            // 上界校验：块表在翻页/重算间隙可能被替换（清空→重建），
+            // _currentAozoraStartBlockIndex 此刻可能越界（与 RefreshTextDisplay 同款防护）
+            int startLine = _currentAozoraStartBlockIndex >= 0 &&
+                            _currentAozoraStartBlockIndex < _aozoraBlocks.Count
+                ? _aozoraBlocks[_currentAozoraStartBlockIndex].SourceLineNumber
+                : 1;
             int totalLines = _aozoraTotalLineCountInSource;
             _readingProgressController.UpdatePagedReader(
                 _aozoraPageState,

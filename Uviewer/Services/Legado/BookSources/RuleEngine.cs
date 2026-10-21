@@ -105,7 +105,9 @@ public sealed class RuleEngine
     }
 
     // 模板正则常量：每次展开 {{...}} 都会用到，缓存并预编译。
-    private static readonly Regex TemplateRegex = new(@"\{\{(.*?)\}\}", RegexOptions.Compiled);
+    // [\s\S] 而非 .：规则文本可能跨行（书源 JSON 里写 "\n" 的模板），
+    // . 不含 \n 会让多行 {{}} 静默不展开（UrlAnalyzer 的同类正则同样用 [\w\W]）。
+    private static readonly Regex TemplateRegex = new(@"\{\{([\s\S]*?)\}\}", RegexOptions.Compiled);
 
     /// <summary>
     /// 搜索入口（对标 reader search_books）。步骤：
@@ -432,17 +434,24 @@ public sealed class RuleEngine
     /// </summary>
     private string ExtractContentSingle(string rule, FragmentContext ctx)
     {
+        // 顺序与 reader eval_field_html_single_with_ctx 一致：**先拆 ## 替换段，
+        // 再拆脚本段**。反过来的话 @js: 形态的 script 会把 "##pat##rep" 一起吃进去
+        // 当 JS 执行（语法错误整段回退），<js>…</js>##pat##rep 的替换也被吞掉。
+        var (ruleWithoutReplace, replacePart) = RuleAnalyzer.SplitLegadoRegex(rule);
+
         // 选择器 + 脚本段：先按选择器取值，再交给脚本处理。
-        var (selectorRule, script) = RuleAnalyzer.ExtractJs(rule);
+        var (selectorRule, script) = RuleAnalyzer.ExtractJs(ruleWithoutReplace);
         if (script is not null)
         {
             var value = string.IsNullOrEmpty(selectorRule)
                 ? ctx.Raw
                 : ExtractContentSingle(selectorRule, ctx);
-            return RunJs(script, value, string.Empty);
+            var output = RunJs(script, value, string.Empty);
+            // 替换段作用于脚本输出（legado：JS 也是 SourceRule，replaceRegex 对最终结果生效）
+            return replacePart is not null ? RuleAnalyzer.ApplyLegadoRegex(output, replacePart) : output;
         }
 
-        var (combinable, replacePart) = RuleAnalyzer.SplitLegadoRegex(rule);
+        var combinable = ruleWithoutReplace;
         var mode = RuleAnalyzer.DetectMode(combinable, ctx);
         var extracted = mode switch
         {
@@ -511,13 +520,31 @@ public sealed class RuleEngine
             return overrideCtx = new FragmentContext(content);
         }
 
-        _js.EvaluateRule = (r, content) => ExtractContent(r, Ctx(content));
-        _js.EvaluateList = (r, content) => ExtractListValues(r, Ctx(content));
-        _js.EvaluateElements = (r, content) => ExtractElementValues(r, Ctx(content));
+        // 重入保护：脚本内 java.getString("sel<js>…</js>") 会经 EvaluateRule 回调
+        // 再次进入本方法（同引擎嵌套）。旧实现无条件覆写三个委托且不恢复——
+        // 嵌套返回后，外层脚本后续的 java.getString/getStringList/getElements
+        // 全部作用到内层片段上，静默产出错误字段值。这里保存旧委托，finally 恢复。
+        // （引擎实例按"租借"语义使用：ConcurrentBag 池保证同一时刻只有一个线程
+        // 持有本实例，故只需防嵌套重入，不需防并行。）
+        var prevRule = _js.EvaluateRule;
+        var prevList = _js.EvaluateList;
+        var prevElements = _js.EvaluateElements;
+        try
+        {
+            _js.EvaluateRule = (r, content) => ExtractContent(r, Ctx(content));
+            _js.EvaluateList = (r, content) => ExtractListValues(r, Ctx(content));
+            _js.EvaluateElements = (r, content) => ExtractElementValues(r, Ctx(content));
 
-        // jsLib 透传（便宜：字符串引用赋值；JsBridge 内部按文本决定是否重新加载库）
-        _js.JsLib = _jsSource?.JsLib;
-        return _js.Run(script, value, baseUrl, globals);
+            // jsLib 透传（便宜：字符串引用赋值；JsBridge 内部按文本决定是否重新加载库）
+            _js.JsLib = _jsSource?.JsLib;
+            return _js.Run(script, value, baseUrl, globals);
+        }
+        finally
+        {
+            _js.EvaluateRule = prevRule;
+            _js.EvaluateList = prevList;
+            _js.EvaluateElements = prevElements;
+        }
     }
 
     /// <summary>
@@ -526,7 +553,9 @@ public sealed class RuleEngine
     /// </summary>
     private IReadOnlyList<object?> ExtractListValues(string rule, FragmentContext ctx)
     {
-        var (selectorRule, script) = RuleAnalyzer.ExtractJs(rule);
+        // 同 ExtractContentSingle：先拆 ## 再拆脚本（@js: 的 script 不吃替换段）
+        var (ruleWithoutReplace, replacePart) = RuleAnalyzer.SplitLegadoRegex(rule);
+        var (selectorRule, script) = RuleAnalyzer.ExtractJs(ruleWithoutReplace);
         if (script is not null)
         {
             // 前导脚本：输出若像 JSON 数组则逐项，否则整段单值
@@ -534,23 +563,32 @@ public sealed class RuleEngine
                 ? ctx.Raw
                 : ExtractContentSingle(selectorRule, ctx);
             var output = RunJs(script, value, string.Empty);
+
+            List<object?> scriptValues;
             try
             {
                 var node = System.Text.Json.Nodes.JsonNode.Parse(output);
-                if (node is System.Text.Json.Nodes.JsonArray list)
-                {
-                    return list.Select(n => (object?)n?.ToString() ?? string.Empty).ToList();
-                }
+                scriptValues = node is System.Text.Json.Nodes.JsonArray list
+                    ? list.Select(n => (object?)(n?.ToString() ?? string.Empty)).ToList()
+                    : new List<object?> { output };
             }
             catch
             {
                 // 非 JSON：整段作单值
+                scriptValues = new List<object?> { output };
             }
 
-            return new[] { output };
+            if (replacePart is not null)
+            {
+                scriptValues = scriptValues
+                    .Select(v => (object?)RuleAnalyzer.ApplyLegadoRegex(v?.ToString() ?? string.Empty, replacePart))
+                    .ToList();
+            }
+
+            return scriptValues;
         }
 
-        var (combinable, replacePart) = RuleAnalyzer.SplitLegadoRegex(rule);
+        var combinable = ruleWithoutReplace;
         var mode = RuleAnalyzer.DetectMode(combinable, ctx);
         var values = mode switch
         {
@@ -870,7 +908,12 @@ public sealed class RuleEngine
 
         // 正文/标题/下一页共用一份片段解析上下文
         var ctx = new FragmentContext(working);
-        var (selectorRule, script) = RuleAnalyzer.ExtractJs(contentRule);
+
+        // 先拆 ## 再拆脚本段（reader eval_field_html_single_with_ctx / ExtractContentSingle 同序）：
+        // 反过来的话 <js>…</js>##pat##rep 的替换段在 ⑤⑥ 两步里被整个丢掉——
+        // ExtractJs 只取到 </js> 为止，尾随的 ## 既不进脚本也不进选择器。
+        var (contentRulePure, contentReplace) = RuleAnalyzer.SplitLegadoRegex(contentRule);
+        var (selectorRule, script) = RuleAnalyzer.ExtractJs(contentRulePure);
         string content;
         if (selectorRule.Trim().Length == 0)
         {
@@ -887,6 +930,12 @@ public sealed class RuleEngine
         if (script is not null && script.Trim().Length > 0)
         {
             content = RunJs(script, content, baseUrl);
+        }
+
+        // ⑥b 尾随替换段：作用于本段最终结果（legado：每个 SourceRule 的最终结果都过 replaceRegex）
+        if (contentReplace is not null)
+        {
+            content = RuleAnalyzer.ApplyLegadoRegex(content, contentReplace);
         }
 
         // ⑦ ReplaceRegex：正则清洗；JS 形态的先跑脚本
@@ -1330,8 +1379,28 @@ public sealed class RuleEngine
     /// <summary>前导 JS 段求值：切分 → 跑脚本 → 返回 (输出, 剩余规则)。</summary>
     private (string Output, string Remaining) EvalLeadingJs(string rule, string body, string baseUrl)
     {
-        var (script, remaining) = SplitLeadingJs(rule);
-        return (RunJs(script, body, baseUrl), remaining);
+        // 先拆 ## 再拆脚本段（reader eval_field_html_single_with_ctx 同序）：
+        // 反过来的话 @js: 形态会把 "##pat##rep" 一起吃进脚本文本 → JS 语法错误 →
+        // RunJs 兜底返回原始 body → 整条正文规则静默退化成原文（旧实现就是这么死的）。
+        var (ruleWithoutReplace, replacePart) = RuleAnalyzer.SplitLegadoRegex(rule);
+        var (script, remaining) = SplitLeadingJs(ruleWithoutReplace);
+        var output = RunJs(script, body, baseUrl);
+
+        if (replacePart is null)
+        {
+            return (output, remaining);
+        }
+
+        if (remaining.Length == 0)
+        {
+            // 整条规则 = "脚本 + 替换"：替换作用于脚本输出（legado：JS 也是 SourceRule，
+            // replaceRegex 对最终结果生效）
+            return (RuleAnalyzer.ApplyLegadoRegex(output, replacePart), remaining);
+        }
+
+        // 脚本后面还有选择器：替换段拼回剩余规则，由后续求值在**最终结果**上结算
+        // （提前应用会让选择器跑在已替换的文本上，顺序错）
+        return (output, remaining + replacePart);
     }
 
     /// <summary>将相对 URL 转为绝对地址（对标 reader resolve_url：保留 query、去 fragment）。</summary>

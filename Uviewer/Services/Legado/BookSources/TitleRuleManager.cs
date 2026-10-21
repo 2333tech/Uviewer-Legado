@@ -24,6 +24,9 @@ public sealed class TitleRuleManager
     /// <summary>不可变读快照（数组），变更时置 null，下次读取重建。</summary>
     private volatile IReadOnlyList<TitleRule>? _snapshot;
 
+    /// <summary>启用 + 排序后的快照（与 <see cref="_snapshot"/> 同生命周期，一并失效）。</summary>
+    private volatile List<TitleRule>? _enabledOrdered;
+
     public TitleRuleManager(string? filePath = null)
     {
         _filePath = filePath ?? DefaultFilePath;
@@ -56,17 +59,37 @@ public sealed class TitleRuleManager
     /// <summary>
     /// 已启用的规则，按 <see cref="TitleRule.Order"/> 升序（同值保持导入顺序）。
     /// <para>供章节切分使用：停用的规则在此就被滤掉，切分时不必再判开关。</para>
+    /// <para>惰性快照：旧实现每次调用都重新 Where+OrderBy+ToList（开书/重建目录/
+    /// 建文本缓存都会走）——这是存储层范式点名要避免的"每次读重新排序"，
+    /// 现在与 <see cref="_snapshot"/> 同生命周期缓存，变更时一并失效。</para>
     /// </summary>
-    public List<TitleRule> GetEnabledOrdered() =>
-        GetAll()
-            .Where(r => r.IsEnabled)
-            .Select((r, i) => (Rule: r, Index: i))
-            .OrderBy(x => x.Rule.Order)
-            .ThenBy(x => x.Index)
-            .Select(x => x.Rule)
-            .ToList();
+    public List<TitleRule> GetEnabledOrdered()
+    {
+        var cached = _enabledOrdered;
+        if (cached is not null)
+        {
+            return cached;
+        }
 
-    /// <summary>从磁盘流式加载（文件不存在 = 清空；损坏保留原有数据）。</summary>
+        lock (_gate)
+        {
+            return _enabledOrdered ??= GetAll()
+                .Where(r => r.IsEnabled)
+                .Select((r, i) => (Rule: r, Index: i))
+                .OrderBy(x => x.Rule.Order)
+                .ThenBy(x => x.Index)
+                .Select(x => x.Rule)
+                .ToList();
+        }
+    }
+
+    /// <summary>
+    /// 从磁盘流式加载（文件不存在 = 清空；损坏保留原有数据）。
+    /// <para><b>解析失败不抛</b>：坏文件抛 JsonException 会顺着初始化链把
+    /// 缓存 faulted 任务的地方整个会话打挂，降级为保留现有数据 + 记错误。</para>
+    /// <para><b>Id &lt;= 0 重新分配</b>：手写 JSON 常缺 id 字段（默认 0），
+    /// 直接以 Id 为键会让同文件多条无 Id 规则互相覆盖只剩一条（导入路径早有重分配）。</para>
+    /// </summary>
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
         if (!File.Exists(_filePath))
@@ -74,32 +97,55 @@ public sealed class TitleRuleManager
             lock (_gate)
             {
                 _map = new Dictionary<long, TitleRule>();
-                _snapshot = null;
+                Invalidate();
             }
 
+            LastLoadError = null;
             return;
         }
 
         var fresh = new Dictionary<long, TitleRule>();
-        using (var stream = BookSourceJsonReader.OpenRead(_filePath))
+        try
         {
-            await foreach (var rule in BookSourceSerializer.DeserializeTitleRuleEnumerableAsync(stream, cancellationToken).ConfigureAwait(false))
+            using (var stream = BookSourceJsonReader.OpenRead(_filePath))
             {
-                if (rule is null)
+                await foreach (var rule in BookSourceSerializer.DeserializeTitleRuleEnumerableAsync(stream, cancellationToken).ConfigureAwait(false))
                 {
-                    continue;
-                }
+                    if (rule is null)
+                    {
+                        continue;
+                    }
 
-                fresh[rule.Id] = rule;
+                    if (rule.Id <= 0)
+                    {
+                        rule.Id = NextIdIn(fresh);
+                    }
+
+                    fresh[rule.Id] = rule;
+                }
             }
+
+            LastLoadError = null;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            LastLoadError = ex.Message;
+            return;
         }
 
         lock (_gate)
         {
             _map = fresh;
-            _snapshot = null;
+            Invalidate();
         }
     }
+
+    /// <summary>最近一次加载失败的原因（损坏文件等；null = 上次加载正常）。诊断用。</summary>
+    public string? LastLoadError { get; private set; }
 
     /// <summary>从 JSON 文件导入规则（流式，零 DOM）。</summary>
     /// <para>按 Id 覆盖同键规则；Id &lt;= 0 视为新规则（重新分配 Id，避免与既有冲突）。</para>
@@ -141,7 +187,7 @@ public sealed class TitleRuleManager
                         updated++;
                     }
 
-                    _snapshot = null;
+                    Invalidate();
                 }
             }
         }
@@ -152,7 +198,6 @@ public sealed class TitleRuleManager
     /// <summary>全量写回磁盘（流式 + 临时文件原子替换）。</summary>
     public async Task SaveAsync(CancellationToken cancellationToken = default)
     {
-        var all = GetAll();
         var dir = Path.GetDirectoryName(_filePath);
         if (!string.IsNullOrEmpty(dir))
         {
@@ -162,6 +207,8 @@ public sealed class TitleRuleManager
         await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // 快照在闸内取（闸外取快照会丢更新，同 ReplaceRuleManager）
+            var all = GetAll();
             var temp = _filePath + ".tmp";
             try
             {
@@ -208,7 +255,7 @@ public sealed class TitleRuleManager
             }
 
             _map[rule.Id] = rule;
-            _snapshot = null;
+            Invalidate();
             return true;
         }
     }
@@ -221,7 +268,7 @@ public sealed class TitleRuleManager
             var removed = _map.Remove(id);
             if (removed)
             {
-                _snapshot = null;
+                Invalidate();
             }
 
             return removed;
@@ -244,7 +291,7 @@ public sealed class TitleRuleManager
             if (_map.TryGetValue(id, out var rule))
             {
                 rule.IsEnabled = enabled;
-                _snapshot = null;
+                Invalidate();
             }
         }
 
@@ -257,11 +304,36 @@ public sealed class TitleRuleManager
         lock (_gate)
         {
             _map.Clear();
-            _snapshot = null;
+            Invalidate();
         }
     }
 
     // ---- 内部 ----
+
+    /// <summary>
+    /// 使全部读快照失效（任何写操作后调用，持 <c>_gate</c> 调用）。
+    /// 快照是不可变数组，失效只是置 null：读者手上的旧数组仍可安全遍历。
+    /// </summary>
+    private void Invalidate()
+    {
+        _snapshot = null;
+        _enabledOrdered = null;
+    }
+
+    /// <summary>在局部字典上分配下一个 Id（max+1；加载路径无锁，用局部 map）。</summary>
+    private static long NextIdIn(Dictionary<long, TitleRule> map)
+    {
+        long max = 0;
+        foreach (var id in map.Keys)
+        {
+            if (id > max)
+            {
+                max = id;
+            }
+        }
+
+        return max + 1;
+    }
 
     /// <summary>分配下一个 Id（max+1，确定性；调用方须已持锁）。</summary>
     private long NextIdLocked()

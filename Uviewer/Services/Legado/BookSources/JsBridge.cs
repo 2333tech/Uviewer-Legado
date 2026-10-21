@@ -116,9 +116,12 @@ internal sealed class JsBridge
     private readonly JsNetworkSession _network = new();
 
     // 本次脚本的 result/baseUrl：网络原语在"没有真实响应"时用它兜底构造 StrResponse。
-    // 重入（java.getString）会临时覆盖，外层随后不再读取这两个字段（只影响兜底语义）。
+    // 重入（java.getString）会临时覆盖，退出时还原（见 Run 的 savedValue/savedBaseUrl）。
     private string _currentValue = string.Empty;
     private string _currentBaseUrl = string.Empty;
+
+    /// <summary>本次（最外层）Run 注入的调用方 globals 键名；下次 Run 先清后注，防残留。</summary>
+    private List<string>? _globalKeys;
 
     /// <summary>
     /// <c>java.setContent(x)</c> 设置的替换内容（阶段 4-5）：后续
@@ -145,6 +148,20 @@ internal sealed class JsBridge
             // ⓪ 先解析库代码（可能使旧引擎失效 → 必须在取引擎之前，见 ResolveJsLib 的书源隔离说明）
             var lib = ResolveJsLib();
 
+            // 库文本变化（换书源复用了同一 JsBridge 实例）同样使主引擎失效：
+            // Jint 无法从引擎里"卸载"单个函数/顶层 var，同一引擎上执行新库会让
+            // 旧库的函数与全局变量残留——下一个书源白拿上一个书源的库（跨源串味）。
+            // 旧实现只在"新书源无库"时丢弃引擎，"有不同库"只重新 Execute，
+            // 违反红线 3。这里与无库路径同样丢弃，本次调用改用全新引擎。
+            if (_libInitEngine is not null
+                && !string.Equals(_libInitText, lib, StringComparison.Ordinal))
+            {
+                _engine = null;
+                _binding = null;
+                _libInitEngine = null;
+                _libInitText = null;
+            }
+
             Engine engine;
             bool temp;
             if (_inUse)
@@ -166,18 +183,37 @@ internal sealed class JsBridge
             var savedOverride = _contentOverride;
             _contentOverride = null;
 
+            // 同理保存重入会改写的其余实例状态：result 兜底值 / globals 注入键。
+            // 旧实现只保存了 _contentOverride——嵌套脚本退出后，外层再走
+            // getStrResponse 兜底会拿到内层的 result，globals 注入键也被冲掉。
+            var savedValue = _currentValue;
+            var savedBaseUrl = _currentBaseUrl;
+            var savedGlobalKeys = _globalKeys;
+
             try
             {
                 // ② 绑定全局：result（当前内容）/ baseUrl / java API / 调用方 globals
                 engine.SetValue("result", value);
                 engine.SetValue("baseUrl", baseUrl);
-                engine.SetValue("java", EnsureJava(engine));
+                engine.SetValue("java", EnsureJava(engine, temp));
                 _currentValue = value;
                 _currentBaseUrl = baseUrl;
 
                 // ②a 全局对象（source/book/chapter/cache/cookie/html）：有作用域才注入。
                 //     同一 Scope 只绑一次（见 EnsureGlobals）。
-                EnsureGlobals(engine);
+                EnsureGlobals(engine, temp);
+
+                // ②a2 上一次注入的 globals（formatJs 的 index/title 等）先清掉：
+                // 不清理会让下一次无 globals 的 Run 读到上一轮的残留值（静默出错）。
+                if (_globalKeys is not null)
+                {
+                    foreach (var k in _globalKeys)
+                    {
+                        engine.SetValue(k, JsValue.Undefined);
+                    }
+
+                    _globalKeys = null;
+                }
 
                 if (globals is not null)
                 {
@@ -185,6 +221,8 @@ internal sealed class JsBridge
                     {
                         engine.SetValue(k, v);
                     }
+
+                    _globalKeys = new List<string>(globals.Keys);
                 }
 
                 // ②b 加载 jsLib（书源库代码）：函数/变量定义先于脚本求值生效
@@ -194,13 +232,27 @@ internal sealed class JsBridge
                 // 走编译产物缓存：同一脚本在"每条字段 × 每个片段"上反复执行，
                 // engine.Evaluate(string) 每次都会重新解析脚本（4KB 约 5ms，JS 书源每章都付这笔钱）。
                 var r = engine.Evaluate(JsScriptCache.Get(script));
-                return r?.ToString() ?? string.Empty;
+                // JS 的 null/undefined 的 ToString() 是 "null"/"undefined" 字面量——
+                // 直接转串会把字面量写进目录/正文（脚本写 return null 时整个字段变 "null"）。
+                // 判 Jint 类型后落空串（legado/reader 对 JS 空结果均落空串）。
+                if (r is null || r.Type == Jint.Runtime.Types.Null || r.Type == Jint.Runtime.Types.Undefined)
+                {
+                    return string.Empty;
+                }
+
+                return r.ToString() ?? string.Empty;
             }
             finally
             {
                 // 重入退出时还原外层的 setContent 覆盖（外层 Run 退出时 savedOverride 本就是 null，等价清空）
                 _contentOverride = temp ? savedOverride : null;
-                if (!temp)
+                if (temp)
+                {
+                    _currentValue = savedValue;
+                    _currentBaseUrl = savedBaseUrl;
+                    _globalKeys = savedGlobalKeys;
+                }
+                else
                 {
                     _inUse = false;
                 }
@@ -278,7 +330,12 @@ internal sealed class JsBridge
     }
 
     /// <summary>远程 jsLib 下载缓存（进程级，URL → 库代码）：legado 同样按 URL 缓存库内容，
-    /// 避免每次规则求值都重新下载。只缓存成功结果，失败下次重试。</summary>
+    /// 避免每次规则求值都重新下载。只缓存成功结果，失败下次重试。
+    /// <para>有界（条数 + 单条体积）：恶意/异常书源用大量远程 jsLib URL 会把进程内存灌爆，
+    /// 超限的条目不缓存（下次重试，功能不受影响）。</para></summary>
+    private const int RemoteLibCacheLimit = 64;
+    private const int RemoteLibEntryMaxChars = 512 * 1024;
+
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> RemoteLibCache =
         new(StringComparer.Ordinal);
 
@@ -311,6 +368,17 @@ internal sealed class JsBridge
             {
                 Diagnostics.RecordScriptError(SourceKey, Field, new JsLibDownloadException(url, "响应为空"));
                 return null;
+            }
+
+            // 超限不缓存（下次重试）：条数上限 + 单条体积上限，见 RemoteLibCache 注释
+            if (content.Length > RemoteLibEntryMaxChars)
+            {
+                return content;
+            }
+
+            if (RemoteLibCache.Count >= RemoteLibCacheLimit)
+            {
+                return content;
             }
 
             return RemoteLibCache.GetOrAdd(url, content);
@@ -373,9 +441,11 @@ internal sealed class JsBridge
     /// ③ <see cref="JsApiStatus.Missing"/> / 未登记 → 不注册，由 Proxy 兜底成"记诊断后返回 null"的空函数。
     /// 这样任何脚本都能跑完，缺什么在诊断里一目了然。</para>
     /// </summary>
-    private JsValue EnsureJava(Engine engine)
+    private JsValue EnsureJava(Engine engine, bool temp)
     {
-        if (_binding is not null && ReferenceEquals(_binding.Engine, engine))
+        // temp 引擎（重入隔离用）不写 _binding：旧实现让临时引擎的绑定覆盖实例字段，
+        // 外层主引擎每次重入后都要重建 java 对象（每次 Bind = 整个 API 面 + Proxy）。
+        if (!temp && _binding is not null && ReferenceEquals(_binding.Engine, engine))
         {
             return _binding.Java;
         }
@@ -413,7 +483,11 @@ internal sealed class JsBridge
         java.FastSetDataProperty("lang", BuildLangNamespace(engine));
 
         var wrapped = WrapWithMissingFallback(engine, java, string.Empty);
-        _binding = new JavaBinding(engine, wrapped);
+        if (!temp)
+        {
+            _binding = new JavaBinding(engine, wrapped);
+        }
+
         return wrapped;
     }
 
@@ -423,7 +497,7 @@ internal sealed class JsBridge
     /// Scope 是同一个实例，故重建次数 = 链数而不是 Run 次数。</para>
     /// <para>无 <see cref="Scope"/>（纯脚本单测）时什么都不做：保持 4-1 的行为（只有 result/baseUrl/java）。</para>
     /// </summary>
-    private void EnsureGlobals(Engine engine)
+    private void EnsureGlobals(Engine engine, bool temp)
     {
         var scope = Scope;
         if (scope is null)
@@ -437,21 +511,28 @@ internal sealed class JsBridge
                     engine.SetValue(name, JsValue.Undefined);
                 }
 
-                _globalsEngine = null;
-                _globalsScope = null;
+                // temp 引擎不写实例缓存字段（外层引擎的绑定还有效，清了只会白白重建）
+                if (!temp)
+                {
+                    _globalsEngine = null;
+                    _globalsScope = null;
+                }
             }
 
             return;
         }
 
-        if (ReferenceEquals(_globalsEngine, engine) && ReferenceEquals(_globalsScope, scope))
+        if (!temp && ReferenceEquals(_globalsEngine, engine) && ReferenceEquals(_globalsScope, scope))
         {
             return;
         }
 
         JsContextObjects.Bind(engine, scope, Diagnostics, Field);
-        _globalsEngine = engine;
-        _globalsScope = scope;
+        if (!temp)
+        {
+            _globalsEngine = engine;
+            _globalsScope = scope;
+        }
     }
 
     /// <summary>已实现原语的运行时派发（需要访问 Bridge 状态的走这里，其余交给 <see cref="JsPureApi"/>）。</summary>
@@ -560,7 +641,12 @@ internal sealed class JsBridge
                 }
 
                 Diagnostics.RecordMissingApi(SourceKey, Field, name + "(无解析作用域)");
-                return null;
+                // 失败路径与 TryFetch 失败口径统一：网络族返回空 StrResponse、
+                // getStrResponse 返回空串——旧实现返回 JS null，脚本 resp.body()
+                // 遇 null 抛 TypeError 整段回退，而"请求失败"本不该炸掉整段脚本。
+                return name == "getStrResponse"
+                    ? string.Empty
+                    : JsNetworkSession.EmptyResponse(engine, name);
 
             // 阶段 4-5b：T0 加解密族（legado JsEncodeUtils 语义 + reader 对称实现）。
             // 失败抛异常 → CreateFunction 统一记 ScriptError 并返回 null（legado String? null 同义）。
@@ -628,8 +714,8 @@ internal sealed class JsBridge
     /// <summary>
     /// 桩原语的返回值：保持"不抛错 + 返回空值"的既有行为，并记录一次
     /// <see cref="JsDiagnosticKind.StubCalled"/>（"结果为什么是空的"直接可查）。
-    /// <para>返回值按原语语义给最小可用默认值：<c>ajax</c> → 空串、<c>getElements/getStringList</c> → <c>[]</c>、
-    /// <c>getElement</c> → <c>{}</c>、<c>t2s/s2t</c> → 原文（恒等比空串更安全）。</para>
+    /// <para>返回值按原语语义给最小可用默认值：<c>ajaxJson</c> → <c>{}</c>、
+    /// <c>t2s/s2t</c> → 原文（恒等比空串更安全）、其余 → 空串。</para>
     /// </summary>
     private object? InvokeStub(string name, object?[] args)
     {
@@ -707,10 +793,14 @@ internal sealed class JsBridge
 
         var math = new JsObject(engine);
         math.FastSetDataProperty("random", CreateFunction(engine, "random", _ => Random.Shared.NextDouble()));
-        math.FastSetDataProperty("abs", CreateFunction(engine, "abs", args => Math.Abs(JsPureApi.AsLong(args, 0))));
+        // abs 走 ToDouble：旧实现用 AsLong，小数被截断（Math.abs(1.5) → 1）
+        math.FastSetDataProperty("abs", CreateFunction(engine, "abs", args => Math.Abs(ToDouble(args, 0))));
         math.FastSetDataProperty("floor", CreateFunction(engine, "floor", args => Math.Floor(ToDouble(args, 0))));
         math.FastSetDataProperty("ceil", CreateFunction(engine, "ceil", args => Math.Ceiling(ToDouble(args, 0))));
-        math.FastSetDataProperty("round", CreateFunction(engine, "round", args => Math.Round(ToDouble(args, 0), MidpointRounding.AwayFromZero)));
+        // round = floor(x+0.5)：Java Math.round 与 JS Math.round 都是向 +∞ 舍入
+        // （-2.5 → -2）；.NET 的 MidpointRounding.AwayFromZero 是远离零（-2.5 → -3），
+        // 负数结果与 Java/JS 相反。
+        math.FastSetDataProperty("round", CreateFunction(engine, "round", args => Math.Floor(ToDouble(args, 0) + 0.5)));
         lang.FastSetDataProperty("Math", WrapWithMissingFallback(engine, math, "lang.Math."));
 
         var booleanType = new JsObject(engine);

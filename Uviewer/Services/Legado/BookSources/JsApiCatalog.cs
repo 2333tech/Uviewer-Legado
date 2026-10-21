@@ -338,9 +338,10 @@ public static class JsGlobalCatalog
     /// <b>全部是脚本内的局部变量</b>（<c>let html = java.ajax(…)</c>），legado 本身也没有
     /// <c>html</c> 全局对象。把它算作缺口等于把 4 个本来能跑的源误判成"需要阶段 4"
     /// （与 4-1 修掉的 D1 误杀同类）。</para>
+    /// <para>与 <see cref="IsImplemented"/> 同口径（能力判定 = 真实实现面）——
+    /// 两者曾经是两份逐字相同的表达式，语义演进时只改一处。</para>
     /// </summary>
-    public static bool IsGated(string root) =>
-        root is "source" or "book" or "chapter" or "cache" or "cookie";
+    public static bool IsGated(string root) => IsImplemented(root);
 
     /// <summary>该根对象是否有这个成员（用于把"疑似全局用法"收紧成"确定用法"）。</summary>
     public static bool HasMember(string root, string member) =>

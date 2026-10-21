@@ -28,6 +28,11 @@ namespace Uviewer.Services.Legado.BookSources;
 ///
 /// <para><b>宿主未接入/WebView2 不可用</b>：记诊断降级——startBrowser 返回 true（不炸脚本）、
 /// startBrowserAwait 返回 code=0 空响应、webView 返回空串；不假装拿到了页面。</para>
+///
+/// <para><b>同步桥</b>：与 <see cref="JsNetworkSession"/> 同性质——脚本在 Jint 里同步执行，
+/// 这里对宿主异步 API 做 <c>GetAwaiter().GetResult()</c> 阻塞。<b>调用方必须在非 UI 线程</b>
+/// （解析入口已由 BookSourceEngine/SearchService 放进线程池）；在 UI 线程调用会死锁
+/// （ShowInteractiveAsync 的完成回调也要经 UI 队列投递）。</para>
 /// </summary>
 internal static class BrowserJavaApi
 {
@@ -59,7 +64,7 @@ internal static class BrowserJavaApi
         try
         {
             var result = host.ShowInteractiveAsync(url, title, scope.SourceKey, CancellationToken.None)
-                .GetAwaiter().GetResult();
+                .ConfigureAwait(false).GetAwaiter().GetResult();
             if (result is not null)
             {
                 MergeCookies(scope, diagnostics, result);
@@ -113,9 +118,9 @@ internal static class BrowserJavaApi
         try
         {
             // 选项块里的 headers（如 UA）交给 WebView 宿主
-            var (url, headers) = CompileUrl(scope, diagnostics, rawUrl);
+            var (url, headers) = CompileUrl(scope, diagnostics, "startBrowserAwait", rawUrl);
             result = host.ShowInteractiveAsync(url, title, scope.SourceKey, CancellationToken.None)
-                .GetAwaiter().GetResult();
+                .ConfigureAwait(false).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -169,12 +174,13 @@ internal static class BrowserJavaApi
             diagnostics.RecordStateError(scope.SourceKey, null, "webView: html 参数不支持注入，忽略并按 url 导航");
         }
 
-        var (compiledUrl, headers) = CompileUrl(scope, diagnostics, url);
+        var (compiledUrl, headers) = CompileUrl(scope, diagnostics, "webView", url);
         try
         {
             var result = host.FetchAsync(
                 new WebViewRequest(compiledUrl, script, headers, DelayMs: 0),
-                scope.SourceKey, CancellationToken.None).GetAwaiter().GetResult();
+                scope.SourceKey, CancellationToken.None)
+                .ConfigureAwait(false).GetAwaiter().GetResult();
             MergeCookies(scope, diagnostics, result);
             return result.ScriptResult ?? result.Html;
         }
@@ -193,7 +199,8 @@ internal static class BrowserJavaApi
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>url 参数复用 ajax 的选项块编译链（<c>"https://x,{"headers":…}"</c> 形态，样本真实写法）。</summary>
-    private static (string Url, IReadOnlyDictionary<string, string>? Headers) CompileUrl(JsScope scope, JsDiagnostics diagnostics, string rawUrl)
+    private static (string Url, IReadOnlyDictionary<string, string>? Headers) CompileUrl(
+        JsScope scope, JsDiagnostics diagnostics, string api, string rawUrl)
     {
         try
         {
@@ -204,7 +211,9 @@ internal static class BrowserJavaApi
         }
         catch (Exception ex)
         {
-            diagnostics.RecordStateError(scope.SourceKey, null, "startBrowser: URL 编译失败（" + ex.Message + "）");
+            // api 名由调用方传入：旧实现硬编码 "startBrowser:"，被 webView 调用时
+            // 诊断把失败归到错误的原语上
+            diagnostics.RecordStateError(scope.SourceKey, null, api + ": URL 编译失败（" + ex.Message + "）");
             return (rawUrl, null);
         }
     }

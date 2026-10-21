@@ -447,6 +447,7 @@ public sealed class SourceCookieStore : ISourceCookieStore
             }
             catch (ArgumentException)
             {
+                // 同上：字段组合非法（空 Name 等）的条目原容器里也用不了，直接丢
             }
         }
 

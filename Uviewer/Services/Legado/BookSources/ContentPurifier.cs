@@ -56,10 +56,18 @@ public sealed class ContentPurifier
         RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
     /// <summary>应用底层内置净化（快速路径：文本不含关键词时零正则开销）。</summary>
-    internal static string StripBuiltinNoise(string text) =>
-        string.IsNullOrEmpty(text) || !text.Contains("分卷阅读", StringComparison.Ordinal)
-            ? text
-            : BuiltinNoiseLineRegex.Replace(text, string.Empty);
+    internal static string StripBuiltinNoise(string text)
+    {
+        if (string.IsNullOrEmpty(text) || !text.Contains("分卷阅读", StringComparison.Ordinal))
+        {
+            return text;
+        }
+
+        // 先归一换行再匹配：本正则用 Multiline ^ 锚点，只认 \n 后边界
+        // （CR-only 换行的文本从第二行起 ^ 不成立，会静默漏剥）。
+        // ToLf 幂等且对无 \r 文本零分配，放在这里不影响调用方的零开销契约。
+        return BuiltinNoiseLineRegex.Replace(TextNormalization.ToLf(text), string.Empty);
+    }
 
     /// <summary>
     /// 正则编译缓存上限。与 <see cref="RuleAnalyzer.GetRegex"/> 的正则缓存**分开**：
@@ -72,7 +80,9 @@ public sealed class ContentPurifier
         new(StringComparer.Ordinal);
 
     /// <summary>最近一次编译的源列表引用（引用比较判重，省掉逐条比对）。</summary>
-    private IReadOnlyList<ReplaceRule>? _compiledFrom;
+    /// <remarks>volatile：与 <see cref="_compiled"/> 的读写序共同保证"读到新源引用时
+    /// 必读到新快照"（详见 <see cref="EnsureCompiled"/> 的发布协议注释）。</remarks>
+    private volatile IReadOnlyList<ReplaceRule>? _compiledFrom;
 
     /// <summary>不可变编译快照：已过滤禁用/空 pattern、已按 order 稳定排序、正则已编译。</summary>
     private volatile CompiledRule[]? _compiled;
@@ -80,11 +90,18 @@ public sealed class ContentPurifier
     /// <summary>重建快照的短锁（仅列表引用变化时参与，读路径无锁）。</summary>
     private readonly object _buildGate = new();
 
+    /// <summary>宿主注入的规则列表（通常是 <see cref="ReplaceRuleManager.GetAll"/> 的快照）。</summary>
+    private volatile IReadOnlyList<ReplaceRule>? _rules;
+
     /// <summary>
     /// 宿主注入的规则列表（通常是 <see cref="ReplaceRuleManager.GetAll"/> 的快照）。
     /// 指向新列表实例时下次 Apply 自动重建编译快照；置 null = 无规则（管线空转）。
     /// </summary>
-    public IReadOnlyList<ReplaceRule>? Rules { get; set; }
+    public IReadOnlyList<ReplaceRule>? Rules
+    {
+        get => _rules;
+        set => _rules = value;
+    }
 
     /// <summary>是否存在可用规则（不含重建开销；无规则时批量路径可整体跳过净化）。</summary>
     public bool HasRules
@@ -193,6 +210,9 @@ public sealed class ContentPurifier
             return hits;
         }
 
+        // 与 Apply 管线对齐：内置噪音行先剥掉（否则针对"分卷阅读"行的用户规则
+        // 会出现「生效标记亮着但实际不生效」的错位）
+        text = StripBuiltinNoise(text);
         text = TextNormalization.ToLf(text);
 
         foreach (var rule in rules)
@@ -202,7 +222,6 @@ public sealed class ContentPurifier
             {
                 continue;
             }
-
             var before = text;
             try
             {
@@ -288,10 +307,17 @@ public sealed class ContentPurifier
     /// </summary>
     private CompiledRule[] EnsureCompiled()
     {
+        // 发布协议（防"新源引用 + 旧快照"组合）：
+        //   写：_compiled = built（volatile）→ _compiledFrom = source（volatile）
+        //   读：_compiledFrom（volatile）→ _compiled（volatile）
+        // 读侧先读源引用：若看到的是新 source，则随后对 _compiled 的读按 volatile
+        // 规则必见到新 built；若看到旧源引用，说明快照尚未发布，走锁重建。
+        // 旧实现写序反了（先源引用后快照）且 _compiledFrom 非 volatile——读方可能
+        // 拿着新源引用配上旧快照返回，用户改了规则却应用上一版，静默不一致。
         var source = Rules;
+        var compiledFrom = _compiledFrom;
         var compiled = _compiled;
-        // 快路径：快照有效且源列表未换（volatile 读 _compiled 保证可见先行的 _compiledFrom 写）
-        if (compiled is not null && ReferenceEquals(_compiledFrom, source))
+        if (compiled is not null && ReferenceEquals(compiledFrom, source))
         {
             return compiled;
         }
@@ -299,9 +325,12 @@ public sealed class ContentPurifier
         lock (_buildGate)
         {
             // 双重检查：等锁期间可能已被其他线程重建
-            if (_compiled is not null && ReferenceEquals(_compiledFrom, source))
+            var sourceNow = Rules;
+            var compiledFromNow = _compiledFrom;
+            var compiledNow = _compiled;
+            if (compiledNow is not null && ReferenceEquals(compiledFromNow, sourceNow))
             {
-                return _compiled;
+                return compiledNow;
             }
 
             CompiledRule[] built;
@@ -343,9 +372,9 @@ public sealed class ContentPurifier
                 built = list.ToArray();
             }
 
-            // 先写源引用再写快照（volatile 写 = 释放语义，读侧见快照必见源引用）
-            _compiledFrom = source;
+            // 先发布快照再发布源引用（见方法头的发布协议）
             _compiled = built;
+            _compiledFrom = source;
             return built;
         }
     }

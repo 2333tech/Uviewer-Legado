@@ -323,8 +323,13 @@ namespace Uviewer
             if (!_isEpubMode && ImageInfoText != null) ImageInfoText.Text = Strings.Paginating;
 
             _verticalPageCalcCts?.Cancel();
-            
+
+            // 旧 CTS 先 Cancel + Dispose 再替换：旧实现只 Cancel 不 Dispose，
+            // 被替换的实例向父 token 注册的回调一直挂在父源上（连续翻页 = 无界增长）。
+            // 注意本字段持有"正在用"的 CTS，不能在本方法内 using——它在跨 await 的
+            // 整个渲染期间有效，由下一次替换/页面销毁时释放。
             _currentVerticalRenderCts?.Cancel();
+            _currentVerticalRenderCts?.Dispose();
             _currentVerticalRenderCts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
             var token = _currentVerticalRenderCts.Token;
 
@@ -731,11 +736,14 @@ namespace Uviewer
             if (_currentVerticalPageInfo.Blocks == null) return;
 
             int currentLine = _currentVerticalPageInfo.StartLine;
-            
+
             // 기존의 Split 코드를 아래처럼 변경합니다.
             int totalLines = _textTotalLineCountInSource;
             if (totalLines <= 1 && !string.IsNullOrEmpty(_currentTextContent))
             {
+                // EPUB 竖排跳过了解析块，该计数永不预热——旧实现每次翻页调
+                // UpdateVerticalStatusBar 都对整章/全文重新 CountNormalizedLines。
+                // 算过一次就写回 _textTotalLineCountInSource，之后走上面的快路径。
                 totalLines = _textBlockDocumentService.CountNormalizedLines(_currentTextContent);
                 _textTotalLineCountInSource = totalLines;
             }

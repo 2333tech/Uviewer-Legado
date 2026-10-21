@@ -31,9 +31,19 @@ public sealed class BookSourceReadingStore
     private readonly string _filePath;
     private readonly ConcurrentDictionary<string, ReadingPosition> _positions = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// 变更短锁：加载的 Clear+重填与并发 Upsert/Remove/Clear 都在此串行化。
+    /// <para>没有它，加载期的 <c>_positions.Clear()</c> 会抹掉并发写入的进度
+    /// （或被随后灌入的旧值覆盖——读-改-写无锁的经典丢更新）。读路径不参与。</para>
+    /// </summary>
+    private readonly object _gate = new();
+
     // 惰性快照：变更只置 null，下次读重建（与 BookSourceManager 同范式）
     private volatile IReadOnlyList<ReadingPosition>? _snapshot;
     private readonly SemaphoreSlim _saveGate = new(1, 1);
+
+    /// <summary>最近一次加载失败的原因（损坏文件等；null = 上次加载正常）。诊断用。</summary>
+    public string? LastLoadError { get; private set; }
 
     /// <summary>进度文件路径（<c>%LocalAppData%/Uviewer/readingProgress.json</c>）。</summary>
     public string FilePath => _filePath;
@@ -54,6 +64,9 @@ public sealed class BookSourceReadingStore
     /// <summary>
     /// 从磁盘加载（流式反序列化，不在内存展开 DOM）。
     /// 文件缺失 / 内容为空 / JSON 非法 → 空存储（首启与损坏文件都不抛）。
+    /// <para>损坏文件先隔离为 <c>.corrupt</c> 再降级：否则下一次 <see cref="SaveAsync"/>
+    /// 的原子替换会把损坏的原文直接覆盖掉，用户丢失全部进度且现场无保留
+    /// （与 <see cref="SourceStateStore"/> 的隔离策略一致）。</para>
     /// </summary>
     public async Task LoadAsync(CancellationToken cancellationToken = default)
     {
@@ -61,6 +74,7 @@ public sealed class BookSourceReadingStore
         if (!File.Exists(_filePath))
         {
             parsed = new List<ReadingPosition>();
+            LastLoadError = null;
         }
         else
         {
@@ -69,20 +83,26 @@ public sealed class BookSourceReadingStore
                 await using var stream = BookSourceJsonReader.OpenRead(_filePath);
                 parsed = await BookSourceSerializer.DeserializeReadingPositionListAsync(stream, cancellationToken)
                     .ConfigureAwait(false);
+                LastLoadError = null;
             }
-            catch
+            catch (Exception ex)
             {
-                // 损坏文件不阻塞阅读器：按空存储启动（用户重新阅读即覆盖）
+                // 损坏文件不阻塞阅读器：隔离原文件后按空存储启动（用户重新阅读即覆盖）
+                TryQuarantine(_filePath);
                 parsed = new List<ReadingPosition>();
+                LastLoadError = ex.Message;
             }
         }
 
-        _positions.Clear();
-        foreach (var p in parsed)
+        lock (_gate)
         {
-            if (!string.IsNullOrEmpty(p.BookSourceUrl))
+            _positions.Clear();
+            foreach (var p in parsed)
             {
-                _positions[MakeKey(p.BookSourceUrl, p.BookUrl)] = p;
+                if (!string.IsNullOrEmpty(p.BookSourceUrl))
+                {
+                    _positions[MakeKey(p.BookSourceUrl, p.BookUrl)] = p;
+                }
             }
         }
 
@@ -111,18 +131,34 @@ public sealed class BookSourceReadingStore
             return;
         }
 
-        _positions[MakeKey(position.BookSourceUrl, position.BookUrl)] = position;
+        lock (_gate)
+        {
+            _positions[MakeKey(position.BookSourceUrl, position.BookUrl)] = position;
+        }
+
         Invalidate();
     }
 
     /// <summary>删除某本书的进度（读完删记录 / 用户清除）。返回是否确实删除。</summary>
-    public bool Remove(string bookSourceUrl, string bookUrl) =>
-        _positions.TryRemove(MakeKey(bookSourceUrl, bookUrl), out _) && Invalidate();
+    public bool Remove(string bookSourceUrl, string bookUrl)
+    {
+        bool removed;
+        lock (_gate)
+        {
+            removed = _positions.TryRemove(MakeKey(bookSourceUrl, bookUrl), out _);
+        }
+
+        return removed && Invalidate();
+    }
 
     /// <summary>清空全部进度（仅内存）。</summary>
     public void Clear()
     {
-        _positions.Clear();
+        lock (_gate)
+        {
+            _positions.Clear();
+        }
+
         Invalidate();
     }
 
@@ -132,13 +168,15 @@ public sealed class BookSourceReadingStore
     /// </summary>
     public async Task SaveAsync(CancellationToken cancellationToken = default)
     {
-        var ordered = Positions
-            .OrderByDescending(p => p.LastReadTicks)
-            .ToList();
-
         await _saveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // 快照在闸内取：并发 Upsert 发生在"取快照"与"写盘"之间时，
+            // 旧实现会把刚写入的进度漏掉（取快照在闸外的丢更新）。
+            var ordered = Positions
+                .OrderByDescending(p => p.LastReadTicks)
+                .ToList();
+
             var dir = Path.GetDirectoryName(_filePath);
             if (!string.IsNullOrEmpty(dir))
             {
@@ -183,6 +221,19 @@ public sealed class BookSourceReadingStore
         catch
         {
             // 忽略：删除失败（如文件被占用）不影响正确性，下次保存会覆盖同名 tmp
+        }
+    }
+
+    /// <summary>隔离损坏的进度文件（改名 .corrupt，失败静默）——保留现场便于人工恢复。</summary>
+    private static void TryQuarantine(string path)
+    {
+        try
+        {
+            File.Move(path, path + ".corrupt", overwrite: true);
+        }
+        catch
+        {
+            // 只读目录 / 文件被占用：保留原文件，下次保存会覆盖它
         }
     }
 
