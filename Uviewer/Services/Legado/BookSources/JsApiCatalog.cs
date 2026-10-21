@@ -227,7 +227,7 @@ public static class JsApiCatalog
                 "存变量：有章节写章节、否则写书籍、再否则写书源（同 get 的作用域链）"),
             ("getCookie", JsApiTier.State, JsApiStatus.Implemented,
                 "按域取 Cookie（4-2 的 Cookie 仓库；4-3 起与 HTTP 会话共用同一份）"),
-            ("io", JsApiTier.State, JsApiStatus.Missing, "java.io 命名空间（文件读写）"),
+            ("io", JsApiTier.State, JsApiStatus.Missing, "java.io 文件读写（桌面端明确不支持，调用即记缺口不假装成功）"),
 
             // ── T4 浏览器（4-7：宿主 WebView2；未接线时记诊断降级，不假装拿到页面）──
             ("startBrowserAwait", JsApiTier.Browser, JsApiStatus.Implemented,

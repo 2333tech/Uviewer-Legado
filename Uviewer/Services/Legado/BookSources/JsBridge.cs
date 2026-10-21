@@ -245,9 +245,90 @@ internal sealed class JsBridge
             return _libCompiled;
         }
 
-        _libCompiled = JsLibCompiler.Compile(raw);
+        // 本地部分编译（裸 URL / JSON 映射里的 URL 条目不在此列，见 Compile 注释）
+        var compiled = JsLibCompiler.Compile(raw);
+
+        // 远程条目：进程级缓存 + 阻塞下载（Run 在线程池上执行，与 java.ajax 同步桥同性质；
+        // legado 也是同步下载 jsLib 后注入 Rhino）。下载失败只记诊断并跳过该条目
+        // （reader 语义：下载失败仅记日志，其余条目照常执行）。
+        var remoteUrls = JsLibCompiler.ExtractRemoteUrls(raw);
+        if (remoteUrls.Count > 0)
+        {
+            var sb = new System.Text.StringBuilder(compiled);
+            foreach (var url in remoteUrls)
+            {
+                var code = DownloadJsLibCached(url);
+                if (code is not null)
+                {
+                    if (sb.Length > 0)
+                    {
+                        sb.Append(JsLibCompiler.EntrySeparator);
+                    }
+
+                    sb.Append(code);
+                }
+            }
+
+            compiled = sb.ToString();
+        }
+
+        _libCompiled = compiled;
         _libCompiledFrom = raw;
-        return _libCompiled;
+        return compiled;
+    }
+
+    /// <summary>远程 jsLib 下载缓存（进程级，URL → 库代码）：legado 同样按 URL 缓存库内容，
+    /// 避免每次规则求值都重新下载。只缓存成功结果，失败下次重试。</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> RemoteLibCache =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// 下载单个远程 jsLib 条目（带进程级缓存）。
+    /// </summary>
+    /// <returns>库代码；失败返回 null（已记诊断），调用方跳过该条目。</returns>
+    private string? DownloadJsLibCached(string url)
+    {
+        if (RemoteLibCache.TryGetValue(url, out var cached))
+        {
+            return cached;
+        }
+
+        var fetcher = Scope?.Fetcher;
+        if (fetcher is null)
+        {
+            // 无取数管线（单测/离线）：与旧版"离线跳过"一致，但显式记诊断便于发现
+            Diagnostics.RecordScriptError(SourceKey, Field, new JsLibDownloadException(url, "无可用取数管线"));
+            return null;
+        }
+
+        try
+        {
+            var (content, _) = fetcher
+                .FetchAsync(url, new RequestSpec { Method = "GET" }, SourceKey, CancellationToken.None)
+                .ConfigureAwait(false).GetAwaiter().GetResult();
+
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                Diagnostics.RecordScriptError(SourceKey, Field, new JsLibDownloadException(url, "响应为空"));
+                return null;
+            }
+
+            return RemoteLibCache.GetOrAdd(url, content);
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.RecordScriptError(SourceKey, Field, new JsLibDownloadException(url, ex.Message));
+            return null;
+        }
+    }
+
+    /// <summary>远程 jsLib 下载失败专用异常：Detail 里直接带 URL，诊断面板一眼可见。</summary>
+    private sealed class JsLibDownloadException : Exception
+    {
+        public JsLibDownloadException(string url, string reason)
+            : base($"远程 jsLib 下载失败: {url}（{reason}）")
+        {
+        }
     }
 
     /// <summary>

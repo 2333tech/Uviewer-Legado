@@ -16,7 +16,7 @@ namespace Uviewer.Services.Legado.BookSources;
 internal static class JsLibCompiler
 {
     /// <summary>多条目拼接分隔符（与 reader 一致：换行 + 空语句，防止末行无分号粘连）。</summary>
-    private const string EntrySeparator = "\n;\n";
+    internal const string EntrySeparator = "\n;\n";
 
     /// <summary>
     /// 把书源的 <c>jsLib</c> 原始文本编译为可执行的库代码；无有效内容时返回空串。
@@ -33,8 +33,10 @@ internal static class JsLibCompiler
         var trimmed = jsLib.Trim();
         if (!trimmed.StartsWith("{", StringComparison.Ordinal))
         {
-            // ① 裸脚本形态
-            return trimmed;
+            // ① 裸脚本形态；但整个 jsLib 就是一个 URL 时（legado 允许 jsLib 直接填库地址），
+            //    本地无代码可拼——远程下载由 JsBridge.ResolveJsLib 负责，这里返回空串，
+            //    避免把 URL 文本当脚本执行（语法错误）。
+            return IsRemoteUrl(trimmed) ? string.Empty : trimmed;
         }
 
         // ② JSON 对象形态：逐条目取字符串值
@@ -85,7 +87,10 @@ internal static class JsLibCompiler
         item.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
         || item.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>jsLib 是否含远程 URL 条目（能力评估用：需要阶段 4 的联网下载才能生效）。</summary>
+    /// <summary>
+    /// jsLib 是否含远程 URL 条目（能力评估用：联网下载由运行时完成，这里只做静态标记）。
+    /// 两种形态都算：① 整个 jsLib 就是一个 URL；② JSON 对象的值为 URL。
+    /// </summary>
     public static bool HasRemoteEntry(string? jsLib)
     {
         if (string.IsNullOrWhiteSpace(jsLib))
@@ -96,7 +101,7 @@ internal static class JsLibCompiler
         var trimmed = jsLib.Trim();
         if (!trimmed.StartsWith("{", StringComparison.Ordinal))
         {
-            return false;
+            return IsRemoteUrl(trimmed);
         }
 
         try
@@ -123,5 +128,61 @@ internal static class JsLibCompiler
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// 提取 jsLib 里的全部远程 URL（保持声明顺序、去重）。
+    /// <para>与 <see cref="Compile"/> 的口径互补：<see cref="Compile"/> 产出「本地代码部分」，
+    /// 本方法产出「待下载的远程部分」，由 <c>JsBridge.ResolveJsLib</c> 下载后按序拼回。
+    /// 裸 URL 形态与 JSON 映射形态（<c>{"键": "https://…/x.js"}</c>）都支持。</para>
+    /// </summary>
+    public static List<string> ExtractRemoteUrls(string? jsLib)
+    {
+        var urls = new List<string>();
+        if (string.IsNullOrWhiteSpace(jsLib))
+        {
+            return urls;
+        }
+
+        var trimmed = jsLib.Trim();
+        if (!trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            // 整个 jsLib 就是一个库地址
+            if (IsRemoteUrl(trimmed))
+            {
+                urls.Add(trimmed);
+            }
+
+            return urls;
+        }
+
+        try
+        {
+            if (JsonNode.Parse(trimmed) is not JsonObject obj)
+            {
+                return urls;
+            }
+
+            foreach (var entry in obj)
+            {
+                if (entry.Value is JsonValue value
+                    && value.TryGetValue(out string? text)
+                    && !string.IsNullOrWhiteSpace(text)
+                    && IsRemoteUrl(text.Trim()))
+                {
+                    var url = text.Trim();
+                    if (!urls.Contains(url))
+                    {
+                        urls.Add(url);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // 非法 JSON 按裸脚本处理，无远程条目
+        }
+
+        return urls;
     }
 }
