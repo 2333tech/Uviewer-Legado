@@ -148,10 +148,10 @@ public class Stage4AuditTests
         // 变更：同一实例上改脚本内容 → 指纹变 → 下次评估必须反映新内容（不许返回旧报告）
         var target = raw[0];
         target.RuleContent ??= new Models.ContentRule();
-        target.RuleContent.Content = "<js>java.startBrowser(baseUrl, 'x')</js>";
+        target.RuleContent.Content = "<js>java.openUrl(baseUrl)</js>";
 
         var after = BookSourceCapabilities.AssessCached(target);
-        Assert.Contains("startBrowser", after.ReadingMissingApis);
+        Assert.Contains("openUrl", after.ReadingMissingApis);
         Assert.False(after.ReadingSupported);
     }
 

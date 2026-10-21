@@ -128,6 +128,13 @@ namespace Uviewer.Services.Legado
         /// <summary>取数/解析编排引擎（详情、目录、正文、图片）。</summary>
         public BookSourceEngine Engine => _engine;
 
+        /// <summary>
+        /// 组合根（阶段 4-3）：宿主 UI 在窗口就绪后经 <c>Runtime.WebViewHost = …</c> 注入
+        /// WebView2 宿主（阶段 4-7）——引擎/搜索/取数装饰器全部经由运行时读到它。
+        /// </summary>
+        // EN: Composition root; the UI layer injects the WebView2 host here after window setup.
+        internal LegadoRuntime Runtime => _runtime;
+
         /// <summary>搜索服务（与引擎共用 JS 状态仓库，供搜索对话框复用同一实例）。</summary>
         // EN: Shared search service so the search chain writes variables to the same JS state store.
         public SearchService Search => _search;

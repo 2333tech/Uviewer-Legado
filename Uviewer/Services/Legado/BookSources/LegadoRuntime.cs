@@ -36,8 +36,16 @@ public sealed class LegadoRuntime : IDisposable
         Cookies = new SourceCookieStore(State);
         _ownsHttpFetcher = httpFetcher is null;
         HttpFetcher = httpFetcher ?? new HttpBookSourceFetcher(Cookies);
-        Fetcher = new RateLimitedFetcher(HttpFetcher);
+        // 4-7：选项块带 webView:true 的请求改走宿主 WebView2（未接线时装饰器自动回退静态 + 诊断）
+        Fetcher = new RateLimitedFetcher(new WebViewFetchDecorator(HttpFetcher, () => WebViewHost));
     }
+
+    /// <summary>
+    /// WebView2 宿主（阶段 4-7；宿主 UI 在窗口就绪后注入）。
+    /// <para>null = 未接线：WebView 类请求自动回退静态取数 + 诊断（<see cref="WebViewFetchDecorator"/>），
+    /// <c>java.startBrowser/startBrowserAwait/webView</c> 记诊断降级——测试/无 WebView2 运行时均安全。</para>
+    /// </summary>
+    public IWebViewHost? WebViewHost { get; set; }
 
     /// <summary>默认构造：状态落在 <c>&lt;dataDirectory&gt;/legado/sources</c>。</summary>
     public static LegadoRuntime CreateDefault(string dataDirectory, IBookSourceFetcher? httpFetcher = null) =>
@@ -52,16 +60,16 @@ public sealed class LegadoRuntime : IDisposable
     /// <summary>底层取数实现（HTTP 或注入的替身）。</summary>
     public IBookSourceFetcher HttpFetcher { get; }
 
-    /// <summary>全应用统一的取数管线（限速装饰器包住 <see cref="HttpFetcher"/>）。</summary>
+    /// <summary>全应用统一的取数管线（限速装饰器包住 WebView 装饰器与 <see cref="HttpFetcher"/>）。</summary>
     public RateLimitedFetcher Fetcher { get; }
 
-    /// <summary>建一个解析引擎（与运行时共享取数管线 / 状态 / Cookie）。</summary>
+    /// <summary>建一个解析引擎（与运行时共享取数管线 / 状态 / Cookie / WebView 宿主）。</summary>
     public BookSourceEngine CreateEngine(ContentPurifier? purifier = null) =>
-        new(Fetcher, purifier, State, Cookies);
+        new(Fetcher, purifier, State, Cookies) { WebViewHost = WebViewHost };
 
     /// <summary>建一个搜索服务（同上；每次搜索内部仍各自新建 RuleEngine，Jint 非线程安全）。</summary>
     public SearchService CreateSearchService() =>
-        new(Fetcher, State, Cookies);
+        new(Fetcher, State, Cookies) { WebViewHost = WebViewHost };
 
     /// <summary>只释放本类创建的 HTTP 实现（注入的替身由调用方负责）。</summary>
     public void Dispose()

@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Controls;
 using Uviewer.Models;
 using Uviewer.Services;
 using Uviewer.Services.Legado;
+using Uviewer.Services.Legado.WebView;
 using Windows.Storage;
 
 namespace Uviewer
@@ -35,6 +36,10 @@ namespace Uviewer
         private BookSourceService? _bookSourceService;
         private BookSourceReadingSession? _legadoSession;
 
+        /// <summary>WebView2 宿主（阶段 4-7，懒建；图形验证码窗口 + 离屏 <c>java.webView</c> 取数）。</summary>
+        // EN: Lazy WebView2 host wired into the Legado runtime for captcha/Cloudflare flows.
+        private WebView2Host? _webViewHost;
+
         /// <summary>适配后的目录项（供点击分发与高亮定位复用，避免重复转换）。</summary>
         private List<Uviewer.Models.TocItem>? _legadoTocItems;
 
@@ -47,8 +52,26 @@ namespace Uviewer
         /// <summary>当前书源书名（显示在标题栏）。</summary>
         internal string LegadoBookName { get; private set; } = string.Empty;
 
-        /// <summary>书源服务（首次访问时惰性构造）。</summary>
-        internal BookSourceService BookSources => _bookSourceService ??= new BookSourceService();
+        /// <summary>
+        /// 书源服务（首次访问时惰性构造；同时把 WebView2 宿主注入运行时）。
+        /// <para>WebView2 运行时缺失时 <see cref="WebView2Host.IsAvailable"/>=false，
+        /// 引擎自动回退静态取数 + 诊断（<see cref="WebViewFetchDecorator"/>），不影响无 WebView 源。</para>
+        /// </summary>
+        // EN: Lazily created source service; wires the WebView2 host into the shared runtime.
+        internal BookSourceService BookSources
+        {
+            get
+            {
+                if (_bookSourceService is null)
+                {
+                    _bookSourceService = new BookSourceService();
+                    _webViewHost = new WebView2Host(DispatcherQueue, () => RootGrid);
+                    _bookSourceService.Runtime.WebViewHost = _webViewHost;
+                }
+
+                return _bookSourceService;
+            }
+        }
 
         /// <summary>书源会话（未打开书时 null）。</summary>
         internal BookSourceReadingSession? LegadoSession => _legadoSession;

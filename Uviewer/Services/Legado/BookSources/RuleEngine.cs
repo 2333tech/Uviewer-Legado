@@ -72,6 +72,13 @@ public sealed class RuleEngine
     public ISourceCookieStore Cookies { get; set; } = SourceCookieStore.Memory;
 
     /// <summary>
+    /// WebView 宿主（阶段 4-7）：<c>java.startBrowser/startBrowserAwait/webView</c> 的落点。
+    /// <para>默认 null = 未接线（纯脚本单测/无 WebView2 运行时）：原语记诊断降级，不假装成功。
+    /// <see cref="BookSourceEngine"/> / <see cref="SearchService"/> 从 <see cref="LegadoRuntime.WebViewHost"/> 透传。</para>
+    /// </summary>
+    public IWebViewHost? WebViewHost { get; set; }
+
+    /// <summary>
     /// 记录"当前在跑哪个书源的哪条链"（诊断归组用），并装配本链的 JS 作用域。
     /// <para>链名固定为 search / bookInfo / toc / content：粒度到链而不是到字段，
     /// 因为 <see cref="RunJs"/> 是唯一出口，逐字段传参会把签名污染到十几处。</para>
@@ -93,7 +100,8 @@ public sealed class RuleEngine
             Store,
             _js.Diagnostics,
             Fetcher,
-            Cookies);
+            Cookies,
+            WebViewHost);
     }
 
     // 模板正则常量：每次展开 {{...}} 都会用到，缓存并预编译。

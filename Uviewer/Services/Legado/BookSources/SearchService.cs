@@ -31,6 +31,12 @@ public sealed class SearchService
     }
 
     /// <summary>
+    /// WebView 宿主（阶段 4-7）：<c>java.startBrowser/startBrowserAwait/webView</c> 的搜索链落点。
+    /// <para>null = 未接线：原语记诊断降级。由 <see cref="LegadoRuntime.CreateSearchService"/> 透传。</para>
+    /// </summary>
+    public IWebViewHost? WebViewHost { get; set; }
+
+    /// <summary>
     /// 按关键词在指定书源上搜索（page 从 1 开始）。步骤：
     /// ① 无 searchUrl 或 ruleSearch → 空列表；② 编译 URL 模板（七步管线，见 UrlAnalyzer）；
     /// ③ 请求 URL 绝对化（absolute_url：去 query+fragment，与解析用的 resolve_url 分工）；
@@ -68,6 +74,7 @@ public sealed class SearchService
             Store = _store,
             Fetcher = _fetcher,
             Cookies = _cookies,
+            WebViewHost = WebViewHost,
         }.SearchBooks(source, content, baseUrl);
     }
 

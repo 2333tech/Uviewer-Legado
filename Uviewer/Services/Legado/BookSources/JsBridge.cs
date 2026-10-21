@@ -161,6 +161,11 @@ internal sealed class JsBridge
                 temp = false;
             }
 
+            // setContent 的覆盖只在"最外层脚本"内有效：重入（getString 的规则本身含 <js> → 嵌套 Run）
+            // 会进入这里，必须保存外层的覆盖、退出时还原——否则外层循环的第二次 getString 拿不到覆盖内容。
+            var savedOverride = _contentOverride;
+            _contentOverride = null;
+
             try
             {
                 // ② 绑定全局：result（当前内容）/ baseUrl / java API / 调用方 globals
@@ -169,7 +174,6 @@ internal sealed class JsBridge
                 engine.SetValue("java", EnsureJava(engine));
                 _currentValue = value;
                 _currentBaseUrl = baseUrl;
-                _contentOverride = null;
 
                 // ②a 全局对象（source/book/chapter/cache/cookie/html）：有作用域才注入。
                 //     同一 Scope 只绑一次（见 EnsureGlobals）。
@@ -194,6 +198,8 @@ internal sealed class JsBridge
             }
             finally
             {
+                // 重入退出时还原外层的 setContent 覆盖（外层 Run 退出时 savedOverride 本就是 null，等价清空）
+                _contentOverride = temp ? savedOverride : null;
                 if (!temp)
                 {
                     _inUse = false;
@@ -478,7 +484,7 @@ internal sealed class JsBridge
             // 阶段 4-5b：T0 加解密族（legado JsEncodeUtils 语义 + reader 对称实现）。
             // 失败抛异常 → CreateFunction 统一记 ScriptError 并返回 null（legado String? null 同义）。
             case "createSymmetricCrypto":
-                return CryptoJavaApi.CreateSymmetricCrypto(engine, args);
+                return CryptoJavaApi.CreateSymmetricCrypto(engine, args, new JsContextObjects.JsErrorSink(Diagnostics, SourceKey, Field));
 
             case "base64DecodeToByteArray":
                 return CryptoJavaApi.Base64DecodeToByteArray(engine, args);
@@ -501,6 +507,19 @@ internal sealed class JsBridge
             case "digestHex":
             case "digestBase64Str":
                 return CryptoDispatch(name, args);
+
+            // 阶段 4-7：T4 浏览器原语（startBrowser/startBrowserAwait/webView，图形验证码场景）。
+            // 宿主未接线 / WebView2 不可用时在 BrowserJavaApi 内部记诊断降级。
+            case "startBrowser":
+            case "startBrowserAwait":
+            case "webView":
+                if (Scope is { } webScope)
+                {
+                    return BrowserJavaApi.Invoke(engine, webScope, Diagnostics, name, args);
+                }
+
+                Diagnostics.RecordMissingApi(SourceKey, Field, name + "(无解析作用域)");
+                return name == "startBrowser" ? true : null;
 
             default:
                 return JsPureApi.TryInvoke(name, args, out var result) ? result : null;

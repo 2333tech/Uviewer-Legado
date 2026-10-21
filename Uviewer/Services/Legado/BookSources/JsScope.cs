@@ -120,6 +120,7 @@ public sealed class JsScope
     /// <param name="diagnostics">诊断接收器（默认进程级单例）。</param>
     /// <param name="fetcher">同步网络原语的取数管线（阶段 4-3；null = <c>java.ajax</c> 不可用）。</param>
     /// <param name="cookies">Cookie 仓库（阶段 4-3；null = 进程级内存实例）。</param>
+    /// <param name="webView">WebView 宿主（阶段 4-7；null = <c>startBrowser/startBrowserAwait/webView</c> 降级 + 诊断）。</param>
     public JsScope(
         string? sourceKey,
         BookSourceModel? source = null,
@@ -128,7 +129,8 @@ public sealed class JsScope
         SourceStateStore? store = null,
         JsDiagnostics? diagnostics = null,
         IBookSourceFetcher? fetcher = null,
-        ISourceCookieStore? cookies = null)
+        ISourceCookieStore? cookies = null,
+        IWebViewHost? webView = null)
     {
         SourceKey = sourceKey ?? string.Empty;
         StorageKey = SourceStateStore.Normalize(sourceKey);
@@ -139,6 +141,7 @@ public sealed class JsScope
         Diagnostics = diagnostics ?? JsDiagnostics.Shared;
         Fetcher = fetcher;
         Cookies = cookies ?? SourceCookieStore.Memory;
+        WebView = webView;
     }
 
     /// <summary>书源主键（原样，用于 <c>source.key</c> 返回值与诊断归组）。</summary>
@@ -172,6 +175,12 @@ public sealed class JsScope
     /// Cookie 仓库（阶段 4-3）：<c>cookie.*</c>、<c>java.getCookie</c> 与 HTTP 静态请求共用同一份。
     /// </summary>
     public ISourceCookieStore Cookies { get; }
+
+    /// <summary>
+    /// WebView 宿主（阶段 4-7）：<c>java.startBrowser/startBrowserAwait/webView</c> 用。
+    /// <para>null = 宿主未接线（测试/无 WebView2 运行时）：原语记诊断降级，不假装拿到页面。</para>
+    /// </summary>
+    public IWebViewHost? WebView { get; }
 
     // ==================== 键命名空间 ====================
 

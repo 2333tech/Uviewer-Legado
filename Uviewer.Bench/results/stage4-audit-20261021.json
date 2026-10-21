@@ -1,27 +1,24 @@
 {
-  "GeneratedAt": "2026-10-21 16:36:28",
+  "GeneratedAt": "2026-10-21 17:11:28",
   "Sample": "bookSource_202610192010.json",
   "Total": 408,
   "TextSources": 308,
-  "ReadingSupported": 377,
-  "AllSupported": 365,
-  "Searchable": 364,
+  "ReadingSupported": 397,
+  "AllSupported": 389,
+  "Searchable": 383,
   "TierHistogram": {
-    "Pure": 370,
-    "Browser": 38
+    "Pure": 398,
+    "Rule": 5,
+    "State": 3,
+    "Browser": 2
   },
   "ReadingMissingTop": {
-    "startBrowser": 21,
     "refreshTocUrl": 6,
     "t2s": 5,
-    "openUrl": 1,
-    "startBrowserAwait": 1
+    "openUrl": 1
   },
   "AllMissingTop": {
-    "startBrowser": 24,
-    "webView": 12,
     "t2s": 11,
-    "startBrowserAwait": 10,
     "refreshTocUrl": 6,
     "ruleUrl": 4,
     "s2t": 4,
@@ -95,10 +92,9 @@
       "Kind": 0,
       "ReadingSupported": false,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "Rule",
       "MissingApis": [
         "ruleUrl",
-        "startBrowserAwait",
         "t2s"
       ],
       "ReadingMissingApis": [
@@ -110,7 +106,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, HasJsLib"
+      "Flags": "RequiresJsEngine, HasJsLib"
     },
     {
       "Url": "https://cn.ttkan.co/##@遇知",
@@ -168,11 +164,9 @@
       "Name": "篱笆文学（优+++）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowserAwait"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -180,7 +174,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://m.libahao.com",
@@ -203,62 +197,50 @@
       "Url": "https://www.pixiv.net/novel",
       "Name": "蓝批小说（优+++）",
       "Kind": 0,
-      "ReadingSupported": false,
+      "ReadingSupported": true,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "Pure",
       "MissingApis": [
         "s2t",
-        "startBrowser",
-        "startBrowserAwait",
-        "t2s",
-        "webView"
+        "t2s"
       ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin, HasJsLib"
+      "Flags": "RequiresJsEngine, RequiresLogin, HasJsLib"
     },
     {
       "Url": "https://www.pixiv.net",
       "Name": "蓝批小说（优+++）",
       "Kind": 0,
-      "ReadingSupported": false,
+      "ReadingSupported": true,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "Pure",
       "MissingApis": [
         "s2t",
-        "startBrowser",
-        "startBrowserAwait",
-        "t2s",
-        "webView"
+        "t2s"
       ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin, HasJsLib"
+      "Flags": "RequiresJsEngine, RequiresLogin, HasJsLib"
     },
     {
       "Url": "https://www.huanmengacg.com",
       "Name": "幻梦轻说（优++）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowserAwait"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -266,7 +248,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://wodushu.com",
@@ -557,12 +539,10 @@
         "getThemeConfigMap",
         "getVerificationCode",
         "openUrl",
-        "showBrowser",
-        "startBrowser"
+        "showBrowser"
       ],
       "ReadingMissingApis": [
-        "openUrl",
-        "startBrowser"
+        "openUrl"
       ],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -798,11 +778,9 @@
       "Name": "二八看书（优++）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "webView"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -810,7 +788,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://goway.reader.yueyouxs.com/",
@@ -871,13 +849,10 @@
       "Kind": 2,
       "ReadingSupported": true,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "Pure",
       "MissingApis": [
         "s2t",
-        "startBrowser",
-        "startBrowserAwait",
-        "t2s",
-        "webView"
+        "t2s"
       ],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
@@ -886,7 +861,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin, HasJsLib"
+      "Flags": "RequiresJsEngine, RequiresLogin, HasJsLib"
     },
     {
       "Url": "这是一个图集",
@@ -962,22 +937,18 @@
       "Url": "https://www.cupfox7.com/",
       "Name": "茶杯狐狸（优+++）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowserAwait"
-      ],
-      "ReadingMissingApis": [
-        "startBrowserAwait"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "哔哩哔哩",
@@ -990,8 +961,7 @@
         "openUrl",
         "readBookConfig",
         "refreshExplore",
-        "searchBook",
-        "startBrowser"
+        "searchBook"
       ],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
@@ -1006,43 +976,35 @@
       "Url": "https://v.ikanbot.com",
       "Name": "爱看影视（优++）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://www.shanhuzs.com/",
       "Name": "番茄短剧（优++）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://app.4kwo.com#lyc",
@@ -1152,12 +1114,10 @@
       "Kind": 2,
       "ReadingSupported": false,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "Rule",
       "MissingApis": [
         "refreshTocUrl",
-        "ruleUrl",
-        "startBrowserAwait",
-        "webView"
+        "ruleUrl"
       ],
       "ReadingMissingApis": [
         "refreshTocUrl"
@@ -1168,7 +1128,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": true,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin, RequiresRemoteJsLib, HasJsLib"
+      "Flags": "RequiresJsEngine, RequiresLogin, RequiresRemoteJsLib, HasJsLib"
     },
     {
       "Url": "http://www.xmanhua.com#♤Haxc",
@@ -1380,10 +1340,9 @@
       "Kind": 0,
       "ReadingSupported": false,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "Rule",
       "MissingApis": [
-        "refreshTocUrl",
-        "webView"
+        "refreshTocUrl"
       ],
       "ReadingMissingApis": [
         "refreshTocUrl"
@@ -1394,7 +1353,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin"
+      "Flags": "RequiresJsEngine, RequiresLogin"
     },
     {
       "Url": "https://m.qidian.com#按钮筛选",
@@ -1402,11 +1361,10 @@
       "Kind": 0,
       "ReadingSupported": false,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "State",
       "MissingApis": [
         "refreshExplore",
-        "refreshTocUrl",
-        "startBrowser"
+        "refreshTocUrl"
       ],
       "ReadingMissingApis": [
         "refreshTocUrl"
@@ -1417,7 +1375,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, HasJsLib"
+      "Flags": "RequiresJsEngine, HasJsLib"
     },
     {
       "Url": "http://111.170.19.23:49998",
@@ -1425,12 +1383,11 @@
       "Kind": 0,
       "ReadingSupported": false,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "State",
       "MissingApis": [
         "initUrl",
         "refreshTocUrl",
-        "ruleUrl",
-        "webView"
+        "ruleUrl"
       ],
       "ReadingMissingApis": [
         "refreshTocUrl"
@@ -1441,70 +1398,58 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, HasJsLib"
+      "Flags": "RequiresJsEngine, HasJsLib"
     },
     {
       "Url": "https://h.4399.com",
       "Name": "盒子游戏（优）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "https://www.yikm.net/",
       "Name": "霸王街机（优）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://www.yikm.net",
       "Name": "霸王游戏（优）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "通用书源",
@@ -1714,23 +1659,20 @@
       "Url": "https://newsmiss.lofter.com",
       "Name": "乐乎文章（优）",
       "Kind": 0,
-      "ReadingSupported": false,
+      "ReadingSupported": true,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "Pure",
       "MissingApis": [
-        "androidId",
-        "startBrowser"
+        "androidId"
       ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin"
+      "Flags": "RequiresJsEngine, RequiresLogin"
     },
     {
       "Url": "http://45.79.102.135/allcp.org/###",
@@ -1770,22 +1712,18 @@
       "Url": "https://afdian.com",
       "Name": "爱发电网（优）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "https://pre-api.tuishujun.com",
@@ -2590,85 +2528,69 @@
       "Url": "https://www.agedm.org/search#",
       "Name": "艾格动漫（优）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "https://www.agedm.org/search",
       "Name": "艾格动漫（优）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "https://66yy.net",
       "Name": "榴莲影视（优）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://www.hdzyk.com",
       "Name": "优质资源（优）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://www.ncat1.app/",
@@ -2691,127 +2613,103 @@
       "Url": "https://shasha.one",
       "Name": "聪明视频（优+）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://myself-bbs.com",
       "Name": "盗随动漫（优+）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://cn.xgcartoon.com",
       "Name": "西瓜卡通（优+）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://dm.xifanacg.com",
       "Name": "稀饭动漫（优+）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://www.qdm66.com",
       "Name": "月趣动漫（优+）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "https://ss.apps.dj",
       "Name": "短剧合集（优+）",
       "Kind": 4,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "startBrowser"
-      ],
-      "ReadingMissingApis": [
-        "startBrowser"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://mhbao.colacomic.com",
@@ -3439,16 +3337,14 @@
       "Kind": 2,
       "ReadingSupported": false,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "Rule",
       "MissingApis": [
         "refreshTocUrl",
         "s2t",
-        "startBrowser",
         "t2s"
       ],
       "ReadingMissingApis": [
-        "refreshTocUrl",
-        "startBrowser"
+        "refreshTocUrl"
       ],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -3456,7 +3352,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin, HasJsLib"
+      "Flags": "RequiresJsEngine, RequiresLogin, HasJsLib"
     },
     {
       "Url": "http://www.huoqwk.com",
@@ -3582,11 +3478,9 @@
       "Name": "次元小说（优）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "webView"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -3594,7 +3488,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://101kanshu.com",
@@ -3890,11 +3784,9 @@
       "Name": "爱久小说（优）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "webView"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -3902,7 +3794,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://www.xtyxsw.org",
@@ -4402,11 +4294,9 @@
       "Name": "四三看书（优）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "webView"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -4414,7 +4304,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "http://www.qunxs.com/",
@@ -5373,11 +5263,9 @@
       "Name": "城堡小说（优+）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Browser",
-      "MissingApis": [
-        "webView"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -5385,7 +5273,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "None"
     },
     {
       "Url": "https://www.37yq.com",
@@ -6005,11 +5893,10 @@
       "Kind": 0,
       "ReadingSupported": false,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "Rule",
       "MissingApis": [
         "refreshTocUrl",
         "ruleUrl",
-        "startBrowserAwait",
         "t2s"
       ],
       "ReadingMissingApis": [
@@ -6022,7 +5909,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView"
+      "Flags": "RequiresJsEngine"
     },
     {
       "Url": "\uD83E\uDD5D西瓜免费小说App\uD83C\uDF52",
@@ -6149,12 +6036,10 @@
       "Kind": 0,
       "ReadingSupported": true,
       "AllSupported": false,
-      "RequiredTier": "Browser",
+      "RequiredTier": "State",
       "MissingApis": [
         "initUrl",
-        "key",
-        "startBrowserAwait",
-        "webView"
+        "key"
       ],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
@@ -6163,7 +6048,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresWebView, RequiresLogin, HasJsLib"
+      "Flags": "RequiresJsEngine, RequiresLogin, HasJsLib"
     },
     {
       "Url": "https://m.youdian5.com",

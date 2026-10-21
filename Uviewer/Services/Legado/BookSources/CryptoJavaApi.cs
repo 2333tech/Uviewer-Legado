@@ -61,8 +61,10 @@ internal static class CryptoJavaApi
     /// <c>createSymmetricCrypto(transformation, key[, iv])</c> → 对称加解密对象：
     /// <c>encrypt(data)/encryptBase64(data)/encryptHex(data)/decrypt(data)/decryptStr(data)/setIv(iv)</c>。
     /// key/iv 可为文本（UTF-8）或字节数组（<c>base64DecodeToByteArray</c> 的返回值）。
+    /// <para><paramref name="sink"/> 用于对象方法的失败诊断（CreateFunction 只包住**注册时**的调用，
+    /// 返回对象上的方法在脚本里另行调用，必须自己带 sink，否则加解密失败静默变 null）。</para>
     /// </summary>
-    public static object? CreateSymmetricCrypto(Engine engine, object?[] args)
+    public static object? CreateSymmetricCrypto(Engine engine, object?[] args, JsContextObjects.JsErrorSink sink)
     {
         var transformation = JsPureApi.AsString(args, 0);
         var key = ToBytes(args.Length > 1 ? args[1] : null)
@@ -82,19 +84,19 @@ internal static class CryptoJavaApi
             return ToJsByteArray(engine, spec.Transform(encrypt: true, key, IvFor(), data));
         }
 
-        self.FastSetDataProperty("encrypt", JsContextObjects.CreateFunction(engine, "encrypt", Encrypt, default));
+        self.FastSetDataProperty("encrypt", JsContextObjects.CreateFunction(engine, "encrypt", Encrypt, sink));
         self.FastSetDataProperty("encryptBase64", JsContextObjects.CreateFunction(engine, "encryptBase64", a =>
         {
             var data = Encoding.UTF8.GetBytes(JsPureApi.AsString(a, 0));
             var cipher = spec.Transform(encrypt: true, key, IvFor(), data);
             return Convert.ToBase64String(cipher);
-        }, default));
+        }, sink));
         self.FastSetDataProperty("encryptHex", JsContextObjects.CreateFunction(engine, "encryptHex", a =>
         {
             var data = Encoding.UTF8.GetBytes(JsPureApi.AsString(a, 0));
             var cipher = spec.Transform(encrypt: true, key, IvFor(), data);
             return Convert.ToHexString(cipher).ToLowerInvariant();
-        }, default));
+        }, sink));
 
         // 解密输入格式：reader 'auto' = 像十六进制就按 hex，否则按（宽松）base64；
         // aesBase64DecodeToString 这类"显式 Base64"旧 API 用 'base64'。
@@ -102,18 +104,18 @@ internal static class CryptoJavaApi
         {
             var cipher = spec.Transform(encrypt: false, key, IvFor(), DecodeInput(JsPureApi.AsString(a, 0), auto: true));
             return ToJsByteArray(engine, cipher);
-        }, default));
+        }, sink));
         self.FastSetDataProperty("decryptStr", JsContextObjects.CreateFunction(engine, "decryptStr", a =>
         {
             var cipher = spec.Transform(encrypt: false, key, IvFor(), DecodeInput(JsPureApi.AsString(a, 0), auto: true));
             return Encoding.UTF8.GetString(cipher);
-        }, default));
+        }, sink));
 
         self.FastSetDataProperty("setIv", JsContextObjects.CreateFunction(engine, "setIv", a =>
         {
             currentIv = ToBytes(a.Length > 0 ? a[0] : null);
             return self;
-        }, default));
+        }, sink));
 
         return self;
     }

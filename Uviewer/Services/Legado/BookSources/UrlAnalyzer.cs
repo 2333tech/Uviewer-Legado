@@ -337,7 +337,7 @@ public sealed class UrlAnalyzer
             timeout = tv;
         }
 
-        // 阶段 4 预留字段：webView / webJs / serverID(serverId)
+        // 阶段 4 预留字段：webView / webJs / serverID(serverId)；4-7 起消费 webViewDelayTime
         var webView = root.TryGetProperty("webView", out var wv) && IsTruthy(wv);
         var webJs = root.TryGetProperty("webJs", out var wj) && wj.ValueKind == JsonValueKind.String ? wj.GetString() : null;
         var serverId = root.TryGetProperty("serverID", out var sid) && sid.ValueKind == JsonValueKind.String
@@ -345,6 +345,13 @@ public sealed class UrlAnalyzer
             : root.TryGetProperty("serverId", out var sid2) && sid2.ValueKind == JsonValueKind.String
                 ? sid2.GetString()
                 : null;
+
+        // webViewDelayTime：页面加载完成后的额外等待（毫秒；legado BackstageWebView 同名选项）
+        var delayMs = 0;
+        if (root.TryGetProperty("webViewDelayTime", out var dt) && dt.TryGetInt32(out var dtv))
+        {
+            delayMs = Math.Clamp(dtv, 0, 30_000);
+        }
 
         spec = new RequestSpec
         {
@@ -355,6 +362,7 @@ public sealed class UrlAnalyzer
             Retry = retry,
             TimeoutSeconds = timeout,
             WebView = webView,
+            WebViewDelayMs = delayMs,
             WebJs = webJs,
             ServerId = serverId,
         };
@@ -433,13 +441,18 @@ public sealed class UrlAnalyzer
         return sb.ToString();
     }
 
-    /// <summary>选项块真值判定（webView: true/"true"/1 均为真，与 legado 宽松布尔一致）。</summary>
+    /// <summary>
+    /// 选项块真值判定（webView: true/"true"/1/0 均为真，与 reader <c>is_truthy_webview</c> 口径一致）。
+    /// <para><b>0 判真的理由</b>：选项块里写 <c>webView: 0</c> 的源是"显式要用 WebView"（数值是
+    /// 历史上手误/参数位遗留），出现该键本身就是意图；legado 对 0 会关掉 WebView 导致这些源
+    /// 拿不到渲染内容——reader 修正过这一点（2026-10-21 调研记录）。</para>
+    /// </summary>
     private static bool IsTruthy(JsonElement e) =>
         e.ValueKind switch
         {
             JsonValueKind.True => true,
             JsonValueKind.False or JsonValueKind.Null => false,
-            JsonValueKind.Number => e.TryGetInt32(out var n) && n != 0,
+            JsonValueKind.Number => true,
             JsonValueKind.String => RuleAnalyzer.IsTruthy(e.GetString() ?? string.Empty),
             _ => false,
         };

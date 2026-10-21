@@ -300,7 +300,7 @@ internal sealed class JsNetworkSession
     /// <para><c>headers</c> 既是函数（<c>resp.headers()</c> 返回映射）又挂同名属性
     /// （<c>resp.headers.Location</c>）——两种历史写法都有人用（样本里两种都出现过）。</para>
     /// </summary>
-    private static JsValue BuildResponse(Engine engine, JsScope scope, string api, FetchResponse response)
+    internal static JsValue BuildResponse(Engine engine, JsScope scope, string api, FetchResponse response)
     {
         var sink = new JsContextObjects.JsErrorSink(scope.Diagnostics, scope.SourceKey, null);
         var obj = new JsObject(engine);

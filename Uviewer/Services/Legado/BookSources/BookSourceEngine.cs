@@ -59,6 +59,18 @@ public sealed class BookSourceEngine
     /// </summary>
     private readonly ISourceCookieStore _cookies;
 
+    /// <summary>
+    /// WebView 宿主（阶段 4-7）：<c>java.startBrowser/startBrowserAwait/webView</c> 的落点。
+    /// <para>默认 null = 未接线（单测/无 WebView2 运行时）：原语记诊断降级，不假装拿到页面。
+    /// 由 <see cref="LegadoRuntime.CreateEngine"/> 从运行时透传；**透传到串行引擎**
+    /// （属性直通 <see cref="_engine"/>，构造后的赋值也生效）。</para>
+    /// </summary>
+    public IWebViewHost? WebViewHost
+    {
+        get => _engine.WebViewHost;
+        set => _engine.WebViewHost = value;
+    }
+
     /// <param name="fetcher">取数实现（默认 HTTP）。</param>
     /// <param name="purifier">净化管线（可选；宿主通常持 ReplaceRuleManager，规则变更时把
     /// 新快照赋给 <see cref="ContentPurifier.Rules"/> 即可，引擎无需重建）。</param>
@@ -646,6 +658,7 @@ public sealed class BookSourceEngine
         engine.Store = _store;
         engine.Fetcher = _fetcher;
         engine.Cookies = _cookies;
+        engine.WebViewHost = WebViewHost;
         return engine;
     }
 

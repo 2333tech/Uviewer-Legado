@@ -45,6 +45,9 @@ public sealed record RequestSpec
     /// <summary>是否需要 WebView 渲染（选项块 webView: true）。</summary>
     public bool WebView { get; init; }
 
+    /// <summary>WebView 渲染后的额外等待毫秒数（选项块 webViewDelayTime，4-7 起消费；0 = 默认）。</summary>
+    public int WebViewDelayMs { get; init; }
+
     /// <summary>WebView 注入 JS（选项块 webJs）。</summary>
     public string? WebJs { get; init; }
 

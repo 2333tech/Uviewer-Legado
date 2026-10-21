@@ -229,14 +229,17 @@ public static class JsApiCatalog
                 "按域取 Cookie（4-2 的 Cookie 仓库；4-3 起与 HTTP 会话共用同一份）"),
             ("io", JsApiTier.State, JsApiStatus.Missing, "java.io 命名空间（文件读写）"),
 
-            // ── T4 浏览器 ───────────────────────────────────────────────────────
-            ("startBrowserAwait", JsApiTier.Browser, JsApiStatus.Stub, "打开浏览器并等待（当前恒空串）"),
-            ("startBrowser", JsApiTier.Browser, JsApiStatus.Missing, "打开浏览器（不等待）"),
-            ("webView", JsApiTier.Browser, JsApiStatus.Missing, "在页面上下文执行脚本"),
+            // ── T4 浏览器（4-7：宿主 WebView2；未接线时记诊断降级，不假装拿到页面）──
+            ("startBrowserAwait", JsApiTier.Browser, JsApiStatus.Implemented,
+                "弹出 WebView2 窗口（图形验证码/Cloudflare 场景），返回 StrResponse（.body()=最终页面；Cookie 进共享仓库）"),
+            ("startBrowser", JsApiTier.Browser, JsApiStatus.Implemented,
+                "弹出 WebView2 窗口等用户完成（同步桥；返回 true，返回值无人消费）"),
+            ("webView", JsApiTier.Browser, JsApiStatus.Implemented,
+                "离屏加载 url 并执行 js（如 document.cookie），返回脚本结果；Cookie 同步仓库"),
             ("webViewGetOverrideUrl", JsApiTier.Browser, JsApiStatus.Missing, "WebView 加载指定 URL 并取覆盖内容"),
             ("getVerificationCode", JsApiTier.Browser, JsApiStatus.Missing, "验证码识别（宿主能力）"),
             ("openUrl", JsApiTier.Browser, JsApiStatus.Missing, "用系统浏览器打开"),
-            ("openVideoPlayer", JsApiTier.Browser, JsApiStatus.Missing, "打开视频播放器（宿主 UI）"),
+            ("openVideoPlayer", JsApiTier.Browser, JsApiStatus.Missing, "打开视频播放器（宿主 UI，音视频边界不做）"),
 
             // ── 宿主 UI 能力（legado Android 特有，桌面引擎不做，仅供能力评估识别） ──
             ("readBookConfig", JsApiTier.State, JsApiStatus.Missing, "读阅读配置（宿主 UI）"),
