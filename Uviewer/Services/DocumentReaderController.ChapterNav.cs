@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Uviewer.Models;
+using Uviewer.Services.Legado;
 
 namespace Uviewer
 {
@@ -69,9 +70,39 @@ namespace Uviewer
 
             if (TextCacheActive)
             {
+                // 当前章 = 窗口内真正可见的章，而不是窗口中心章（_textCacheCenter）：
+                // 窗口内跳章/翻页只渲染不重开窗口，_textCacheCenter 保持不变——
+                // 若按它定位，连按"下一章"每次都解析出同一个目标章，表现为
+                // "第一次能跳，之后固定跳回第一次的位置/不再响应"。
+                // 可见位置按排版取：分页画布（阅读模式）看当前页首块行号，其余看滚动顶端行号。
+                int topLine;
+                if (_isVerticalMode)
+                {
+                    topLine = _currentVerticalPageInfo.StartLine;
+                }
+                else if (_isAozoraMode)
+                {
+                    topLine = _currentAozoraStartBlockIndex >= 0 &&
+                               _currentAozoraStartBlockIndex < _aozoraBlocks.Count
+                        ? _aozoraBlocks[_currentAozoraStartBlockIndex].SourceLineNumber
+                        : -1;
+                }
+                else
+                {
+                    topLine = GetTopVisibleLineIndex();
+                }
+
+                var visible = _textCacheHeadingLines is null
+                    ? -1
+                    : TextCacheLogic.CurrentChapterInWindow(
+                        _textCacheHeadingLines, _textCacheWindowFrom, topLine);
+
+                // 兜底：位置解析不到（极端时序）时维持旧的中心章口径
+                var visibleChapter = visible >= 0 ? visible : Math.Max(0, _textCacheCenter);
+
                 for (int i = 0; i < items.Count; i++)
                 {
-                    if (items[i].Tag is int index && index == _textCacheCenter)
+                    if (items[i].Tag is int index && index == visibleChapter)
                     {
                         return i;
                     }
