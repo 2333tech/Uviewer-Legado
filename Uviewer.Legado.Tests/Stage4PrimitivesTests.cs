@@ -41,17 +41,19 @@ public class Stage4PrimitivesTests
     [Fact]
     public void Catalog_Tiers_And_Status_Are_Consistent()
     {
-        // 已实现的原语不允许再出现在 MissingNames 里（4-3 起含网络族）
+        // 已实现的原语不允许再出现在 MissingNames 里（4-3 起含网络族，4-5 起含 T2 规则族）
         Assert.Empty(JsApiCatalog.MissingNames(
-            new[] { "getString", "put", "get", "md5Encode", "timeFormat", "ajax", "post", "connect", "head", "ajaxAll" }));
+            new[] { "getString", "put", "get", "md5Encode", "timeFormat", "ajax", "post", "connect", "head", "ajaxAll",
+                    "getStringList", "getElements", "getElement", "setContent" }));
 
-        // 未实现的必须出现在 MissingNames
-        Assert.Equal(new[] { "getStringList" }, JsApiCatalog.MissingNames(new[] { "getStringList", "getString" }));
+        // 未实现的必须出现在 MissingNames（refreshTocUrl 待 4-6 登录链路；
+        // ruleUrl 是"属性读法"的空串桩（Stub 同样计入缺口，由 RuleUrl 行为测试单独覆盖）
+        Assert.Equal(new[] { "refreshTocUrl", "ruleUrl" }, JsApiCatalog.MissingNames(new[] { "refreshTocUrl", "ruleUrl", "getString" }));
 
         // RequiredTier = 未实现原语里的最高层
         Assert.Equal(JsApiTier.Pure, JsApiCatalog.RequiredTier(new[] { "getString", "md5Encode" }));
-        Assert.Equal(JsApiTier.Rule, JsApiCatalog.RequiredTier(new[] { "getString", "getStringList" }));
-        Assert.Equal(JsApiTier.Browser, JsApiCatalog.RequiredTier(new[] { "getStringList", "startBrowser" }));
+        Assert.Equal(JsApiTier.Rule, JsApiCatalog.RequiredTier(new[] { "getString", "refreshTocUrl" }));
+        Assert.Equal(JsApiTier.Browser, JsApiCatalog.RequiredTier(new[] { "refreshTocUrl", "startBrowser" }));
 
         // 未登记名字按 Browser（最保守）处理
         Assert.Equal(JsApiTier.Browser, JsApiCatalog.TierOf("neverHeardOfIt"));
@@ -176,11 +178,11 @@ public class Stage4PrimitivesTests
     {
         using var scope = new BridgeScope();
 
-        // getStringList 仍是桩（阶段 4-5 的 T2 任务）；ajax 在 4-3 已成真实实现。
-        scope.Run("java.getStringList('x')");
+        // getStringList/getElements/setContent 在 4-5 已成真实实现；ajaxJson 仍是桩（legado 无此正式 API）。
+        scope.Run("java.ajaxJson('x')");
 
         var entry = Assert.Single(scope.Diagnostics.Snapshot(), e => e.Kind == JsDiagnosticKind.StubCalled);
-        Assert.Equal("getStringList", entry.Detail);
+        Assert.Equal("ajaxJson", entry.Detail);
     }
 
     [Fact]
@@ -239,9 +241,9 @@ public class Stage4PrimitivesTests
     public async Task Capabilities_Raw_Sample_Baseline()
     {
         // 这条是全量基线：口径再变时会立刻红，逼你同步文档与 ROI 数字。
-        // 2026-10-21（4-3 落地后）实测值写在这里：T1 网络原语（ajax/post/connect/head/ajaxAll/
-        // getStringList 之外的网络族）实现后，阅读链路可跑 321 → 348（+27，方案预测 +31 的
-        // 差值来自"既缺 ajax 又缺 T2/T4"的源），整源 258 → 330。
+        // 2026-10-21（4-5 落地后）实测值：T2 规则原语（getElements/getElement/getStringList/
+        // setContent）实现后，阅读链路可跑 348 → 363（+15）、整源 330 → 348（+18）；
+        // Rule 层缺口清零，tier 分布只剩 Pure=370 / Browser=38。
         var all = await SampleData.AllAsync();
         Assert.Equal(408, all.Count);
 
@@ -274,21 +276,21 @@ public class Stage4PrimitivesTests
             }
         }
 
-        Assert.Equal(348, readingOk);
-        Assert.Equal(330, allOk);
-        Assert.Equal(60, needsStage4);
+        Assert.Equal(363, readingOk);
+        Assert.Equal(348, allOk);
+        Assert.Equal(45, needsStage4);
 
-        // 阅读链路 Top 缺口（阶段 4 后续步骤的 ROI 依据；4-3 后 ajax 已不在列）
+        // 阅读链路 Top 缺口（阶段 4 后续步骤的 ROI 依据；4-5 后 T2 族已清零）
         var top = missingApiHistogram.OrderByDescending(p => p.Value).ThenBy(p => p.Key, StringComparer.Ordinal)
             .Take(5).Select(p => p.Key).ToArray();
-        Assert.Equal(new[] { "startBrowser", "getElements", "aesBase64DecodeToString", "getStringList", "refreshTocUrl" }, top);
+        Assert.Equal(new[] { "startBrowser", "aesBase64DecodeToString", "refreshTocUrl", "t2s", "HMacHex" }, top);
     }
 
-    /// <summary>阅读链路当前可跑的原始条目数（2026-10-21，4-3 落地后；4-2 为 321、4-1 为 304）。</summary>
-    private const int ExpectedReadingOk = 348;
+    /// <summary>阅读链路当前可跑的原始条目数（2026-10-21，4-5 落地后；4-3 为 348、4-2 为 321）。</summary>
+    private const int ExpectedReadingOk = 363;
 
-    /// <summary>整源（含搜索/详情链）当前可跑的原始条目数（4-3 落地后；4-2 为 258、4-1 为 237）。</summary>
-    private const int ExpectedAllOk = 330;
+    /// <summary>整源（含搜索/详情链）当前可跑的原始条目数（4-5 落地后；4-3 为 330、4-2 为 258）。</summary>
+    private const int ExpectedAllOk = 348;
 
     // ============================================================
     // 辅助

@@ -1,53 +1,48 @@
 {
-  "GeneratedAt": "2026-10-21 15:07:02",
+  "GeneratedAt": "2026-10-21 15:47:57",
   "Sample": "bookSource_202610192010.json",
   "Total": 408,
   "TextSources": 308,
-  "ReadingSupported": 348,
-  "AllSupported": 330,
-  "Searchable": 339,
+  "ReadingSupported": 363,
+  "AllSupported": 348,
+  "Searchable": 350,
   "TierHistogram": {
-    "Pure": 351,
-    "Rule": 19,
+    "Pure": 370,
     "Browser": 38
   },
   "ReadingMissingTop": {
     "startBrowser": 21,
-    "getElements": 15,
     "aesBase64DecodeToString": 8,
-    "getStringList": 7,
     "refreshTocUrl": 6,
     "t2s": 5,
-    "setContent": 4,
     "HMacHex": 2,
     "createSymmetricCrypto": 2,
     "desEncodeToBase64String": 2,
     "digestHex": 2,
-    "getElement": 2,
     "openUrl": 1,
     "startBrowserAwait": 1
   },
   "AllMissingTop": {
     "startBrowser": 24,
-    "getElements": 21,
     "webView": 12,
-    "setContent": 11,
     "t2s": 11,
     "startBrowserAwait": 10,
     "aesBase64DecodeToString": 8,
-    "getStringList": 8,
     "refreshTocUrl": 6,
     "createSymmetricCrypto": 5,
     "ruleUrl": 4,
     "s2t": 4,
     "HMacHex": 3,
     "digestHex": 3,
-    "getElement": 3,
     "androidId": 2,
     "desEncodeToBase64String": 2,
     "initUrl": 2,
     "openUrl": 2,
-    "refreshExplore": 2
+    "refreshExplore": 2,
+    "base64DecodeToByteArray": 1,
+    "getReadBookConfigMap": 1,
+    "getThemeConfigMap": 1,
+    "getVerificationCode": 1
   },
   "Sources": [
     {
@@ -582,19 +577,15 @@
       "MissingApis": [
         "androidId",
         "digestHex",
-        "getElements",
         "getReadBookConfigMap",
         "getThemeConfigMap",
         "getVerificationCode",
         "openUrl",
-        "setContent",
         "showBrowser",
         "startBrowser"
       ],
       "ReadingMissingApis": [
-        "getElements",
         "openUrl",
-        "setContent",
         "startBrowser"
       ],
       "MissingGlobals": [],
@@ -610,11 +601,9 @@
       "Name": "镇魂小说（优++）",
       "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElements"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -622,7 +611,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "http://119.45.176.116:5006",
@@ -730,22 +719,18 @@
       "Url": "https://www.youduzw.com",
       "Name": "有度中文（优++）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElements"
-      ],
-      "ReadingMissingApis": [
-        "getElements"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://api-bc.wtzw.com＃妍希",
@@ -937,22 +922,18 @@
       "Url": "这是一个图集",
       "Name": "美女图站（优++）",
       "Kind": 2,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getStringList"
-      ],
-      "ReadingMissingApis": [
-        "getStringList"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://api.520diandu.com/",
@@ -1036,13 +1017,10 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getElement",
-        "getElements",
         "openUrl",
         "readBookConfig",
         "refreshExplore",
         "searchBook",
-        "setContent",
         "startBrowser"
       ],
       "ReadingMissingApis": [],
@@ -1437,9 +1415,7 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getElements",
         "refreshTocUrl",
-        "setContent",
         "webView"
       ],
       "ReadingMissingApis": [
@@ -1567,23 +1543,18 @@
       "Url": "通用书源",
       "Name": "通用书源（写）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getStringList",
-        "setContent"
-      ],
-      "ReadingMissingApis": [
-        "getStringList"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "https://tieba.baidu.com#♤guaner",
@@ -1798,22 +1769,18 @@
       "Url": "http://45.79.102.135/allcp.org/###",
       "Name": "青花鱼评（优）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "setContent"
-      ],
-      "ReadingMissingApis": [
-        "setContent"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresLogin, HasJsLib"
+      "Flags": "RequiresLogin, HasJsLib"
     },
     {
       "Url": "https://afdian.com#",
@@ -2266,11 +2233,9 @@
       "Name": "时代音乐（优+）",
       "Kind": 1,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElements"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -2278,7 +2243,7 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "http://fuciyuanbang.ciyuans.com/",
@@ -2664,11 +2629,9 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getStringList",
         "startBrowser"
       ],
       "ReadingMissingApis": [
-        "getStringList",
         "startBrowser"
       ],
       "MissingGlobals": [],
@@ -2687,11 +2650,9 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getStringList",
         "startBrowser"
       ],
       "ReadingMissingApis": [
-        "getStringList",
         "startBrowser"
       ],
       "MissingGlobals": [],
@@ -2710,11 +2671,9 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "ReadingMissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "MissingGlobals": [],
@@ -2775,11 +2734,9 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "ReadingMissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "MissingGlobals": [],
@@ -2819,11 +2776,9 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "ReadingMissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "MissingGlobals": [],
@@ -2842,11 +2797,9 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "ReadingMissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "MissingGlobals": [],
@@ -2865,11 +2818,9 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "ReadingMissingApis": [
-        "getElements",
         "startBrowser"
       ],
       "MissingGlobals": [],
@@ -3060,13 +3011,11 @@
       "Kind": 2,
       "ReadingSupported": false,
       "AllSupported": false,
-      "RequiredTier": "Rule",
+      "RequiredTier": "Pure",
       "MissingApis": [
-        "getElements",
         "t2s"
       ],
       "ReadingMissingApis": [
-        "getElements",
         "t2s"
       ],
       "MissingGlobals": [],
@@ -3437,43 +3386,35 @@
       "Url": "https://www.9comic.cn/",
       "Name": "好看漫画（优+）",
       "Kind": 2,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getStringList"
-      ],
-      "ReadingMissingApis": [
-        "getStringList"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "http://m.rumanhua1.com/",
       "Name": "如漫画网（优+）",
       "Kind": 2,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElement"
-      ],
-      "ReadingMissingApis": [
-        "getElement"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, HasJsLib"
+      "Flags": "HasJsLib"
     },
     {
       "Url": "https://m.kanman.com#Haxc1107",
@@ -3551,14 +3492,12 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getElements",
         "refreshTocUrl",
         "s2t",
         "startBrowser",
         "t2s"
       ],
       "ReadingMissingApis": [
-        "getElements",
         "refreshTocUrl",
         "startBrowser"
       ],
@@ -4729,23 +4668,18 @@
       "Url": "搜狗搜书",
       "Name": "搜狗搜书",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getStringList",
-        "setContent"
-      ],
-      "ReadingMissingApis": [
-        "getStringList"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "http://www.yetianlian.com",
@@ -4785,23 +4719,18 @@
       "Url": "必应搜书",
       "Name": "必应搜书",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getStringList",
-        "setContent"
-      ],
-      "ReadingMissingApis": [
-        "getStringList"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": true,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine, RequiresLogin"
+      "Flags": "RequiresLogin"
     },
     {
       "Url": "http://touchlife.cootekservice.com/",
@@ -5385,43 +5314,35 @@
       "Url": "https://m.limaogushi.com/1",
       "Name": "狸猫故事（优+）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElements"
-      ],
-      "ReadingMissingApis": [
-        "getElements"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://m.limaogushi.com/2",
       "Name": "狸猫故事（优+）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElements"
-      ],
-      "ReadingMissingApis": [
-        "getElements"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://www.dtxsw.com",
@@ -5516,8 +5437,6 @@
       "AllSupported": false,
       "RequiredTier": "Browser",
       "MissingApis": [
-        "getStringList",
-        "setContent",
         "webView"
       ],
       "ReadingMissingApis": [],
@@ -5635,22 +5554,18 @@
       "Url": "https://www.zggdwx.com/",
       "Name": "古典文学（优+）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElements"
-      ],
-      "ReadingMissingApis": [
-        "getElements"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "http://yz4.chaoxing.com",
@@ -5809,33 +5724,10 @@
       "Url": "http://www.guishiji.com/",
       "Name": "鬼故事集（优+）",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElements"
-      ],
-      "ReadingMissingApis": [
-        "getElements"
-      ],
-      "MissingGlobals": [],
-      "ReadingMissingGlobals": [],
-      "NeedsLogin": false,
-      "NeedsWebView": false,
-      "ReadingNeedsWebView": false,
-      "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
-    },
-    {
-      "Url": "https://www.6mj.com",
-      "Name": "民间故事（优+）",
-      "Kind": 0,
       "ReadingSupported": true,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElements"
-      ],
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
       "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
@@ -5843,7 +5735,24 @@
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
+    },
+    {
+      "Url": "https://www.6mj.com",
+      "Name": "民间故事（优+）",
+      "Kind": 0,
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
+      "MissingGlobals": [],
+      "ReadingMissingGlobals": [],
+      "NeedsLogin": false,
+      "NeedsWebView": false,
+      "ReadingNeedsWebView": false,
+      "HasRemoteJsLib": false,
+      "Flags": "None"
     },
     {
       "Url": "http://www.daomubiji.com",
@@ -6167,7 +6076,6 @@
       "MissingApis": [
         "refreshTocUrl",
         "ruleUrl",
-        "setContent",
         "startBrowserAwait",
         "t2s"
       ],
@@ -6311,7 +6219,6 @@
       "RequiredTier": "Browser",
       "MissingApis": [
         "createSymmetricCrypto",
-        "getElements",
         "hexDecodeToByteArray",
         "initUrl",
         "key",
@@ -6764,26 +6671,18 @@
       "Url": "http://www.utexs.com/",
       "Name": "\uD83D\uDD1E 优特",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElement",
-        "getElements",
-        "setContent"
-      ],
-      "ReadingMissingApis": [
-        "getElement",
-        "getElements",
-        "setContent"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://api.yousuu.com##优书网\n最后更新时间+字数",
@@ -6840,43 +6739,35 @@
       "Url": "https://www.3ubook.com",
       "Name": "三优书",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "setContent"
-      ],
-      "ReadingMissingApis": [
-        "setContent"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "http://m.miduxs.com",
       "Name": "米读小说",
       "Kind": 0,
-      "ReadingSupported": false,
-      "AllSupported": false,
-      "RequiredTier": "Rule",
-      "MissingApis": [
-        "getElements"
-      ],
-      "ReadingMissingApis": [
-        "getElements"
-      ],
+      "ReadingSupported": true,
+      "AllSupported": true,
+      "RequiredTier": "Pure",
+      "MissingApis": [],
+      "ReadingMissingApis": [],
       "MissingGlobals": [],
       "ReadingMissingGlobals": [],
       "NeedsLogin": false,
       "NeedsWebView": false,
       "ReadingNeedsWebView": false,
       "HasRemoteJsLib": false,
-      "Flags": "RequiresJsEngine"
+      "Flags": "None"
     },
     {
       "Url": "https://www.3uxiaoshuo.com/",

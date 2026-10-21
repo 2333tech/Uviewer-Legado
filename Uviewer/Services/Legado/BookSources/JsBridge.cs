@@ -34,8 +34,24 @@ namespace Uviewer.Services.Legado.BookSources;
 /// </summary>
 internal sealed class JsBridge
 {
-    /// <summary>由 RuleEngine 注入：对当前 result 内容求值某条规则，返回字符串。</summary>
-    public Func<string, string>? EvaluateRule { get; set; }
+    /// <summary>
+    /// 由 RuleEngine 注入：对当前 result 内容求值某条规则，返回字符串。
+    /// <para>第二参数 = <see cref="_contentOverride"/>（<c>java.setContent</c> 设置的替换内容）；
+    /// null 表示用脚本运行时的当前 result。阶段 4-5 起与 list/elements 求值同构。</para>
+    /// </summary>
+    public Func<string, string?, string>? EvaluateRule { get; set; }
+
+    /// <summary>
+    /// 由 RuleEngine 注入（阶段 4-5）：<c>java.getStringList</c> 的求值管线，
+    /// 返回 JSON 数组文本（每项一个字符串）。
+    /// </summary>
+    public Func<string, string?, IReadOnlyList<object?>>? EvaluateList { get; set; }
+
+    /// <summary>
+    /// 由 RuleEngine 注入（阶段 4-5）：<c>java.getElements/getElement</c> 的元素求值管线，
+    /// 返回命中项列表（HtmlNode / JsonNode / 匹配文本；包装见 <see cref="RuleJavaApi"/>）。
+    /// </summary>
+    public Func<string, string?, IReadOnlyList<object?>>? EvaluateElements { get; set; }
 
     /// <summary>
     /// 当前书源的 jsLib 原始文本（内联脚本或 <c>{"name":"脚本|URL"}</c> JSON 形式；null/空 = 无库）。
@@ -105,6 +121,14 @@ internal sealed class JsBridge
     private string _currentBaseUrl = string.Empty;
 
     /// <summary>
+    /// <c>java.setContent(x)</c> 设置的替换内容（阶段 4-5）：后续
+    /// <c>getString/getStringList/getElements/getElement</c> 都对它求值
+    /// （legado <c>AnalyzeRule.setContent</c> 语义）。每次 <see cref="Run"/> 开始时清空
+    /// ——覆盖只在当前脚本内有效，跨脚本残留会把下一段解析打到错误内容上。
+    /// </summary>
+    private string? _contentOverride;
+
+    /// <summary>
     /// 执行脚本。<paramref name="globals"/> 用于注入额外全局变量（如 formatJs 的 index/title/chapter）。
     /// <para>步骤：① 取引擎（重入 → 临时引擎）；② 绑定 result/baseUrl/java 及 globals；
     /// ③ Evaluate；④ 结果转字符串（null → 空串）；⑤ 异常时**返回原始 value**
@@ -145,6 +169,7 @@ internal sealed class JsBridge
                 engine.SetValue("java", EnsureJava(engine));
                 _currentValue = value;
                 _currentBaseUrl = baseUrl;
+                _contentOverride = null;
 
                 // ②a 全局对象（source/book/chapter/cache/cookie/html）：有作用域才注入。
                 //     同一 Scope 只绑一次（见 EnsureGlobals）。
@@ -280,6 +305,15 @@ internal sealed class JsBridge
                         engine, info.Name, args => InvokeImplemented(engine, info.Name, args)));
                     break;
                 case JsApiStatus.Stub:
+                    // ruleUrl 在 legado 里是"不存在的属性"（Rhino 下访问即 undefined），
+                    // 样本里全是**属性读法**（url = java.ruleUrl）而非调用——注册成空串数据属性，
+                    // 注册成函数会让 String(java.ruleUrl) 拿到函数源码、布尔判断恒真，语义全歪。
+                    if (string.Equals(info.Name, "ruleUrl", StringComparison.Ordinal))
+                    {
+                        java.FastSetDataProperty(info.Name, string.Empty);
+                        break;
+                    }
+
                     java.FastSetDataProperty(info.Name, CreateFunction(engine, info.Name, args => InvokeStub(info.Name, args)));
                     break;
                 default:
@@ -339,7 +373,40 @@ internal sealed class JsBridge
         switch (name)
         {
             case "getString":
-                return EvaluateRule?.Invoke(JsPureApi.AsString(args, 0)) ?? string.Empty;
+                // java.getString(rule[, mContent])：mContent 缺省时用 setContent 的替换内容
+                return EvaluateRule?.Invoke(
+                    JsPureApi.AsString(args, 0), ContentArg(args)) ?? string.Empty;
+
+            // 阶段 4-5：T2 规则原语（对当前 result 或替换内容跑规则）
+            case "getStringList":
+                if (EvaluateList is { } listEval)
+                {
+                    return RuleJavaApi.GetStringList(engine, SerializeList(listEval(JsPureApi.AsString(args, 0), ContentArg(args))));
+                }
+
+                return new JsArray(engine, Array.Empty<JsValue>());
+
+            case "getElements":
+                if (EvaluateElements is { } elementsEval)
+                {
+                    return RuleJavaApi.GetElements(engine, this, elementsEval(JsPureApi.AsString(args, 0), ContentArg(args)));
+                }
+
+                return new JsArray(engine, Array.Empty<JsValue>());
+
+            case "getElement":
+                if (EvaluateElements is { } elementEval)
+                {
+                    return RuleJavaApi.GetElement(engine, this, elementEval(JsPureApi.AsString(args, 0), ContentArg(args)));
+                }
+
+                return JsValue.Null;
+
+            case "setContent":
+                // legado AnalyzeRule.setContent(content[, baseUrl])：替换后续规则求值对象。
+                // baseUrl 参数收下不用（本引擎的字段求值不做 URL 绝对化，BookUrl 字段自己处理）。
+                _contentOverride = args.Length > 0 && args[0] is not null ? JsPureApi.AsString(args, 0) : null;
+                return JsBoolean.True;
 
             case "get":
                 // legado AnalyzeRule.get：章节变量 → 书籍变量 → 书源 sp: 键（阶段 4-2 起跨链持久）
@@ -425,8 +492,6 @@ internal sealed class JsBridge
         return name switch
         {
             "ajaxJson" => "{}",
-            "getElements" or "getStringList" => "[]",
-            "getElement" => "{}",
             "t2s" or "s2t" => JsPureApi.AsString(args, 0),
             _ => string.Empty,
         };
@@ -554,6 +619,30 @@ internal sealed class JsBridge
 
     /// <summary>把参数拼成一行文本（诊断样本用；过长的由 <see cref="JsDiagnostics"/> 截断）。</summary>
     private static string FormatArgs(object?[] args) => JsContextObjects.FormatArgs(args);
+
+    /// <summary>
+    /// 规则求值的可选内容参数（阶段 4-5）：<c>getString(rule, mContent)</c> 的第二参数优先；
+    /// 缺省时回落到 <c>setContent</c> 的替换内容；再缺省 = 当前 result（传 null）。
+    /// </summary>
+    private string? ContentArg(object?[] args) =>
+        args.Length > 1 && args[1] is not null ? JsPureApi.AsString(args, 1) : _contentOverride;
+
+    /// <summary>把求值项列表序列化成 JSON 数组文本（<see cref="RuleJavaApi.GetStringList"/> 入参）。</summary>
+    private static string SerializeList(IReadOnlyList<object?> items)
+    {
+        var sb = new System.Text.StringBuilder("[");
+        for (var i = 0; i < items.Count; i++)
+        {
+            if (i > 0)
+            {
+                sb.Append(',');
+            }
+
+            sb.Append(System.Text.Json.JsonSerializer.Serialize(items[i]?.ToString() ?? string.Empty));
+        }
+
+        return sb.Append(']').ToString();
+    }
 
     /// <summary>引擎与其对应 <c>java</c> 对象的绑定（引擎换了就重建）。</summary>
     private sealed record JavaBinding(Engine Engine, JsValue Java);

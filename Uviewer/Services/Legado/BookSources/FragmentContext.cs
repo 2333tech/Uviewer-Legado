@@ -125,6 +125,12 @@ internal sealed class FragmentContext
         }
     }
 
+    /// <summary>
+    /// 底层 HTML 活节点（阶段 4-5，元素快照用）；非"活节点"形态为 null
+    /// （文本/JSON 形态没有节点，调用方走文本快照兜底）。
+    /// </summary>
+    public HtmlNode? Node => _htmlNode;
+
     /// <summary>惰性解析并缓存的 JSON 节点（非 JSON 片段为 null）。</summary>
     public JsonNode? Json
     {

@@ -477,6 +477,9 @@ public sealed class RuleEngine
     /// <para>java.getString 的语义锚点：内嵌规则必须作用于**当前 result**（即 value）。
     /// 故用 value 现建一个片段上下文，把 EvaluateRule 闭包指向它——脚本内嵌规则与外层
     /// 共用同一份惰性解析结果（同一段 HTML/JSON 不会被内嵌规则再解析一遍）。</para>
+    /// <para>阶段 4-5：同闭包一并注入 list/elements 求值（<c>java.getStringList/getElements</c>），
+    /// 并支持 <c>java.setContent(x)</c> 的内容替换——覆盖内容按**引用相等**缓存片段上下文，
+    /// 循环里逐项 setContent（样本真实写法）时同一字符串不重解析、换内容立即重建。</para>
     /// </summary>
     private string RunJs(
         string script,
@@ -485,11 +488,163 @@ public sealed class RuleEngine
         IReadOnlyDictionary<string, object?>? globals = null)
     {
         var ctx = new FragmentContext(value);
-        _js.EvaluateRule = r => ExtractContent(r, ctx);
+
+        // setContent 的覆盖内容 → 片段上下文（引用相等缓存：同串不重解析）
+        var overrideRaw = value;
+        var overrideCtx = ctx;
+        FragmentContext Ctx(string? content)
+        {
+            if (content is null || ReferenceEquals(content, overrideRaw))
+            {
+                return overrideCtx;
+            }
+
+            overrideRaw = content;
+            return overrideCtx = new FragmentContext(content);
+        }
+
+        _js.EvaluateRule = (r, content) => ExtractContent(r, Ctx(content));
+        _js.EvaluateList = (r, content) => ExtractListValues(r, Ctx(content));
+        _js.EvaluateElements = (r, content) => ExtractElementValues(r, Ctx(content));
 
         // jsLib 透传（便宜：字符串引用赋值；JsBridge 内部按文本决定是否重新加载库）
         _js.JsLib = _jsSource?.JsLib;
         return _js.Run(script, value, baseUrl, globals);
+    }
+
+    /// <summary>
+    /// 列表求值（阶段 4-5，<c>java.getStringList</c>）：与字段求值同一套模式派发，
+    /// 但保留多值形态（JSONPath 逐节点 / 字段规则逐命中 / 正则逐匹配）。
+    /// </summary>
+    private IReadOnlyList<object?> ExtractListValues(string rule, FragmentContext ctx)
+    {
+        var (selectorRule, script) = RuleAnalyzer.ExtractJs(rule);
+        if (script is not null)
+        {
+            // 前导脚本：输出若像 JSON 数组则逐项，否则整段单值
+            var value = string.IsNullOrEmpty(selectorRule)
+                ? ctx.Raw
+                : ExtractContentSingle(selectorRule, ctx);
+            var output = RunJs(script, value, string.Empty);
+            try
+            {
+                var node = System.Text.Json.Nodes.JsonNode.Parse(output);
+                if (node is System.Text.Json.Nodes.JsonArray list)
+                {
+                    return list.Select(n => (object?)n?.ToString() ?? string.Empty).ToList();
+                }
+            }
+            catch
+            {
+                // 非 JSON：整段作单值
+            }
+
+            return new[] { output };
+        }
+
+        var (combinable, replacePart) = RuleAnalyzer.SplitLegadoRegex(rule);
+        var mode = RuleAnalyzer.DetectMode(combinable, ctx);
+        var values = mode switch
+        {
+            RuleMode.JsonPath => JsonPathEval.Query(ctx.Json, RuleAnalyzer.StripModePrefix(combinable))
+                .Select(v => (object?)v).ToList(),
+            RuleMode.Regex => RegexMatches(combinable, ctx.Raw),
+            _ => Selectors.FieldValues(ctx, combinable).Select(v => (object?)v).ToList(),
+        };
+
+        if (replacePart is not null)
+        {
+            values = values
+                .Select(v => (object?)RuleAnalyzer.ApplyLegadoRegex(v?.ToString() ?? string.Empty, replacePart))
+                .ToList();
+        }
+
+        return values;
+    }
+
+    /// <summary>正则逐匹配（<c>java.getStringList</c> / <c>getElements</c> 的 Regex 分支共用）。</summary>
+    private List<object?> RegexMatches(string combinable, string content)
+    {
+        var raw = RuleAnalyzer.StripModePrefix(combinable);
+        var (pattern, _) = SplitRegexRule(raw);
+        var re = RuleAnalyzer.GetRegex(pattern);
+        if (re is null)
+        {
+            return new List<object?>();
+        }
+
+        var result = new List<object?>();
+        foreach (Match m in re.Matches(content))
+        {
+            result.Add(m.Value);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 元素求值（阶段 4-5，<c>java.getElements/getElement</c>）：按模式派发，
+    /// 保留"活"形态——HTML 命中给 <see cref="HtmlNode"/>、JSON 命中给 <see cref="JsonNode"/>、
+    /// 正则命中给匹配文本；JS 侧包装（JSoup 风格方法）见 <see cref="RuleJavaApi"/>。
+    /// <para>模式派发与列表解析同构（对标 legado <c>AnalyzeRule.getElements</c> 的
+    /// Regex/Js/Json/XPath/JSoup 五分支；XPath/CSS 共用列表选择器链）。</para>
+    /// </summary>
+    private IReadOnlyList<object?> ExtractElementValues(string rule, FragmentContext ctx)
+    {
+        var (selectorRule, script) = RuleAnalyzer.ExtractJs(rule);
+        if (script is not null)
+        {
+            // 前导脚本：输出像 JSON 数组 → 逐节点；否则整段作为单个文本快照
+            var value = string.IsNullOrEmpty(selectorRule)
+                ? ctx.Raw
+                : ExtractContentSingle(selectorRule, ctx);
+            var output = RunJs(script, value, string.Empty);
+            try
+            {
+                var node = System.Text.Json.Nodes.JsonNode.Parse(output);
+                if (node is System.Text.Json.Nodes.JsonArray list)
+                {
+                    return list.Cast<object?>().ToList();
+                }
+
+                return new List<object?> { node };
+            }
+            catch
+            {
+                return new List<object?> { output };
+            }
+        }
+
+        var (combinable, _) = RuleAnalyzer.SplitLegadoRegex(rule);
+        var mode = RuleAnalyzer.DetectMode(combinable, ctx);
+        switch (mode)
+        {
+            case RuleMode.JsonPath:
+                return JsonPathEval.QueryNodes(ctx.Json, RuleAnalyzer.StripModePrefix(combinable))
+                    .Select(n => (object?)n).ToList();
+
+            case RuleMode.Regex:
+                return RegexMatches(combinable, ctx.Raw);
+
+            case RuleMode.Js:
+                // 整条是脚本（<js>…</js> 已被 ExtractJs 拆走；js: 前缀形态在这里兜底）
+                var jsOutput = RunJs(RuleAnalyzer.StripModePrefix(combinable), ctx.Raw, string.Empty);
+                return new List<object?> { jsOutput };
+
+            default:
+            {
+                // CSS（含 legado 缩写链）与 XPath：复用列表选择器（含 body/空规则 = 整段单片段语义）
+                var frags = Selectors.ListFragmentContexts(ctx, combinable);
+                var result = new List<object?>(frags.Count);
+                foreach (var frag in frags)
+                {
+                    // 活节点形态给节点（快照带 attr/html）；文本特例（body/空规则）给原文
+                    result.Add(frag.Node as object ?? frag.Raw);
+                }
+
+                return result;
+            }
+        }
     }
 
     /// <summary>切分正则规则的 pattern 与替换段（## 起，含 ## 本身）。无 ## 时替换段为 null。</summary>
