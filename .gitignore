@@ -445,6 +445,16 @@ FodyWeavers.xsd
 !Uviewer.Bench/results/
 !Sample/
 
+# 7-Zip 原生库按架构分目录入库（上面 VS 模板的 x64/ x86/ arm64/ 规则会误伤），
+# Uviewer.csproj 按构建架构把对应一份复制为输出目录的 Libs\7z.dll
+!Uviewer/Libs/
+!Uviewer/Libs/x64/
+!Uviewer/Libs/x86/
+!Uviewer/Libs/arm64/
+!Uviewer/Libs/x64/7z.dll
+!Uviewer/Libs/x86/7z.dll
+!Uviewer/Libs/arm64/7z.dll
+
 # 兜底：任意层级的编译中间产物都不入库（含旧基准 Sample/PerfBenchmark/tools）
 **/bin/
 **/obj/

@@ -99,18 +99,24 @@
 | x86   | `-p:Platform=x86`    | 兼容 32 位环境               |
 
 三种架构均已实测 0 错误编译，CI 矩阵（`.github/workflows/ci.yml`）对三架构逐一构建验证。
+7-Zip 原生库（`7z.dll`，官方 26.05）按架构随包分发：源码位于 `Uviewer/Libs/{x64|x86|arm64}/`，
+构建时自动复制为输出目录的 `Libs/7z.dll`，任意架构打开 `.7z` 压缩书均可用。
 
 ### 克隆与构建
 
+> **路径口径（重要）**：本 README、CI（`.github/workflows/ci.yml`）及一切仓库内说明中的路径，
+> 一律以 **git 仓库根目录**（即克隆后 `git clone` 得到的 `Uviewer-Legado/` 目录，而非它的某个
+> 子目录或上层工作区）为基准。执行下列命令前请先 `cd Uviewer-Legado`。
+
 ```bash
 git clone https://github.com/2333tech/Uviewer-Legado.git
-cd Uviewer-Legado/Uviewer
+cd Uviewer-Legado
 
 # 编译（Debug x64；先关闭正在运行的 Uviewer.exe）
 dotnet build Uviewer/Uviewer.csproj -c Debug -p:Platform=x64
 
 # 运行
-Uviewer/Uviewer/bin/x64/Debug/net10.0-windows10.0.26100.0/win-x64/Uviewer.exe
+Uviewer/bin/x64/Debug/net10.0-windows10.0.26100.0/win-x64/Uviewer.exe
 ```
 
 ### Release 编译
@@ -129,10 +135,10 @@ dotnet build Uviewer/Uviewer.csproj -c Release -p:Platform=x86
 产物路径形如：
 
 ```
-Uviewer/Uviewer/bin/<Platform>/<配置>/net10.0-windows10.0.26100.0/<RID>/
-  x64   → Uviewer/Uviewer/bin/x64/Release/net10.0-windows10.0.26100.0/win-x64/
-  ARM64 → Uviewer/Uviewer/bin/ARM64/Release/net10.0-windows10.0.26100.0/win-arm64/
-  x86   → Uviewer/Uviewer/bin/x86/Release/net10.0-windows10.0.26100.0/win-x86/
+Uviewer/bin/<Platform>/<配置>/net10.0-windows10.0.26100.0/<RID>/
+  x64   → Uviewer/bin/x64/Release/net10.0-windows10.0.26100.0/win-x64/
+  ARM64 → Uviewer/bin/ARM64/Release/net10.0-windows10.0.26100.0/win-arm64/
+  x86   → Uviewer/bin/x86/Release/net10.0-windows10.0.26100.0/win-x86/
 ```
 
 > 构建机本机带签名证书（`Uviewer_TemporaryKey.pfx`，不入库），可直接出 MSIX；

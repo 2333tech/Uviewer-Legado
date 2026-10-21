@@ -40,13 +40,31 @@
     <PublishProfile>win-$(Platform).pubxml</PublishProfile>
   </PropertyGroup>
 
+  <!--
+    7-Zip 原生库按构建架构选择源 dll：Platform=x86→x86、Platform=ARM64→arm64，
+    其余（含 AnyCPU/未指定）→x64；MSBuild 条件字符串比较不区分大小写。
+  -->
+  <PropertyGroup>
+    <SevenZipArchFolder Condition="'$(Platform)' == 'x86'">x86</SevenZipArchFolder>
+    <SevenZipArchFolder Condition="'$(Platform)' == 'ARM64'">arm64</SevenZipArchFolder>
+    <SevenZipArchFolder Condition="'$(SevenZipArchFolder)' == ''">x64</SevenZipArchFolder>
+  </PropertyGroup>
+
   <ItemGroup>
     <EmbeddedResource Include="Strings\en-US\Resources.resw" LogicalName="Uviewer.FallbackStrings.resw" />
     <Content Include="Assets\Uviewer.ico" />
     <Content Include="Assets\Uviewer2.png">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="Libs\7z.dll">
+    <!--
+      7-Zip 原生库按进程架构取对应一份（源：Libs\{x64|x86|arm64}\7z.dll，官方 26.05），
+      统一复制为输出目录的 Libs\7z.dll —— ArchiveSession / SevenZipBatchExtractor /
+      ThumbnailService 均按该固定路径 LoadLibrary，x86/ARM64 进程加载错误架构 dll 会直接
+      BadImageFormatException。SevenZipArchFolder 映射见上方 PropertyGroup：
+      Platform=x86→x86、Platform=ARM64→arm64，其余（含 AnyCPU/未指定）→x64
+      （MSBuild 条件字符串比较不区分大小写）。
+    -->
+    <Content Include="Libs\$(SevenZipArchFolder)\7z.dll" Link="Libs\7z.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>

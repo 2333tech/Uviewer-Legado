@@ -7,7 +7,8 @@
 #         且主程序目标框架为 net10.0-windows10.0.26100.0）。
 # 架构：矩阵覆盖 x64 / ARM64 / x86（csproj 的 RuntimeIdentifiers 声明了
 #       win-x64 / win-arm64 / win-x86，三架构均已本地实测 0 错误；
-#       输出路径形如 Uviewer/Uviewer/bin/<Platform>/Release/net10.0-windows10.0.26100.0/<RID>/）。
+#       输出路径形如 Uviewer/bin/<Platform>/Release/net10.0-windows10.0.26100.0/<RID>/，
+#       所有路径一律以 git 仓库根为基准（与 README「编译方法」同口径）。
 # 构建命令严格对齐 README（Release 仅把 -c Debug 换成 -c Release）：
 #   dotnet build Uviewer/Uviewer.csproj -c Release -p:Platform=<x64|ARM64|x86>
 # 唯一必要偏离：禁用 MSIX 打包（-p:EnableMsixTooling=false -p:WindowsPackageType=None）。
@@ -43,20 +44,20 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # --- .NET 10 SDK（global.json 已钉 10.0.x / rollForward=latestFeature）---
       - name: 安装 .NET 10 SDK
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
 
       # --- 缓存 NuGet 包，加速恢复（键含平台维度）---
       - name: 缓存 NuGet 包
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-${{ matrix.platform }}-nuget-${{ hashFiles('Uviewer/Uviewer/Uviewer.csproj', 'global.json') }}
+          key: ${{ runner.os }}-${{ matrix.platform }}-nuget-${{ hashFiles('Uviewer/Uviewer.csproj', 'global.json') }}
           restore-keys: |
             ${{ runner.os }}-${{ matrix.platform }}-nuget-
             ${{ runner.os }}-nuget-
@@ -75,10 +76,12 @@ jobs:
           -p:WindowsPackageType=None
 
       # --- 上传构建产物（松散输出，仅作编译可过性校验；非 MSIX 安装包）---
+      # 路径以 git 仓库根为基准：项目文件是 <仓库根>/Uviewer/Uviewer.csproj，
+      # 产物在其 bin/ 下（即 <仓库根>/Uviewer/bin/<Platform>/<配置>/...）。
       - name: 上传构建产物
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Uviewer-Release-${{ matrix.platform }}
-          path: Uviewer/Uviewer/bin/${{ matrix.platform }}/Release/
-          if-no-files-found: warn
+          path: Uviewer/bin/${{ matrix.platform }}/Release/
+          if-no-files-found: error
