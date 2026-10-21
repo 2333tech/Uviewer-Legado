@@ -2,6 +2,8 @@
 
 > 在开源阅读看图工具 [Uviewer](https://github.com/kirinonakar/Uviewer) 的基础上，内置一套与 **Legado（阅读 App）同构的网络书源引擎**，让 Windows 桌面端也能"导入书源 → 搜书 → 在线阅读 → 整本下载"。
 
+![CI](https://github.com/2333tech/Uviewer-Legado/actions/workflows/ci.yml/badge.svg)
+
 ![Uviewer Screenshot1](Uviewer/Assets/UviewerLegado1.png)
 
 ![Screenshot2](Uviewer/Assets/UviewerLegado2.png)
@@ -80,25 +82,62 @@
 
 | 依赖        | 版本                                                                            |
 | ----------- | ------------------------------------------------------------------------------- |
-| Windows     | 10 19041+ / 11（WebView2 Runtime 建议安装，验证码窗口需要）                     |
-| .NET SDK    | **10.0**                                                                        |
-| 工作负载    | 随 SDK 自带（WinUI 3 / Windows App SDK 由 NuGet 还原）                          |
+| Windows     | 10 19041+ / 11（WebView2 Runtime 建议安装，验证码窗口需要；Win11 一般自带）     |
+| .NET SDK    | **10.0**（仓库 `global.json` 已钉 10.0.x，`dotnet --version` 不符会自动报错）   |
+| 工作负载    | 随 SDK 自带（WinUI 3 / Windows App SDK 由 NuGet 还原，**无需安装 VS 工作负载**）|
 | IDE（可选） | Visual Studio 2022+（含「通用 Windows 平台开发」相关组件）或直接用 `dotnet` CLI |
+
+> 应用以 `WindowsAppSDKSelfContained` 方式编译，**运行设备无需安装 Windows App SDK 运行时**；
+> 最低系统为 Win10 19041（2004），Win10/Win11 最新版本均可直接运行。
+
+### 支持架构
+
+| 架构  | 编译参数             | 说明                         |
+| ----- | -------------------- | ---------------------------- |
+| x64   | `-p:Platform=x64`    | **默认与主推架构**           |
+| ARM64 | `-p:Platform=ARM64`  | Surface Pro X / 骁龙本等     |
+| x86   | `-p:Platform=x86`    | 兼容 32 位环境               |
+
+三种架构均已实测 0 错误编译，CI 矩阵（`.github/workflows/ci.yml`）对三架构逐一构建验证。
 
 ### 克隆与构建
 
 ```bash
-git clone https://github.com/kirinonakar/Uviewer-Legado.git
+git clone https://github.com/2333tech/Uviewer-Legado.git
 cd Uviewer-Legado/Uviewer
 
 # 编译（Debug x64；先关闭正在运行的 Uviewer.exe）
 dotnet build Uviewer/Uviewer.csproj -c Debug -p:Platform=x64
 
 # 运行
-Uviewer/Uviewer/bin/x64/Debug/net10.0-windows10.0.19041.0/win10-x64/Uviewer.exe
+Uviewer/Uviewer/bin/x64/Debug/net10.0-windows10.0.26100.0/win-x64/Uviewer.exe
 ```
 
-> Release 构建把 `-c Debug` 换成 `-c Release` 即可。
+### Release 编译
+
+在 Debug 基础上把 `-c Debug` 换成 `-c Release`（其余不变），按需替换目标架构：
+
+```bash
+# Release x64（默认）
+dotnet build Uviewer/Uviewer.csproj -c Release -p:Platform=x64
+
+# Release ARM64 / x86
+dotnet build Uviewer/Uviewer.csproj -c Release -p:Platform=ARM64
+dotnet build Uviewer/Uviewer.csproj -c Release -p:Platform=x86
+```
+
+产物路径形如：
+
+```
+Uviewer/Uviewer/bin/<Platform>/<配置>/net10.0-windows10.0.26100.0/<RID>/
+  x64   → Uviewer/Uviewer/bin/x64/Release/net10.0-windows10.0.26100.0/win-x64/
+  ARM64 → Uviewer/Uviewer/bin/ARM64/Release/net10.0-windows10.0.26100.0/win-arm64/
+  x86   → Uviewer/Uviewer/bin/x86/Release/net10.0-windows10.0.26100.0/win-x86/
+```
+
+> 构建机本机带签名证书（`Uviewer_TemporaryKey.pfx`，不入库），可直接出 MSIX；
+> 在**未放证书的干净环境**（如 CI）编译需追加
+> `-p:EnableMsixTooling=false -p:WindowsPackageType=None` 禁用打包，只出松散输出。
 
 ### 测试与基准（可选，面向开发者）
 
@@ -117,6 +156,9 @@ dotnet run --project Uviewer.Bench -c Release -- p6
 | `main`           | 上游 Uviewer 镜像          |
 | `Legado-Builtin` | 稳定版本分支               |
 | `Legado-DEV`     | **开发主分支**（默认推荐） |
+
+> CI：`.github/workflows/ci.yml` 在 push / PR 时对 **x64 / ARM64 / x86 三架构**做 Release 编译验证，
+> 产物按架构上传为 Artifact（仅作可编译性校验，非安装包）。
 
 ### Vibe Coding 提示
 

@@ -1,12 +1,15 @@
 # =============================================================================
-# Uviewer-Legado CI —— 按 README「编译方法」构建应用
+# Uviewer-Legado CI —— 按 README「编译方法」构建应用（多架构 Release）
 # -----------------------------------------------------------------------------
 # 触发：push / PR 到开发主分支 Legado-DEV（默认推荐）、稳定分支 Legado-Builtin、
-#       上游镜像 main（见 README「分支说明」）。
-# 运行器：windows-latest（必需——WinUI 3 + WindowsAppSDK 依赖 Windows SDK，
+#       上游镜像 main（见 README「分支说明」），以及手动 workflow_dispatch。
+# 运行器：windows-latest（必需——WinUI 3 + Windows App SDK 依赖 Windows SDK，
 #         且主程序目标框架为 net10.0-windows10.0.26100.0）。
-# 构建命令严格对齐 README：
-#   dotnet build Uviewer/Uviewer.csproj -c Debug -p:Platform=x64
+# 架构：矩阵覆盖 x64 / ARM64 / x86（csproj 的 RuntimeIdentifiers 声明了
+#       win-x64 / win-arm64 / win-x86，三架构均已本地实测 0 错误；
+#       输出路径形如 Uviewer/Uviewer/bin/<Platform>/Release/net10.0-windows10.0.26100.0/<RID>/）。
+# 构建命令严格对齐 README（Release 仅把 -c Debug 换成 -c Release）：
+#   dotnet build Uviewer/Uviewer.csproj -c Release -p:Platform=<x64|ARM64|x86>
 # 唯一必要偏离：禁用 MSIX 打包（-p:EnableMsixTooling=false -p:WindowsPackageType=None）。
 #   原因：签名证书 Uviewer_TemporaryKey.pfx 被 .gitignore 排除、未入库，CI 干净检出
 #   无证书会导致 AppxPackageSigning 失败；CI 目标是「验证应用可编译」，无需出安装包。
@@ -21,40 +24,52 @@ on:
     branches: [ Legado-DEV, Legado-Builtin, main ]
   pull_request:
     branches: [ Legado-DEV, Legado-Builtin, main ]
+  workflow_dispatch:
+
+# 同分支新推送取消旧运行，节省构建时长
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
+    name: Release ${{ matrix.platform }}
     runs-on: windows-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ x64, ARM64, x86 ]
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      # --- .NET 10 SDK（与 global.json 一致；README 环境要求 .NET SDK 10.0）---
+      # --- .NET 10 SDK（global.json 已钉 10.0.x / rollForward=latestFeature）---
       - name: 安装 .NET 10 SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
 
-      # --- 缓存 NuGet 包，加速恢复 ---
+      # --- 缓存 NuGet 包，加速恢复（键含平台维度）---
       - name: 缓存 NuGet 包
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('Uviewer/Uviewer/Uviewer.csproj') }}
+          key: ${{ runner.os }}-${{ matrix.platform }}-nuget-${{ hashFiles('Uviewer/Uviewer/Uviewer.csproj', 'global.json') }}
           restore-keys: |
+            ${{ runner.os }}-${{ matrix.platform }}-nuget-
             ${{ runner.os }}-nuget-
 
       # --- 恢复主程序依赖（README 构建目标即 Uviewer/Uviewer.csproj）---
       - name: 恢复依赖
-        run: dotnet restore Uviewer/Uviewer.csproj
+        run: dotnet restore Uviewer/Uviewer.csproj -p:Platform=${{ matrix.platform }}
 
-      # --- 构建 Uviewer（Debug x64，严格对齐 README「编译方法」）---
-      - name: 构建 Uviewer（Debug x64）
+      # --- 构建 Uviewer（Release，矩阵平台；严格对齐 README「编译方法」）---
+      - name: 构建 Uviewer（Release ${{ matrix.platform }}）
         run: >
           dotnet build Uviewer/Uviewer.csproj
-          -c Debug -p:Platform=x64
+          -c Release -p:Platform=${{ matrix.platform }}
           --no-restore
           -p:EnableMsixTooling=false
           -p:WindowsPackageType=None
@@ -64,6 +79,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: Uviewer-build
-          path: Uviewer/Uviewer/bin/x64/Debug/
+          name: Uviewer-Release-${{ matrix.platform }}
+          path: Uviewer/Uviewer/bin/${{ matrix.platform }}/Release/
           if-no-files-found: warn
