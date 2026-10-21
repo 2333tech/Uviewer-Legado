@@ -1,6 +1,7 @@
 using Microsoft.UI;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -250,7 +251,7 @@ namespace Uviewer.Services.Legado
 
                                 // 相关性降序插入：完全匹配的书名永远在最上面，
                                 // 而不是"哪个源先返回就排前面"
-                                var card = BuildResultCard(hit, downloads, palette, cts.Token);
+                                var card = BuildResultCard(hit, downloads, palette, cts.Token, status);
                                 InsertByRelevance(resultPanel, ranked, hit, keyword, card, sequence++);
                             }
 
@@ -337,7 +338,8 @@ namespace Uviewer.Services.Legado
             BookSourceSearchService.BookSearchHit hit,
             BookSourceDownloadService downloads,
             LegadoPalette palette,
-            CancellationToken searchToken)
+            CancellationToken searchToken,
+            TextBlock status)
         {
             var primary = new TextBlock
             {
@@ -348,6 +350,23 @@ namespace Uviewer.Services.Legado
                 MaxLines = 1,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
             };
+
+            // 音视频书源：直接在结果上标注「⚠ 不支持音视频」（约定：本应用始终不实现音视频，
+            // 但也不隐藏结果——用户可能正想知道"这个源里有这本书"）。标题列仍是 Star，
+            // 徽标 Auto，长书名照旧在自己的列里省略，不会把徽标/下载按钮顶出去。
+            FrameworkElement titleRow = primary;
+            if (hit.IsAudioVideo)
+            {
+                var titleGrid = new Grid { ColumnSpacing = 8 };
+                titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                titleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                Grid.SetColumn(primary, 0);
+                var badge = BuildUnsupportedMediaBadge(palette);
+                Grid.SetColumn(badge, 1);
+                titleGrid.Children.Add(primary);
+                titleGrid.Children.Add(badge);
+                titleRow = titleGrid;
+            }
 
             // 第二行拆成"书源名（纯文字）+ 最新章节（可点看目录）"两段。
             // 落后一版把整行做成 IsHitTestVisible=false，点章节名会落到卡片的"打开书籍"上——
@@ -383,6 +402,13 @@ namespace Uviewer.Services.Legado
                     return;
                 }
 
+                // 音视频结果不拉目录（见下方 FillLatest 的说明）
+                if (hit.IsAudioVideo)
+                {
+                    e2.Handled = true;
+                    return;
+                }
+
                 // 标记已处理：不再冒泡到卡片的"打开书籍"
                 e2.Handled = true;
                 ShowChapterListFlyout(latestLabel, latestHolder, hit, palette);
@@ -399,9 +425,9 @@ namespace Uviewer.Services.Legado
             var textStack = new Grid { VerticalAlignment = VerticalAlignment.Center };
             textStack.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             textStack.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            Grid.SetRow(primary, 0);
+            Grid.SetRow(titleRow, 0);
             Grid.SetRow(secondaryRow, 1);
-            textStack.Children.Add(primary);
+            textStack.Children.Add(titleRow);
             textStack.Children.Add(secondaryRow);
 
             var downloadButton = BuildDownloadButton(hit, downloads, latestLabel, palette, searchToken);
@@ -442,13 +468,62 @@ namespace Uviewer.Services.Legado
                     return;
                 }
 
+                // 音视频结果只标注、不打开：本应用始终不实现音视频，打开只会得到"看起来坏掉"的文本会话
+                if (hit.IsAudioVideo)
+                {
+                    status.Text = $"「{hit.Name}」来自音视频书源（{hit.SourceName}），本应用只支持文本阅读。";
+                    return;
+                }
+
                 OpenHit(hit);
             };
 
-            // 后台补最新章节名（不阻塞 UI；失败静默，保留占位文案）
-            _ = FillLatestChapterAsync(hit, latestLabel, latestHolder, searchToken);
+            // 后台补最新章节名（不阻塞 UI；失败静默，保留占位文案）。
+            // 音视频结果不拉目录：本应用始终不处理音视频，没必要为"不读的结果"再打一次站点请求。
+            if (hit.IsAudioVideo)
+            {
+                latestLabel.Text = "｜音视频结果，不提供目录";
+                latestLabel.IsHitTestVisible = false;
+                ToolTipService.SetToolTip(latestLabel, "音视频结果不支持目录/阅读");
+            }
+            else
+            {
+                _ = FillLatestChapterAsync(hit, latestLabel, latestHolder, searchToken);
+            }
 
             return card;
+        }
+
+        /// <summary>
+        /// 音视频结果徽标：黄色三角感叹号 + 「不支持音视频」。
+        /// <para><b>为什么标黄而不是标红</b>：这不是错误，而是产品边界（本应用只做文本阅读）；
+        /// 红色会被误读成"这条结果坏了/站点失效"。</para>
+        /// <para>配色遵循弹窗铁律：文字一律灰度，彩色只留给语义 Emoji（⚠ 取 0xE88A00，
+        /// 与书源管理列表的能力徽标同一色）；<c>IsHitTestVisible=false</c>，
+        /// 让点击穿透到卡片（不改变"点卡片打开"的既有行为）。</para>
+        /// </summary>
+        private static TextBlock BuildUnsupportedMediaBadge(LegadoPalette palette)
+        {
+            var badge = new TextBlock
+            {
+                FontSize = 12,
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false,
+            };
+
+            badge.Inlines.Add(new Run
+            {
+                Text = "⚠ ",
+                Foreground = LegadoTheme.Rgb(0xE8, 0x8A, 0x00),
+            });
+            badge.Inlines.Add(new Run
+            {
+                Text = "不支持音视频",
+                Foreground = palette.TextSecondary,
+            });
+
+            ToolTipService.SetToolTip(badge, "该结果来自音视频类书源（bookSourceType 1 音频 / 4 视频）。本应用只处理文本，音视频不在支持范围内。");
+            return badge;
         }
 
         /// <summary>
@@ -524,6 +599,23 @@ namespace Uviewer.Services.Legado
             LegadoPalette palette,
             CancellationToken searchToken)
         {
+            // 音视频结果不提供下载：文本下载器拿不到可读正文（调用只会产出空书/错误提示）。
+            // 禁用按钮而不是隐藏，让"为什么不能下"有悬停说明，也保持卡片右侧布局稳定。
+            if (hit.IsAudioVideo)
+            {
+                var blocked = new Button
+                {
+                    Content = "下载",
+                    MinWidth = 64,
+                    Padding = new Thickness(10, 4, 10, 4),
+                    VerticalAlignment = VerticalAlignment.Center,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    IsEnabled = false,
+                };
+                ToolTipService.SetToolTip(blocked, "音视频结果不支持下载（本应用只处理文本类书源）");
+                return blocked;
+            }
+
             var button = new Button
             {
                 Content = "下载",

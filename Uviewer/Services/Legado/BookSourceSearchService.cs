@@ -34,13 +34,19 @@ namespace Uviewer.Services.Legado
             string SourceUrl,
             IReadOnlyList<BookSearchHit> Hits);
 
-        /// <summary>单条搜索命中（书名/作者/书籍 URL + 所属书源）。</summary>
+        /// <summary>
+        /// 单条搜索命中（书名/作者/书籍 URL + 所属书源）。
+        /// <para><b>IsAudioVideo</b>（2026-10-21 约定）：结果来自音频（<c>bookSourceType=1</c>）或
+        /// 视频（<c>=4</c>）书源时为 true。本应用**始终不实现音视频播放**，搜索处只负责在卡片上
+        /// 标注「⚠ 不支持音视频」——不隐藏结果（用户可能想知道"这个源其实有这本书"），也不假装能读。</para>
+        /// </summary>
         public sealed record BookSearchHit(
             string Name,
             string Author,
             string BookUrl,
             string SourceName,
-            string SourceUrl);
+            string SourceUrl,
+            bool IsAudioVideo = false);
 
         /// <summary>
         /// 在全部启用书源中搜索书籍。
@@ -132,15 +138,23 @@ namespace Uviewer.Services.Legado
             return groups;
         }
 
-        /// <summary>把库侧搜索结果整形为一个书源分组。</summary>
-        private static SearchGroup BuildGroup(BookSourceModel source, List<CoreSearchResult> results) =>
-            new(source.BookSourceName, source.BookSourceUrl,
+        /// <summary>
+        /// 把库侧搜索结果整形为一个书源分组。
+        /// <para>音频/视频判定按书源的 <c>BookSourceType</c>（1 音频 / 4 视频）：这类结果在 UI 上
+        /// 只加「不支持音视频」标注，其余字段照旧（书名/作者/URL 都来自真实搜索响应）。</para>
+        /// </summary>
+        private static SearchGroup BuildGroup(BookSourceModel source, List<CoreSearchResult> results)
+        {
+            var audioVideo = source.SourceKind is Models.BookSourceKind.Audio or Models.BookSourceKind.Video;
+            return new SearchGroup(source.BookSourceName, source.BookSourceUrl,
                 results.Select(r => new BookSearchHit(
                     r.Name ?? string.Empty,
                     r.Author ?? string.Empty,
                     r.BookUrl ?? string.Empty,
                     source.BookSourceName,
-                    source.BookSourceUrl)).ToList());
+                    source.BookSourceUrl,
+                    audioVideo)).ToList());
+        }
 
         /// <summary>
         /// 单源搜索：书源级异常不外抛（一个源挂掉不该让整次搜索失败），

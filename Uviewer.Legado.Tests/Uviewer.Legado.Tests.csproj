@@ -34,6 +34,11 @@
     <!-- 书源门面（阶段 4-3 验收："同一 BookSourceService 下搜索与阅读共享 Cookie"）。
          它零 WinUI 依赖，链接进来测的才是真实接线，而不是复制一份假服务。 -->
     <Compile Include="..\Uviewer\Services\Legado\BookSourceService.cs" Link="Host\BookSourceService.cs" />
+    <!-- 多源搜索编排（纯逻辑 + Channels）：用于锁定"搜索结果来自音视频书源"的判定 -->
+    <Compile Include="..\Uviewer\Services\Legado\BookSourceSearchService.cs" Link="Host\BookSourceSearchService.cs" />
+    <!-- 阅读会话（纯逻辑 + 引擎调用）：BookSourceSearchService.CreateSession 的返回类型，
+         本身也不依赖 WinUI，顺带让阅读链路可被集成测试覆盖 -->
+    <Compile Include="..\Uviewer\Services\Legado\BookSourceReadingSession.cs" Link="Host\BookSourceReadingSession.cs" />
     <!-- 分章/目录生成：TextTocBuilder（纯逻辑，不依赖 WinUI，可直接链接） -->
     <Compile Include="..\Uviewer\Services\Legado\TextTocBuilder.cs" Link="Host\TextTocBuilder.cs" />
     <!-- 规则编辑规格：字段顺序/标签/克隆/默认值/校验（纯逻辑，不依赖 WinUI） -->
