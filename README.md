@@ -17,7 +17,7 @@
 
 这是本项目的**长期设计决策**，不是待办事项。
 
-## ✨ 本项目新增的功能
+## ✨ 相对Fork源的修改
 
 ### 1. Legado 书源引擎（核心）
 
@@ -27,17 +27,9 @@
 - **在线阅读**：详情 → 目录 → 正文全链路，正文经「替换净化 + 标题规则」处理后交给原生分页画布排版；
 - **整本下载**：章节并发下载、每源限速（`concurrentRate`）、失败章占位、零正文判失败。
 
-### 2. 脚本与规则引擎（阶段 4 全量落地）
+### 2. 脚本与规则引擎
 
-对 legado 书源里的 JavaScript 做了系统性实现，408 条优质样本中**阅读链路可跑 397 条**：
-
-| 层 | 能力 |
-|---|---|
-| T0 纯函数 | `java.ajax` 之外的全部纯函数：加密（AES/DES/3DES × ECB/CBC）、摘要、HMAC、Base64/hex 字节数组族等 |
-| 全局对象 | `source` / `book` / `chapter` / `cookie` / `cache` + 变量持久化（跨链落盘） |
-| T1 网络 | `java.ajax / post / connect / head` 等，与静态抓取**共用 Cookie 会话**，统一限速 |
-| T2 规则 | `getElements / getElement / getStringList / setContent`，元素快照 + JSON 节点透传 |
-| T4 浏览器 | `startBrowser / startBrowserAwait / webView` 接入 WebView2 取数链 |
+对 legado 书源里的 JavaScript 做了系统性实现：
 
 ### 3. WebView2 验证码窗口
 
@@ -84,11 +76,11 @@
 
 ### 环境要求
 
-| 依赖 | 版本 |
-|---|---|
-| Windows | 10 19041+ / 11（WebView2 Runtime 建议安装，验证码窗口需要） |
-| .NET SDK | **10.0** |
-| 工作负载 | 随 SDK 自带（WinUI 3 / Windows App SDK 由 NuGet 还原） |
+| 依赖        | 版本                                                                            |
+| ----------- | ------------------------------------------------------------------------------- |
+| Windows     | 10 19041+ / 11（WebView2 Runtime 建议安装，验证码窗口需要）                     |
+| .NET SDK    | **10.0**                                                                        |
+| 工作负载    | 随 SDK 自带（WinUI 3 / Windows App SDK 由 NuGet 还原）                          |
 | IDE（可选） | Visual Studio 2022+（含「通用 Windows 平台开发」相关组件）或直接用 `dotnet` CLI |
 
 ### 克隆与构建
@@ -118,17 +110,28 @@ dotnet run --project Uviewer.Bench -c Release -- p6
 
 ### 分支说明
 
-| 分支 | 用途 |
-|---|---|
-| `main` | 上游 Uviewer 镜像 |
-| `Legado-Builtin` | 集成书源引擎的快照分支（与 `Legado-DEV` 同步） |
-| `Legado-DEV` | **开发主分支**（默认推荐） |
+| 分支             | 用途                       |
+| ---------------- | -------------------------- |
+| `main`           | 上游 Uviewer 镜像          |
+| `Legado-Builtin` | 稳定版本分支               |
+| `Legado-DEV`     | **开发主分支**（默认推荐） |
+
+### Vibe Coding 提示
+
+部分代码**以及Readme**由多个生成式人工智能模型接力构建，**谨慎**参考和于生产环境使用。
+部分功能细节时间有限暂未测试，可能存在问题。
+
+### 与Legado并不相同的特征
+
+本地保存为纯文本，没有添加封面的开发计划。
+本地书籍存储结构与Legado不同，下载后直接合并为TXT。
+不准备支持订阅源和在线规则更新，不准备支持多样化主题以及显示样式：遵循扁平化设计语言和WinUI3。
 
 ## 🙏 致谢
 
 - 上游原项目：**Uviewer** by [kirinonakar](https://github.com/kirinonakar)
-- 书源规则语义对齐：**legado**（阅读 3.0）、**reader**
-- 旧版 README（开发过程视角的详细说明）已存档至 [`docs/README-archived-20261021.md`](docs/README-archived-20261021.md)。
+- 重要引擎参考：**reader** by [hadc188](https://github.com/hadc188)
+- 书源规则语义对齐：**legado-with-MD3** by [HapeLee](https://github.com/HapeLee)
 
 ## 📄 License
 
