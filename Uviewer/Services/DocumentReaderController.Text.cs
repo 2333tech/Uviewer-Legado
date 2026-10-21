@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Windows.Storage;
 using Uviewer.Models;
 using Uviewer.Services;
+using Uviewer.Services.Legado.BookSources;
 
 namespace Uviewer
 {
@@ -187,7 +188,18 @@ CancelAndResetGlobalTextCts();
       // 抓取阶段（整本下载）现在只落原文，净化统一在这里做；
        // 这样下载下来的书重新打开时，总开关依然能立即生效。
         _currentTextRawContent = content;          // 留一份原文供阅读模式开关来回切换
-        ApplyReadingModeForCacheMiss(file.Name);   // 无缓存 ⇒ TXT 不开启阅读模式
+        if (DownloadedBookMarker.IsDownloadedFile(file.Path))
+        {
+            // 书源下载文件：自动开启阅读模式（替换净化 + 标题目录随阅读模式一起生效），
+            // 打开完成后再自动补建章节缓存（_pendingAutoTextCache，见 RunPendingAutoTextCacheAsync）。
+            // 下载文件头部自带 UUID 标记，之后改名/移动也能凭它找回缓存。
+            _isAozoraMode = true;
+            _pendingAutoTextCache = true;
+        }
+        else
+        {
+            ApplyReadingModeForCacheMiss(file.Name);   // 无缓存 ⇒ TXT 不开启阅读模式
+        }
         content = PurifyTextBeforeDisplay(content); // 阅读模式关闭时原样返回
 
         await DisplayLoadedText(content, file.Name, file.Path, token);
@@ -196,6 +208,12 @@ CancelAndResetGlobalTextCts();
                 await RevealTextContentAsync(loadGeneration, token);
                 SyncSidebarSelection(new ImageEntry { FilePath = file.Path, DisplayName = file.Name });
                 UpdateTextCacheMenuState();
+
+                if (_pendingAutoTextCache)
+                {
+                    _pendingAutoTextCache = false;
+                    _ = RunPendingAutoTextCacheAsync();   // 尽力而为的后台缓存，不阻塞打开
+                }
             }
             catch (Exception ex)
             {

@@ -138,6 +138,12 @@
                                         <FontIcon Glyph="&#xE9D5;"/>
                                     </MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
+                                <!-- 在线更新：按下载文件的原始链接标记差分更新当前打开的书 -->
+                                <MenuFlyoutItem x:Name="LegadoOnlineUpdateMenuItem" Text="{x:Bind app:Strings.LegadoOnlineUpdate}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE72C;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
                                 <MenuFlyoutSeparator/>
                                 <MenuFlyoutItem x:Name="LegadoImportReplaceRulesMenuItem" Text="{x:Bind app:Strings.LegadoImportReplaceRules}">
                                     <MenuFlyoutItem.Icon>

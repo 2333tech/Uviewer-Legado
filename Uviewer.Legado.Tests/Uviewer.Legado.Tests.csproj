@@ -50,6 +50,8 @@
     <Compile Include="..\Uviewer\Services\Legado\SearchRelevance.cs" Link="Host\SearchRelevance.cs" />
     <!-- 下载目录规则：默认值/校验/规范化（纯逻辑，零 WinUI 依赖） -->
     <Compile Include="..\Uviewer\Services\Legado\DownloadPathRules.cs" Link="Host\DownloadPathRules.cs" />
+    <!-- 整本下载/差分在线更新：合并 TXT 写入 + sidecar + UpdateAsync（纯逻辑 + 引擎调用，零 WinUI） -->
+    <Compile Include="..\Uviewer\Services\Legado\BookSourceDownloadService.cs" Link="Host\BookSourceDownloadService.cs" />
   </ItemGroup>
 
   <ItemGroup>

@@ -89,6 +89,41 @@ namespace Uviewer.Services.Legado
             }
         }
 
+        /// <summary>
+        /// 按文件 UUID 找缓存条目（路径 key 未命中时的回退查找：
+        /// 文件被改名/移动后，凭文件头标记里的 UUID 找回原缓存）。
+        /// <para>缓存目录内条目数有限（每文件一个），逐个反序列化代价可忽略；
+        /// 损坏文件按"没有"跳过（与 <see cref="Load"/> 同口径）。</para>
+        /// </summary>
+        public TextCacheEntry? FindByUuid(string uuid)
+        {
+            if (string.IsNullOrEmpty(uuid) || !System.IO.Directory.Exists(_directory))
+            {
+                return null;
+            }
+
+            foreach (var file in System.IO.Directory.EnumerateFiles(_directory, "*.json"))
+            {
+                try
+                {
+                    var entry = JsonSerializer.Deserialize<TextCacheEntry>(
+                        File.ReadAllText(file), JsonOptions);
+                    if (entry is not null
+                        && entry.Version == TextCacheFormat.Version
+                        && string.Equals(entry.Uuid, uuid, StringComparison.Ordinal))
+                    {
+                        return entry;
+                    }
+                }
+                catch
+                {
+                    // 单个缓存损坏：跳过继续找
+                }
+            }
+
+            return null;
+        }
+
         /// <summary>保存（覆盖写）。原子替换：tmp + File.Move，半截文件不会出现。</summary>
         public async Task SaveAsync(TextCacheEntry entry)
         {

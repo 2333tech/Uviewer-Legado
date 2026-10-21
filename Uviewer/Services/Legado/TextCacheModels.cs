@@ -60,6 +60,14 @@ namespace Uviewer.Services.Legado
         /// <summary>源键（本地文件 = 规范化全路径；压缩包条目 = 包路径\u0001条目键）。</summary>
         public string SourceKey { get; set; } = string.Empty;
 
+        /// <summary>
+        /// 文件唯一身份（<see cref="DownloadedBookMarker"/> 头部标记的 UUID；无标记的旧缓存为空）。
+        /// <para><b>为什么需要</b>：SourceKey 按完整路径算，文件改名/移动后缓存就"失联"了。
+        /// UUID 写在文件内容里跟着文件走——打开时先按路径查、未命中再按 UUID 找回（见
+        /// <see cref="TextCacheStore.FindByUuid"/>），改名后缓存与阅读进度仍然有效。</para>
+        /// </summary>
+        public string Uuid { get; set; } = string.Empty;
+
         /// <summary>保存时的文件字节数（变化即失效）。</summary>
         public long FileSize { get; set; }
 

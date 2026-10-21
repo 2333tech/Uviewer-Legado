@@ -30,6 +30,9 @@ namespace Uviewer.Controls
 
         /// <summary>并行设置入口被点击（调整搜索 / 下载并发数）。</summary>
         public event EventHandler? LegadoParallelSettingsRequested;
+
+        /// <summary>在线更新入口被点击（差分更新当前打开的书源下载文件）。</summary>
+        public event EventHandler? LegadoOnlineUpdateRequested;
         /// <summary>导入净化（替换）规则 JSON 入口被点击。</summary>
         public event EventHandler? LegadoImportReplaceRulesRequested;
         /// <summary>查看已导入净化规则（逐条开关）入口被点击。</summary>
@@ -150,6 +153,7 @@ namespace Uviewer.Controls
             LegadoImportMenuItem.Click += (_, _) => LegadoImportRequested?.Invoke(this, EventArgs.Empty);
             LegadoDownloadSettingsMenuItem.Click += (_, _) => LegadoDownloadSettingsRequested?.Invoke(this, EventArgs.Empty);
             LegadoParallelSettingsMenuItem.Click += (_, _) => LegadoParallelSettingsRequested?.Invoke(this, EventArgs.Empty);
+            LegadoOnlineUpdateMenuItem.Click += (_, _) => LegadoOnlineUpdateRequested?.Invoke(this, EventArgs.Empty);
             LegadoImportReplaceRulesMenuItem.Click += (_, _) => LegadoImportReplaceRulesRequested?.Invoke(this, EventArgs.Empty);
             LegadoShowReplaceRulesMenuItem.Click += (_, _) => LegadoShowReplaceRulesRequested?.Invoke(this, EventArgs.Empty);
             LegadoImportTitleRulesMenuItem.Click += (_, _) => LegadoImportTitleRulesRequested?.Invoke(this, EventArgs.Empty);

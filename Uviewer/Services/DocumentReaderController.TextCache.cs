@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Uviewer.Models;
 using Uviewer.Services;
 using Uviewer.Services.Legado;
+using Uviewer.Services.Legado.BookSources;
 using Windows.Storage;
 
 namespace Uviewer
@@ -125,10 +126,25 @@ namespace Uviewer
             }
 
             var entry = TextCacheStore.Load(key);
-            if (entry is null || !IsTextCacheUsable(entry, key))
+            if (entry is null)
+            {
+                // 路径 key 未命中 → 按文件头 UUID 回退查找：
+                // 文件被改名/移动后路径变了，但 UUID 在文件内容里跟着文件走，
+                // 凭它找回原缓存（阅读进度、窗口模式全部保留）。
+                var uuid = DownloadedBookMarker.TryParseHeader(rawContent)?.Uuid;
+                if (!string.IsNullOrEmpty(uuid))
+                {
+                    entry = TextCacheStore.FindByUuid(uuid);
+                }
+            }
+
+            if (entry is null || !IsTextCacheUsable(entry, entry.SourceKey))
             {
                 return false;
             }
+
+            // 采纳条目自己记录的 key（UUID 回退时路径与当前不同——后续窗口装配/进度更新都以它为准）
+            key = entry.SourceKey;
 
             _textCacheEntry = entry;
             _textCacheSourceKey = key;
@@ -650,6 +666,11 @@ namespace Uviewer
                 return;
             }
 
+            // UUID：文件头的唯一身份标记（下载文件自带 → 复用；普通 TXT 无 → 生成并写回文件头）。
+            // 写在文件内容里才能跟随改名/移动——之后打开按路径查不到缓存时，凭 UUID 找回（见 TryOpenWithTextCacheAsync）。
+            var marker = await EnsureTextFileUuidAsync(raw).ConfigureAwait(true);
+            raw = marker.Raw;
+
             var service = BookSources;
             var titleRules = service.TitleRules.GetEnabledOrdered();
 
@@ -701,6 +722,7 @@ namespace Uviewer
             var entry = new TextCacheEntry
             {
                 SourceKey = key,
+                Uuid = marker.Info?.Uuid ?? string.Empty,
                 FileSize = size,
                 FileLastWriteUtcTicks = mtime,
                 ReplaceRulesFingerprint = TextCacheLogic.ComputeReplaceRulesFingerprint(service.ReplaceRules.GetAll()),
@@ -731,6 +753,74 @@ namespace Uviewer
                 ? $"已缓存：{chapters.Count} 章（注意：净化后仅识别到部分标题，目录名按原文生成）"
                 : $"已缓存：{chapters.Count} 章，之后打开只净化前后章节";
             ShowNotification(message, "\uE73E", "Green");
+        }
+
+        /// <summary>
+        /// 确保当前文件头有 UUID 标记（<see cref="DownloadedBookMarker"/>）：
+        /// 已有 → 原样返回；无且是本地文件 → 生成 UUID、把标记块插到文件头并<b>写回磁盘</b>
+        /// （保持原编码：用与读取一致的探测结果编码写回；原子替换）。
+        /// <para>归档内条目无法回写文件 → 不生成 UUID（缓存仍按归档路径+条目键关联）。</para>
+        /// </summary>
+        private async Task<(string Raw, DownloadedBookMarker.MarkerInfo? Info)> EnsureTextFileUuidAsync(string raw)
+        {
+            var existing = DownloadedBookMarker.TryParseHeader(raw);
+            if (existing is not null)
+            {
+                return (raw, existing);
+            }
+
+            if (string.IsNullOrEmpty(_currentTextFilePath) || !File.Exists(_currentTextFilePath))
+            {
+                return (raw, null);
+            }
+
+            var uuid = Guid.NewGuid().ToString("N");
+            var block = DownloadedBookMarker.BuildHeaderBlock(uuid, null, null, null);
+            var newRaw = block + raw;
+
+            try
+            {
+                // 用与读取相同的编码写回（TextEncodingService 从文件字节探测），避免 GBK 等文件被写坏
+                var bytes = await File.ReadAllBytesAsync(_currentTextFilePath).ConfigureAwait(true);
+                var encoding = TextEncodingService.GetTextEncoding(bytes, _settingsManager.EncodingName);
+                var tmpPath = _currentTextFilePath + ".uuid.tmp";
+                await File.WriteAllBytesAsync(
+                    tmpPath, encoding.GetBytes(newRaw)).ConfigureAwait(true);
+                File.Move(tmpPath, _currentTextFilePath, overwrite: true);
+
+                // 内存里的 raw 同步为带标记的新内容：后续切章/缓存口径与磁盘一致
+                return (newRaw, DownloadedBookMarker.TryParseHeader(newRaw));
+            }
+            catch (Exception ex)
+            {
+                // 写回失败：缓存照建（只是改路径后无法凭 UUID 找回），不阻断
+                System.Diagnostics.Debug.WriteLine($"写回 UUID 标记失败: {ex.Message}");
+                return (raw, null);
+            }
+        }
+
+        /// <summary>待执行的自动章节缓存（打开书源下载 TXT 时置位；打开完成后消费一次）。</summary>
+        private bool _pendingAutoTextCache;
+
+        /// <summary>
+        /// 自动章节缓存（打开书源下载的 TXT 后触发）：阅读模式已自动开启，
+        /// 这里补上"自动开启本地缓存"——复用手动保存缓存的全部逻辑（识别目录 → 全量校验 → 落盘）。
+        /// <para><b>尽力而为</b>：延迟触发等首屏渲染稳定；失败只记调试日志，不打扰用户。</para>
+        /// </summary>
+        private async Task RunPendingAutoTextCacheAsync()
+        {
+            try
+            {
+                await Task.Delay(1500).ConfigureAwait(true);
+                if (_isAozoraMode && !string.IsNullOrEmpty(_currentTextFilePath))
+                {
+                    await SaveTextCacheAsync().ConfigureAwait(true);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"自动章节缓存失败: {ex.Message}");
+            }
         }
 
         /// <summary>重新读当前源的原文（保存缓存用；显示中的是净化后文本，不能反推）。</summary>

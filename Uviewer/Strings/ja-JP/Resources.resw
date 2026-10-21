@@ -738,6 +738,8 @@
   <data name="LegadoDownloadSettingsHint" xml:space="preserve"><value>書籍全体のダウンロード先フォルダーを設定します（既定：ユーザーの「ダウンロード」フォルダー）</value></data>
   <data name="LegadoParallelSettings" xml:space="preserve"><value>並列数設定…</value></data>
   <data name="LegadoParallelSettingsHint" xml:space="preserve"><value>検索・一括ダウンロードの同時実行数を調整します（検索 1–64、ダウンロード 1–16）。数値が大きいほど速くなりますが、サイトへの負荷も増します。</value></data>
+  <data name="LegadoOnlineUpdate" xml:space="preserve"><value>オンライン更新</value></data>
+  <data name="LegadoOnlineUpdateHint" xml:space="preserve"><value>開いている書籍の元リンクから章を更新します（新規・変更章のみダウンロード。目次が大幅に変更された場合は別名で保存します）。</value></data>
   <data name="LegadoManageSourcesHint" xml:space="preserve"><value>書籍ソース・浄化ルール・タイトル规则的まとめての管理</value></data>
   <data name="LegadoImportReplaceRules" xml:space="preserve"><value>浄化ルール JSON をインポート…</value></data>
   <data name="LegadoShowReplaceRules" xml:space="preserve"><value>浄化ルールを表示 / 切り替え</value></data>

@@ -738,6 +738,8 @@
   <data name="LegadoDownloadSettingsHint" xml:space="preserve"><value>책 전체 다운로드 저장 폴더를 설정합니다(기본: 사용자의 "다운로드" 폴더)</value></data>
   <data name="LegadoParallelSettings" xml:space="preserve"><value>병렬 설정…</value></data>
   <data name="LegadoParallelSettingsHint" xml:space="preserve"><value>다중 소스 검색 및 전체 다운로드의 동시 실행 수를 조정합니다(검색 1–64, 다운로드 1–16). 값이 클수록 빠르지만 사이트 부하도 커집니다.</value></data>
+  <data name="LegadoOnlineUpdate" xml:space="preserve"><value>온라인 업데이트</value></data>
+  <data name="LegadoOnlineUpdateHint" xml:space="preserve"><value>현재 열린 책의 원본 링크로 챕터를 업데이트합니다(신규/변경 챕터만 다운로드, 목차 대규모 변경 시 다른 이름으로 저장).</value></data>
   <data name="LegadoManageSourcesHint" xml:space="preserve"><value>도서 목록, 정제 규칙, 제목 규칙을 한곳에서 관리</value></data>
   <data name="LegadoImportReplaceRules" xml:space="preserve"><value>정제 규칙 JSON 가져오기…</value></data>
   <data name="LegadoShowReplaceRules" xml:space="preserve"><value>정제 규칙 보기 / 켜기·끄기</value></data>

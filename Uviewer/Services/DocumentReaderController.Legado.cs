@@ -925,7 +925,9 @@ namespace Uviewer
                     new TextBlock
                     {
                         Text = "整本下载的书籍会保存到此目录（目录不存在时在首次下载时自动创建）。"
-                             + $"默认：{BookSourceService.DefaultDownloadDirectory}",
+                             + $"默认：{BookSourceService.DefaultDownloadDirectory}"
+                             + "\n下载结果一律合并保存为单个 TXT 文件（一章一段、章名独立成行），"
+                             + "文件头带原始链接标记，支持「在线更新」差分续更。",
                         TextWrapping = TextWrapping.Wrap,
                         FontSize = 12,
                         Foreground = palette.TextSecondary,
@@ -1094,6 +1096,62 @@ namespace Uviewer
 
             var (s, d) = await service.SetParallelismAsync(search, download).ConfigureAwait(true);
             ShowNotification($"并行数已保存：搜索 {s} / 下载 {d}", "\uE73E", "Green");
+        }
+
+        /// <summary>
+        /// 在线更新（书源管理二级菜单入口）：对<b>当前打开的文档</b>执行差分更新。
+        /// <para>只有带原始链接标记的书源下载 TXT 才能更新（标记在下载时写入文件头，
+        /// 目录快照在同目录 sidecar）。差分更新只联网下载新增/变化章；远程目录大规模修改时
+        /// 引擎侧会自动另存新文件（原文件不动）。更新成功后自动重载当前文件——
+        /// 旧章节缓存因文件变化失效，重载后按"下载文件"口径重建阅读模式与缓存。</para>
+        /// </summary>
+        internal async Task ShowOnlineUpdateAsync()
+        {
+            var path = _currentTextFilePath;
+            if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            {
+                ShowNotification("请先打开书源下载的 TXT 文件再在线更新", "\uE783", "Red");
+                return;
+            }
+
+            if (!DownloadedBookMarker.IsDownloadedFile(path))
+            {
+                ShowNotification("当前文件不是书源下载的文本（缺原始链接标记），无法在线更新", "\uE783", "Red");
+                return;
+            }
+
+            ShowNotification("正在检查远程目录…", "\uE8F1", "Gray");
+
+            var service = BookSources;
+            await service.EnsureInitializedAsync().ConfigureAwait(true);
+            var downloads = new BookSourceDownloadService(service);
+            var result = await downloads.UpdateAsync(path).ConfigureAwait(true);
+
+            if (!result.Success)
+            {
+                ShowNotification(result.Message, "\uE783", "Red");
+                return;
+            }
+
+            if (result.MassiveResaved)
+            {
+                // 大改另存：原文件保留，新文件另存——不自动切换，由用户决定是否打开
+                ShowNotification(result.Message, "\uE73E", "Green");
+                return;
+            }
+
+            ShowNotification($"{result.Message}，正在重新加载…", "\uE73E", "Green");
+
+            // 重载当前文件：刷新内容与章节缓存（旧缓存因文件变化自动失效）
+            try
+            {
+                var file = await StorageFile.GetFileFromPathAsync(path).AsTask().ConfigureAwait(true);
+                await LoadTextFileAsync(file).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                ShowNotification($"更新完成，但重新加载失败：{ex.Message}", "\uE783", "Red");
+            }
         }
 
         /// <summary>

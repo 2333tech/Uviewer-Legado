@@ -42,6 +42,26 @@ public sealed class ContentPurifier
     private const int DefaultTimeoutMillisecond = 3000;
 
     /// <summary>
+    /// <b>底层内置净化规则</b>（用户不可见、不可关，先于用户规则与总开关执行）：
+    /// 剔除整行形如「分卷阅读」「分卷阅读001」的行（全角数字也认）。
+    /// <para><b>为什么是内置而不是默认用户规则</b>：这类行是站点分页脚注/灌水标记，
+    /// 出现即噪音——不该出现在目录标题里（标题通道先于分章识别生效 → 该行被剔成空行，
+    /// 永远不可能被当成章名），也不该留在正文里。用户规则列表为空时也要生效，
+    /// 因此挂在 <see cref="Apply"/>/<see cref="ApplyToTitle"/> 入口而不是规则快照里。</para>
+    /// <para><b>必须整行匹配</b>：只吃「分卷阅读±数字」独占一行的形态，
+    /// 正文中恰好包含"分卷阅读"字样的正常句子不受影响。</para>
+    /// </summary>
+    private static readonly Regex BuiltinNoiseLineRegex = new(
+        "^[ \\t\\u3000]*分卷阅读[0-9０-９]{0,6}[ \\t\\u3000]*\\r?\\n?",
+        RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+    /// <summary>应用底层内置净化（快速路径：文本不含关键词时零正则开销）。</summary>
+    internal static string StripBuiltinNoise(string text) =>
+        string.IsNullOrEmpty(text) || !text.Contains("分卷阅读", StringComparison.Ordinal)
+            ? text
+            : BuiltinNoiseLineRegex.Replace(text, string.Empty);
+
+    /// <summary>
     /// 正则编译缓存上限。与 <see cref="RuleAnalyzer.GetRegex"/> 的正则缓存**分开**：
     /// 那里是 legado 行内 ## 规则（Singleline），这里是用户替换规则（Multiline + 超时），
     /// 选项不同不能共用缓存。
@@ -83,6 +103,9 @@ public sealed class ContentPurifier
     /// <param name="ctx">书籍上下文（scope 匹配 + useReplaceRule 开关）。</param>
     public string Apply(string text, in PurifyContext ctx)
     {
+        // ⓪ 底层内置净化：先于一切用户规则/开关（见 StripBuiltinNoise 注释）
+        text = StripBuiltinNoise(text);
+
         // ① 空文本 → 空串（reader: if (!text) return ''）
         if (string.IsNullOrEmpty(text))
         {
@@ -210,6 +233,9 @@ public sealed class ContentPurifier
     /// </summary>
     public string ApplyToTitle(string titleText, in PurifyContext ctx)
     {
+        // ⓪ 底层内置净化：标题行同样剔除（先于标题识别 → "分卷阅读001" 永远不可能成为目录标题）
+        titleText = StripBuiltinNoise(titleText);
+
         if (string.IsNullOrEmpty(titleText) || ctx.UseReplaceRule is false)
         {
             return titleText;
