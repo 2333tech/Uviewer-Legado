@@ -583,6 +583,9 @@ public sealed class BookSourceEngine
             return (string.Empty, url);
         }
 
+        // 书源级请求头（UA/Referer 决定站点给哪套页面，缺了它部分源直接是桌面 SPA）
+        spec = WithSourceHeaders(spec, source, requestUrl);
+
         // 阶段 4-3：限速随请求走（同一书源的搜索/目录/正文/java.ajax 共用一把闸门）
         spec = spec with { ConcurrentRate = source.ConcurrentRate };
 
@@ -590,6 +593,45 @@ public sealed class BookSourceEngine
             .FetchAsync(requestUrl, spec, source.BookSourceUrl, cancellationToken).ConfigureAwait(false);
         return (body, finalUrl.Length > 0 ? finalUrl : requestUrl);
     }
+
+    /// <summary>
+    /// 书源级 <c>header</c> 求值（<c>@js:</c> 形态需要 Jint，故用**专用引擎实例**——
+    /// 共用 <see cref="_engine"/> 会与并行链路的解析互相踩 Jint 全局状态）。
+    /// 静态 JSON 形态不走引擎，直接解析。
+    /// </summary>
+    private RequestSpec WithSourceHeaders(RequestSpec spec, BookSourceModel source, string baseUrl)
+    {
+        if (string.IsNullOrWhiteSpace(source.Header))
+        {
+            return spec;
+        }
+
+        string? json;
+        var text = source.Header.Trim();
+        var isJs = text.StartsWith("@js:", StringComparison.Ordinal)
+            || text.StartsWith("<js>", StringComparison.Ordinal);
+        if (!isJs)
+        {
+            json = text;
+        }
+        else
+        {
+            lock (_headerGate)
+            {
+                _headerEngine ??= new RuleEngine { Store = _store, Fetcher = _fetcher, Cookies = _cookies };
+                json = _headerEngine.EvalSourceHeaderJson(baseUrl, source);
+            }
+        }
+
+        var headers = UrlAnalyzer.ParseHeaderJson(json);
+        return headers is null
+            ? spec
+            : spec with { Headers = UrlAnalyzer.MergeHeaders(headers, spec.Headers) };
+    }
+
+    /// <summary>书源头部专用引擎（懒建；只在 <see cref="_headerGate"/> 内使用）。</summary>
+    private RuleEngine? _headerEngine;
+    private readonly object _headerGate = new();
 
     /// <summary>
     /// 有界并行抓取多个目录分页（默认并发 4，见 BookSourceLimits.TocPageConcurrency）。

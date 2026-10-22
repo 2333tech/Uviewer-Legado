@@ -52,6 +52,7 @@ namespace Uviewer
             public void ShowNotification(string message, string icon = "\uE735", string color = "Gold") =>
                 _window.ShowNotification(message, icon, color);
             public void ToggleSidebar() => _window._windowShellController.ToggleSidebar();
+            public void LoadExplorerFolder(string path) => _window._explorerSidebarController.LoadFolder(path);
             public void HandleSmartTouchNavigation(PointerRoutedEventArgs e, Action prevAction, Action nextAction) =>
                 _window.HandleSmartTouchNavigation(e, prevAction, nextAction);
         }

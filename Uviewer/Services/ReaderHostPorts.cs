@@ -45,7 +45,17 @@ namespace Uviewer.Services
         void ApplyLocalization();
         void ShowNotification(string message, string icon = "\uE735", string color = "Gold");
         void ToggleSidebar();
+
+        /// <summary>
+        /// 把左侧资源管理器切到指定文件夹（漫画打开后定位到"下载到本地的漫画文件夹"）。
+        /// <para><b>为什么需要宿主提供</b>：资源管理器列表由 <c>ExplorerSidebarController</c> 持有，
+        /// 阅读控制器只拿到端口接口；侧栏导航又必须走同一套 <c>LoadFolder</c>（历史记录/面包屑/
+        /// 缩略图队列都在里面），绕过它自己造一份列表会出现"两个当前目录"。</para>
+        /// </summary>
+        void LoadExplorerFolder(string path);
+
         void HandleSmartTouchNavigation(PointerRoutedEventArgs e, Action prevAction, Action nextAction);
+
     }
 
     internal interface ITextReaderViewHost

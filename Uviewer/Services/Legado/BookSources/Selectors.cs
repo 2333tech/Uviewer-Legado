@@ -456,7 +456,11 @@ internal static class Selectors
             "textNodes" => TextNodes(node),
             "ownText" => OwnText(node),
             "all" => node.InnerHtml,
-            "html" => node.InnerHtml,
+            // legado 的 html 轴 = elements.outerHtml()（整段外层 HTML）。对普通容器取内层即可
+            // （下游多为 HTML→纯文本，外层 wrapper 不影响结果）；但**自闭合元素**（img/br/…）
+            // 的内层 HTML 恒为空——`class.ComicPics@img@html`（快看漫画等图片源）会因此整段为空，
+            // 正文 0 图。故自闭合元素回退外层 HTML。
+            "html" => IsVoidElement(node) ? node.OuterHtml : node.InnerHtml,
             "outerHtml" => node.OuterHtml,
             "outerText" => node.InnerText,
             "innerText" => node.InnerText,
@@ -464,6 +468,17 @@ internal static class Selectors
             _ => AttrValue(node, axis),
         };
     }
+
+    /// <summary>自闭合（void）元素：没有闭合标签，内层 HTML 恒为空串。</summary>
+    private static readonly HashSet<string> VoidElements = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "img", "br", "hr", "input", "meta", "link", "source", "area",
+        "base", "col", "embed", "param", "track", "wbr",
+    };
+
+    /// <summary>是否自闭合元素（<c>&lt;img&gt;</c> / <c>&lt;br&gt;</c> 等）。</summary>
+    private static bool IsVoidElement(HtmlNode node) =>
+        node.NodeType == HtmlNodeType.Element && VoidElements.Contains(node.Name);
 
     /// <summary>
     /// legado <c>textNodes</c>：递归收集全部文本节点，逐个去空白后按<b>换行</b>拼接。
@@ -583,7 +598,7 @@ internal static class Selectors
         return axis switch
         {
             "text" => node.InnerText,
-            "html" => node.InnerHtml,
+            "html" => IsVoidElement(node) ? node.OuterHtml : node.InnerHtml,
             "ownText" => OwnText(node),
             "allText" => node.InnerText,
             "outerHtml" => node.OuterHtml,

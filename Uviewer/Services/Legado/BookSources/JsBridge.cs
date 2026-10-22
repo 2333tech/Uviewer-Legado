@@ -137,12 +137,22 @@ internal sealed class JsBridge
     /// ③ Evaluate；④ 结果转字符串（null → 空串）；⑤ 异常时**返回原始 value**
     /// （legado：脚本异常回退为原始内容，不中断解析），同时写一条 <see cref="JsDiagnosticKind.ScriptError"/>。</para>
     /// </summary>
+    /// <param name="src">
+    /// <c>src</c> 绑定值（= 规则所作用的**原文/当前内容**）。null 表示与 <paramref name="value"/> 相同。
+    /// <para><b>为什么 result 与 src 必须分开</b>：legado <c>evalJS(rule, result)</c> 绑
+    /// <c>result</c> = 上一段规则的结果、<c>src</c> = <c>AnalyzeRule.content</c>（原文）。
+    /// 多段规则里两者**不同**：光社漫畫目录 <c>$.data.chapters\n@js: JSON.parse(result)</c> 用
+    /// <c>result</c>（JSONPath 结果），而同一脚本里的 <c>src.match(/data":{.../) </c> 要匹配**整份
+    /// 响应体**。旧实现把两者都绑成 value，于是 <c>src</c> 拿到的是章节数组 → 正则零命中 →
+    /// 目录恒空（快看/光社/吉站三家漫画源"无法获取目录"的直接原因之一）。</para>
+    /// </param>
     public string Run(
         string script,
         string value,
         string baseUrl,
-        IReadOnlyDictionary<string, object?>? globals = null) =>
-        RunCore(script, value, baseUrl, globals, captureList: false).Text;
+        IReadOnlyDictionary<string, object?>? globals = null,
+        string? src = null) =>
+        RunCore(script, value, baseUrl, globals, captureList: false, src).Text;
 
     /// <summary>
     /// 执行脚本并保留<b>列表结构</b>（对标 legado <c>AnalyzeRule.getElements</c> 的
@@ -157,15 +167,23 @@ internal sealed class JsBridge
     /// 是数组 → 每项一个条目片段字符串（元素快照取 <c>outerHtml()</c>，
     /// 纯对象取 JSON 序列化，字符串/数字取原文）。</para>
     /// </summary>
-    public IReadOnlyList<string>? RunElements(string script, string value, string baseUrl) =>
-        RunCore(script, value, baseUrl, globals: null, captureList: true).Items;
+    public IReadOnlyList<string>? RunElements(string script, string value, string baseUrl, string? src = null) =>
+        RunCore(script, value, baseUrl, globals: null, captureList: true, src).Items;
+
+    /// <summary>
+    /// 把脚本包成块语句，隔离每次求值的顶层 <c>let/const</c>（见 <see cref="RunCore"/> 内的说明）。
+    /// <para>脚本以 <c>/</c> 开头时（正则字面量形态整条脚本）包块也是安全的；
+    /// 块内不允许顶层 <c>return</c>，而 legado 的字段脚本本来也不能用它。</para>
+    /// </summary>
+    private static string WrapScript(string script) => "{ " + script + "\n}";
 
     private (string Text, IReadOnlyList<string>? Items) RunCore(
         string script,
         string value,
         string baseUrl,
         IReadOnlyDictionary<string, object?>? globals,
-        bool captureList)
+        bool captureList,
+        string? src = null)
     {
         try
         {
@@ -219,11 +237,11 @@ internal sealed class JsBridge
                 // ② 绑定全局：result（当前内容）/ baseUrl / java API / 调用方 globals
                 engine.SetValue("result", value);
                 engine.SetValue("baseUrl", baseUrl);
-                // src = 当前内容本体（legado evalJS: bindings["src"] = content）。
-                // 不是"当前 URL"：样本里 src.match(/data-mid="(\d+)"/) 这类写法就是在正则匹配
-                // 详情页 HTML（包子漫画 / 光社漫畫的 tocUrl 规则）。缺这个绑定 → ReferenceError
-                // → 整段回退原文 → tocUrl 变成整份 HTML，目录必然为空。
-                engine.SetValue("src", value);
+                // src = 规则作用的**原文**（legado evalJS: bindings["src"] = content）。
+                // 不是"当前 URL"，也**不是 result**：样本里 src.match(/data-mid="(\d+)"/) 这类写法
+                // 是在正则匹配**详情页/目录页响应体**（包子漫画 / 光社漫畫的 tocUrl、目录规则）。
+                // 多段规则（`$.data.chapters\n@js:…`）里 result 已是章节数组，拿它去 match 必然零命中。
+                engine.SetValue("src", src ?? value);
                 engine.SetValue("java", EnsureJava(engine, temp));
                 _currentValue = value;
                 _currentBaseUrl = baseUrl;
@@ -260,7 +278,16 @@ internal sealed class JsBridge
                 // ③④ 求值并转字符串
                 // 走编译产物缓存：同一脚本在"每条字段 × 每个片段"上反复执行，
                 // engine.Evaluate(string) 每次都会重新解析脚本（4KB 约 5ms，JS 书源每章都付这笔钱）。
-                var r = engine.Evaluate(JsScriptCache.Get(script));
+                //
+                // 脚本外包一层块语句 `{ … }`：Jint 复用同一个 Engine，顶层 `let/const`
+                // 会**留在全局词法环境**里，下一个脚本再声明同名变量就抛
+                // "Identifier 'u' has already been declared"（整段回退原文）。
+                // 光社漫畫就是典型：tocUrl 规则 `let u=src.match(...)` 与 chapterList 规则
+                // `let u=result` 在同一个引擎里先后执行 → 目录 0 章。
+                // legado 每次 evalJS 都是新作用域，块语句是等价物：
+                // 词法声明随块结束即销毁，而**完成值语义不变**（`{ …; a }` 仍返回 a，
+                // 脚本靠"最后一条表达式"当返回值的写法全部照旧）。
+                var r = engine.Evaluate(JsScriptCache.Get(WrapScript(script)));
                 // JS 的 null/undefined 的 ToString() 是 "null"/"undefined" 字面量——
                 // 直接转串会把字面量写进目录/正文（脚本写 return null 时整个字段变 "null"）。
                 // 判 Jint 类型后落空串（legado/reader 对 JS 空结果均落空串）。

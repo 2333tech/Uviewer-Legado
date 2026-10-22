@@ -63,19 +63,30 @@ public sealed class SearchService
             return new List<SearchResult>();
         }
 
-        // 阶段 4-3：限速随请求走（与阅读链共用同一把书源闸门）
-        spec = spec with { ConcurrentRate = source.ConcurrentRate };
-
-        var (content, baseUrl) = await _fetcher
-            .FetchAsync(url, spec, source.BookSourceUrl, cancellationToken).ConfigureAwait(false);
-
-        return new RuleEngine
+        // 规则引擎先建：书源 header 可能是 @js: 规则（要 java.* / baseUrl），必须在抓取前求值
+        var engine = new RuleEngine
         {
             Store = _store,
             Fetcher = _fetcher,
             Cookies = _cookies,
             WebViewHost = WebViewHost,
-        }.SearchBooks(source, content, baseUrl);
+        };
+
+        // 阶段 4-3：限速随请求走（与阅读链共用同一把书源闸门）
+        spec = spec with { ConcurrentRate = source.ConcurrentRate };
+
+        // 书源级请求头（UA / Referer / x-requested-with 等）——缺了它，快看漫画这类按 UA 分派
+        // 页面的站点会返回桌面 SPA，规则里的 __NUXT__ 载荷结构完全不同 → 目录 0 章。
+        var sourceHeaders = UrlAnalyzer.ParseHeaderJson(engine.EvalSourceHeaderJson(source.BookSourceUrl, source));
+        if (sourceHeaders is not null)
+        {
+            spec = spec with { Headers = UrlAnalyzer.MergeHeaders(sourceHeaders, spec.Headers) };
+        }
+
+        var (content, baseUrl) = await _fetcher
+            .FetchAsync(url, spec, source.BookSourceUrl, cancellationToken).ConfigureAwait(false);
+
+        return engine.SearchBooks(source, content, baseUrl);
     }
 
     /// <summary>

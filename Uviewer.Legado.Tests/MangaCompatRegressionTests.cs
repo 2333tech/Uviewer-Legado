@@ -402,4 +402,256 @@ public class MangaCompatRegressionTests
 
         Assert.Equal(new[] { "一", "二" }, chapters.Select(c => c.ChapterName));
     }
+
+    // ============================================================
+    // ⑭~㉒ 快看漫画 / 光社漫畫 / 吉站漫画"目录 0 章"暴露的第二批语义缺口
+    //   （2026-10-23）。每条都对齐 legado MD3 的 AnalyzeRule / RuleAnalyzer 实现。
+    // ============================================================
+
+    // ---------- ⑭ 文本段 + 尾随 @js: 的链式求值 ----------
+
+    [Fact]
+    public void Toc_Field_With_Trailing_Js_Chains_Text_Segment_Then_Script()
+    {
+        // 光社漫畫：chapterName 形如 "$.name@js:result.replace(/…/,'')"。
+        // 旧实现把整条当一条 JSONPath（路径里含 "@js:" 文本）→ 0 命中 → 目录空。
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "链式（测试）",
+            RuleToc = new TocRule
+            {
+                ChapterList = "$.data.list",
+                ChapterName = "$.name@js:result + '（已读）'",
+                ChapterUrl = "$.url",
+            },
+        };
+
+        const string json = """{"data":{"list":[{"name":"第1话","url":"/c/1"},{"name":"第2话","url":"/c/2"}]}}""";
+
+        var (chapters, _) = NewEngine().ParseTocPage(source, json, "https://api.example.com/toc");
+
+        Assert.Equal(2, chapters.Count);
+        Assert.Equal("第1话（已读）", chapters[0].ChapterName);
+        Assert.Equal("https://api.example.com/c/1", chapters[0].ChapterUrl);
+    }
+
+    // ---------- ⑮ src = 规则原文，result = 上一步值 ----------
+
+    [Fact]
+    public void Toc_Field_Js_Binds_Src_To_Content_And_Result_To_Previous_Value()
+    {
+        // legado evalJS：bindings["result"] = 上一步的值、bindings["src"] = 当前内容（原文）。
+        // 两者混用是常态（快看漫画用 src.match 抽 data-mid，又用 result 拼地址），
+        // 旧实现把 src 也绑成上一步的值 → src.match 永远拿不到原文。
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "src/result（测试）",
+            RuleToc = new TocRule
+            {
+                ChapterList = "$.data.list",
+                // src 是本章片段原文（JSON 文本），result 是 $.name 求值后的字面量
+                ChapterName = "$.name@js:result + (src === result ? '|SAME' : '|DIFF')",
+                ChapterUrl = "$.url",
+            },
+        };
+
+        const string json = """{"data":{"list":[{"name":"第1话","url":"/c/1"}]}}""";
+
+        var (chapters, _) = NewEngine().ParseTocPage(source, json, "https://api.example.com/toc");
+
+        Assert.Equal("第1话|DIFF", Assert.Single(chapters).ChapterName);
+    }
+
+    // ---------- ⑯ 每次求值独立作用域（顶层 let/const 不互相污染） ----------
+
+    [Fact]
+    public void Toc_Field_Js_With_Top_Level_Let_Does_Not_Leak_Between_Chapters()
+    {
+        // 光社漫畫逐章规则里都写 "let u = JSON.parse(result)"；
+        // Jint 复用同一个 Engine，顶层 let 会留在全局词法环境 → 第二章抛
+        // "Identifier 'u' has already been declared"（旧实现整条目录失败）
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "块作用域（测试）",
+            RuleToc = new TocRule
+            {
+                ChapterList = "$.data.list",
+                ChapterName = "$.name@js:let u = result.toUpperCase(); u",
+                ChapterUrl = "$.url",
+            },
+        };
+
+        const string json = """{"data":{"list":[{"name":"a","url":"/c/1"},{"name":"b","url":"/c/2"}]}}""";
+
+        var (chapters, _) = NewEngine().ParseTocPage(source, json, "https://api.example.com/toc");
+
+        Assert.Equal(new[] { "A", "B" }, chapters.Select(c => c.ChapterName));
+    }
+
+    // ---------- ⑰ @put / @get 规则变量 ----------
+
+    [Fact]
+    public void Toc_List_Put_Variable_Is_Visible_To_Chapter_Field_Via_Get()
+    {
+        // 吉站漫画：chapterList = "$..chapters[*]@put:{bid:$.data.id}"，
+        // chapterUrl 里用 "@get:{bid}" 拼章节地址（旧实现把 @get:{bid} 原样留在 URL 里）
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "put/get（测试）",
+            RuleToc = new TocRule
+            {
+                ChapterList = "$.data.chapters@put:{bid:$.data.id}",
+                ChapterName = "$.name",
+                ChapterUrl = "/chapter/@get:{bid}/{$.cid}",
+            },
+        };
+
+        const string json = """{"data":{"id":133,"chapters":[{"name":"第1话","cid":"77"}]}}""";
+
+        var (chapters, _) = NewEngine().ParseTocPage(source, json, "https://api.example.com/toc");
+
+        var chapter = Assert.Single(chapters);
+        Assert.Equal("https://api.example.com/chapter/133/77", chapter.ChapterUrl);
+    }
+
+    // ---------- ⑱ {$.path} 内嵌规则 ----------
+
+    [Fact]
+    public void Toc_Field_Embeds_Inner_JsonPath_Placeholder()
+    {
+        // legado makeUpRule：{{…}} 与 {$.…} 都会递归求值后拼回文本
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "内嵌规则（测试）",
+            RuleToc = new TocRule
+            {
+                ChapterList = "$.data.list",
+                ChapterName = "第{$.index}话",
+                ChapterUrl = "$.url",
+            },
+        };
+
+        const string json = """{"data":{"list":[{"index":3,"url":"/c/3"}]}}""";
+
+        var (chapters, _) = NewEngine().ParseTocPage(source, json, "https://api.example.com/toc");
+
+        Assert.Equal("第3话", Assert.Single(chapters).ChapterName);
+    }
+
+    // ---------- ⑲ JSON 对象 + 裸字段名 ----------
+
+    [Fact]
+    public void Toc_Field_Bare_Name_Reads_Json_Object_Property()
+    {
+        // 光社漫畫目录脚本返回 [{text,url}]，规则写 chapterName="text"、chapterUrl="url"；
+        // 旧实现把它当 CSS 选择器 → 0 命中
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "裸字段（测试）",
+            RuleToc = new TocRule
+            {
+                ChapterList = "$.data.list",
+                ChapterName = "text",
+                ChapterUrl = "url",
+            },
+        };
+
+        const string json = """{"data":{"list":[{"text":"第1话","url":"/c/1"},{"text":"第2话","url":"/c/2"}]}}""";
+
+        var (chapters, _) = NewEngine().ParseTocPage(source, json, "https://api.example.com/toc");
+
+        Assert.Equal(new[] { "第1话", "第2话" }, chapters.Select(c => c.ChapterName));
+        Assert.Equal("https://api.example.com/c/2", chapters[1].ChapterUrl);
+    }
+
+    // ---------- ⑳ 纯脚本段目录（章节条目为对象数组） ----------
+
+    [Fact]
+    public void Toc_ChapterList_Is_Pure_Js_Returning_Object_Array()
+    {
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "纯脚本列表（测试）",
+            RuleToc = new TocRule
+            {
+                ChapterList = "@js:JSON.parse(result).data.list",
+                ChapterName = "text",
+                ChapterUrl = "url",
+            },
+        };
+
+        const string json = """{"data":{"list":[{"text":"第1话","url":"/c/1"}]}}""";
+
+        var (chapters, _) = NewEngine().ParseTocPage(source, json, "https://api.example.com/toc");
+
+        Assert.Equal("第1话", Assert.Single(chapters).ChapterName);
+    }
+
+    // ---------- ㉑ html 轴对 void 元素回退 outerHtml ----------
+
+    [Fact]
+    public void Content_Img_Html_Axis_Returns_OuterHtml_For_Void_Elements()
+    {
+        // 快看漫画：content = "class.ComicPics@img@html"。
+        // <img> 是 void 元素，取 InnerHtml 恒为空 → 旧实现正文 0 图
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "void 元素（测试）",
+            RuleContent = new ContentRule { Content = "class.ComicPics@img@html" },
+        };
+
+        const string html = """
+            <div class="ComicPics">
+              <img src="/p1.webp"><img data-src="/p2.webp">
+            </div>
+            """;
+
+        var content = NewEngine().ParseContent(source, html, "https://api.example.com/ch/1");
+
+        var images = RuleEngine.ExtractImageUrls(content, "https://api.example.com/ch/1");
+        Assert.Equal(new[] { "https://api.example.com/p1.webp", "https://api.example.com/p2.webp" }, images);
+    }
+
+    // ---------- ㉒ 书源 header（含 @js: 形态）能被求值 ----------
+
+    [Fact]
+    public void Source_Header_Static_Json_Is_Parsed_Into_Header_Map()
+    {
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "header（测试）",
+            Header = """{"User-Agent":"Mozilla/5.0 (iPhone)","Referer":"https://api.example.com/"}""",
+        };
+
+        var json = NewEngine().EvalSourceHeaderJson(source.BookSourceUrl, source);
+
+        Assert.NotNull(json);
+        Assert.Contains("iPhone", json);
+    }
+
+    [Fact]
+    public void Source_Header_Js_Form_Is_Evaluated()
+    {
+        // 快看漫画的 header 是 @js: 形态：不应用移动 UA 会被 302 到桌面 SPA，目录直接 0 章
+        var source = new BookSourceModel
+        {
+            BookSourceUrl = "https://api.example.com",
+            BookSourceName = "header-js（测试）",
+            Header = """@js:JSON.stringify({"User-Agent":"Mozilla/5.0 (Linux; Android 13) Mobile"})""",
+        };
+
+        var json = NewEngine().EvalSourceHeaderJson(source.BookSourceUrl, source);
+
+        Assert.NotNull(json);
+        Assert.Contains("Android 13", json);
+    }
 }

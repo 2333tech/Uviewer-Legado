@@ -38,12 +38,17 @@ namespace Uviewer.Services.Legado
         public string MangaRoot => MangaLibrary.ResolveRoot(_service.DownloadDirectory);
 
         /// <summary>
-        /// 下载整本：目录全量 + 前 <paramref name="initialChapterImages"/> 章的图片（默认 5）。
+        /// 下载整本：目录全量 + 已就绪之外的章包。
         /// <para>会话必须已经 <c>OpenOnlineAsync</c> 过（目录已在清单里）；这里只补章包。</para>
         /// </summary>
+        /// <param name="chapterLimit">
+        /// 最多补多少章的图片；<b>小于等于 0 表示"全部剩余章"</b>（菜单「下载全本」用）。
+        /// <para>默认值仍取 <see cref="MangaLibrary.InitialChapterImageCount"/>（前 5 章），
+        /// 这是"部分下载/首次打开"的口径——一次抓几百章几十 MB 的图必然触发源站风控。</para>
+        /// </param>
         public async Task<MangaDownloadResult> DownloadAsync(
             MangaReadingSession session,
-            int initialChapterImages = MangaLibrary.InitialChapterImageCount,
+            int chapterLimit = MangaLibrary.InitialChapterImageCount,
             IProgress<MangaDownloadProgress>? progress = null,
             CancellationToken token = default)
         {
@@ -58,22 +63,30 @@ namespace Uviewer.Services.Legado
                         "没有可下载的章节（目录为空或全部为卷标题）");
                 }
 
-                var targets = chapters
+                var pending = chapters
                     .Where(c => !IsChapterArchiveReady(session, c))
-                    .Take(Math.Clamp(initialChapterImages, 1, MangaLibrary.InitialChapterImageCount))
                     .ToList();
+
+                // limit <= 0 = 全本：不截断（章序仍是目录顺序，读者最可能先看前面）
+                var all = chapterLimit <= 0;
+                var targets = all
+                    ? pending
+                    : pending.Take(Math.Clamp(chapterLimit, 1, MangaLibrary.InitialChapterImageCount)).ToList();
 
                 if (targets.Count == 0)
                 {
                     return new MangaDownloadResult(true, false, session.ManifestPath,
-                        $"目录共 {chapters.Count} 章，前 {initialChapterImages} 章的章包已就绪");
+                        $"目录共 {chapters.Count} 章，章包均已就绪");
                 }
 
                 var done = await DownloadChaptersAsync(session, targets, progress, token).ConfigureAwait(false);
 
                 return new MangaDownloadResult(true, false, session.ManifestPath,
-                    $"已保存到 {Path.GetFileName(session.BookFolder)}\\：目录 {chapters.Count} 章，" +
-                    $"已下载前 {done} 章图片（其余章在阅读时按需补齐）");
+                    all
+                        ? $"已保存到 {Path.GetFileName(session.BookFolder)}\\：目录 {chapters.Count} 章，" +
+                          $"已下载 {done} 章图片（全 {chapters.Count} 章）"
+                        : $"已保存到 {Path.GetFileName(session.BookFolder)}\\：目录 {chapters.Count} 章，" +
+                          $"已下载 {done} 章图片（其余章在阅读时按需补齐）");
             }
             catch (OperationCanceledException)
             {
@@ -84,6 +97,18 @@ namespace Uviewer.Services.Legado
                 return new MangaDownloadResult(false, false, string.Empty, $"漫画下载失败：{ex.Message}");
             }
         }
+
+        /// <summary>
+        /// 「下载全本（漫画）」：把清单里**所有**尚未就绪的章逐个补成章包。
+        /// <para><b>为什么不复用默认的 5 章上限</b>：菜单项「下载全本」的语义就是"整本离线可读"，
+        /// 5 章上限是"首次打开/部分下载"的口径。这条链路只在用户显式点菜单时才会走，
+        /// 且必须能取消（<paramref name="token"/>）——几百章几十 MB 的连续请求随时可能被源站限速。</para>
+        /// </summary>
+        public Task<MangaDownloadResult> DownloadAllAsync(
+            MangaReadingSession session,
+            IProgress<MangaDownloadProgress>? progress = null,
+            CancellationToken token = default) =>
+            DownloadAsync(session, chapterLimit: 0, progress, token);
 
         /// <summary>
         /// 在线更新：按清单里的书源识别信息（书源 URL + 书籍 URL）重新取目录，

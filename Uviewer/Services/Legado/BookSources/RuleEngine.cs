@@ -109,6 +109,15 @@ public sealed class RuleEngine
     // . 不含 \n 会让多行 {{}} 静默不展开（UrlAnalyzer 的同类正则同样用 [\w\W]）。
     private static readonly Regex TemplateRegex = new(@"\{\{([\s\S]*?)\}\}", RegexOptions.Compiled);
 
+    /// <summary><c>@get:{key}</c>（规则变量取值；legado evalPattern 之一）。</summary>
+    private static readonly Regex GetRuleVarRegex = new(@"@get:\{([^{}]+)\}", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
+    /// <summary><c>{$.路径}</c> 字面量内嵌取值（legado <c>innerRule("{$.")</c>）。</summary>
+    private static readonly Regex InnerRuleRegex = new(@"\{(\$[^{}]*)\}", RegexOptions.Compiled);
+
+    /// <summary>裸字段名（JSON 对象条目上的直接键访问；不含 CSS/XPath 语法字符）。</summary>
+    private static readonly Regex BareKeyRegex = new(@"^[A-Za-z_][A-Za-z0-9_\-]*$", RegexOptions.Compiled);
+
     /// <summary>
     /// 搜索入口（对标 reader search_books）。步骤：
     /// ① 无 ruleSearch → 空列表；② 列表规则归一化（- 前缀 = 倒序）；
@@ -412,24 +421,58 @@ public sealed class RuleEngine
             return string.Empty;
         }
 
-        return rule.Contains("{{", StringComparison.Ordinal)
-            ? ExpandTemplates(rule, ctx)
-            : ExtractContent(rule, ctx);
+        // 字面量模板（{{规则}} / @get:{变量} / {$.路径}）→ 先把内嵌规则替换成字面量，
+        // 整串不再当选择器求值。漏了这两支的后果：
+        //   · 吉站漫画 chapterUrl `…?m=@get:{bid}&c={{$..id}}` → @get 原样留在 URL 上；
+        //   · 快看漫画（api.kkmh.com）chapterUrl `…/v2/comic/{$.id}?is_preview=0` → 无前缀，
+        //     被当成 CSS 选择器，0 命中。
+        if (rule.Contains("{{", StringComparison.Ordinal)
+            || rule.IndexOf("@get:", StringComparison.OrdinalIgnoreCase) >= 0)
+        {
+            // 两种模板可以混在同一条规则里（吉站漫画：/chapter?m=@get:{bid}&c={{$..id}}），
+            // 也可能与 {$.路径} 混用（快看漫画 api.kkmh：/v2/comic/{$.id}?is_preview=0）。
+            // 因此展开要<b>串起来</b>：@get/{{}} 先变字面量，再把剩下的 {$.路径} 求值。
+            // 只做前者会把 "{$.id}" 原样交给 ResolveUrl（花括号被当非法字符剥掉），
+            // 章节地址最终变成 ".../v2/comic/$.id"。
+            return ExpandInnerRules(ExpandTemplates(rule, ctx), ctx);
+        }
+
+        if (rule.Contains("{$.", StringComparison.Ordinal))
+        {
+            return ExpandInnerRules(rule, ctx);
+        }
+
+        return ExtractContent(rule, ctx);
     }
 
     /// <summary>
     /// 展开 legado 结果模板 <c>{{rule}}</c>：把内部规则在当前片段上求值后内联回字符串。
     /// 例如 bookUrl <c>/novel/{{$.novelId}}?isSearch=1</c> 会把 <c>$.novelId</c> 替换为当前条目的值。
-    /// 仅当字符串含 <c>{{</c> 时生效，避免无谓开销。
+    /// <para><b>同时处理 <c>@get:{key}</c></b>（legado <c>evalPattern</c> 把
+    /// <c>@get:{…}</c> 与 <c>{{…}}</c> 归为同一类"内嵌求值"，都在 SourceRule 初始化时展开）：
+    /// 吉站漫画的章节 URL 就是 <c>…&amp;c={{$..id}}</c> 与 <c>?m=@get:{bid}</c> 混用。</para>
     /// </summary>
     private string ExpandTemplates(string value, FragmentContext ctx)
     {
-        if (string.IsNullOrEmpty(value) || !value.Contains("{{", StringComparison.Ordinal))
+        if (string.IsNullOrEmpty(value))
         {
             return value;
         }
 
-        return TemplateRegex.Replace(value, m =>
+        var expanded = value.IndexOf("@get:", StringComparison.OrdinalIgnoreCase) >= 0
+            ? GetRuleVarRegex.Replace(value, m =>
+            {
+                var key = m.Groups[1].Value.Trim();
+                return _ruleVars.TryGetValue(key, out var stored) ? stored : string.Empty;
+            })
+            : value;
+
+        if (!expanded.Contains("{{", StringComparison.Ordinal))
+        {
+            return expanded;
+        }
+
+        return TemplateRegex.Replace(expanded, m =>
         {
             var inner = m.Groups[1].Value.Trim();
             if (inner.Length == 0)
@@ -440,6 +483,22 @@ public sealed class RuleEngine
 
             var sub = ExtractContent(inner, ctx);
             return sub ?? string.Empty;
+        });
+    }
+
+    /// <summary>
+    /// 展开字面量里的 <c>{$.路径}</c> 内嵌取值（legado <c>AnalyzeByJSonPath.getString</c> 的
+    /// <c>innerRule("{$.")</c>）。例：快看漫画（api.kkmh.com）
+    /// <c>chapterUrl = https://api.kkmh.com/v2/comic/{$.id}?is_preview=0</c>。
+    /// <para>只在"整条不是 JSONPath 规则"时才走这里（规则以 <c>$</c> 开头说明它本身就是路径）；
+    /// 花括号内按平衡组取值，值里含 <c>}</c> 不会把后面的字面量吃掉。</para>
+    /// </summary>
+    private string ExpandInnerRules(string value, FragmentContext ctx)
+    {
+        return InnerRuleRegex.Replace(value, m =>
+        {
+            var inner = m.Groups[1].Value.Trim();
+            return inner.Length == 0 ? string.Empty : ExtractContent(inner, ctx);
         });
     }
 
@@ -455,13 +514,46 @@ public sealed class RuleEngine
     /// </summary>
     private string ExtractContent(string rule, FragmentContext ctx)
     {
-        if (RuleAnalyzer.IsJsRule(rule))
+        // 顺序即铁律（红线 14）：**先拆 ## 替换段，再碰脚本段**。
+        // 脚本段若把 "##pat##rep" 一起吃进去 → JS 语法错误整段回退原文 / 替换被静默丢掉。
+        var (combinable, replacePart) = RuleAnalyzer.SplitLegadoRegex(rule);
+
+        // @put:{k:rule} 先落变量并从规则里剥掉（legado splitPutRule：在 SourceRule 初始化时做）
+        var core = ExtractContentCore(ApplyPutRule(combinable, ctx), ctx);
+        return replacePart is not null ? RuleAnalyzer.ApplyLegadoRegex(core, replacePart) : core;
+    }
+
+    /// <summary>
+    /// 字段规则的核心求值（不含 <c>##</c> 替换段）。步骤：
+    /// ① 含脚本段（文本 + <c>&lt;js&gt;</c>/<c>@js:</c> 的任意组合）→ 按 legado
+    ///    <c>splitSourceRule</c> 的顺序**逐段**求值（见 <see cref="EvalJsChain"/>）；
+    /// ② 整条是 JS → 单规则求值；
+    /// ③ 顶层 <c>&amp;&amp;</c>/<c>||</c>/<c>%%</c> 拆分合并；
+    /// ④ 单段求值。
+    /// <para><b>为什么脚本段要先于组合符处理</b>：<c>$.id||$.topic_id@js:"…/mobile/"+result+"/list/"</c>
+    /// （快看漫画 bookUrl）语义是"先按 || 取 id，再把**结果**拼成 URL"。若先按 || 切段，
+    /// 第二段变成 <c>$.topic_id@js:…</c>：选择器空 → 脚本拿到空串 → 拼出 <c>/mobile//list/</c>，
+    /// 而且 || 取"首个非空"会直接返回纯数字 id（bookUrl 变成 <c>…/search/mini/topic</c> 之类的错值，
+    /// 详情页抓到的其实是搜索接口 JSON —— 快看漫画"目录为空 + 详情字段是 JSON"的根因）。</para>
+    /// </summary>
+    private string ExtractContentCore(string rule, FragmentContext ctx)
+    {
+        // 脚本段判定**必须先于 IsJsRule**：规则以 `<js>` 开头但后面还跟着选择器/JSONPath
+        // （快看漫画 author/kind/lastChapter：`<js>…JSON.stringify(__NUXT__)</js>\n$.data[*].topicInfo…`）
+        // 时，IsJsRule 也是 true。先按"纯 JS"处理会把脚本输出（整份 NUXT JSON）当成字段值返回，
+        // 后面的取值段被整个丢掉——详情页每个字段都变成一大坨 JSON。
+        var head = RuleAnalyzer.SplitFirstJs(rule);
+        if (head.Script is not null)
         {
-            return ExtractContentSingle(rule, ctx);
+            if (head.Before.Trim().Length == 0 && head.After.Trim().Length == 0)
+            {
+                return ExtractContentSingle(rule, ctx);
+            }
+
+            return EvalJsChain(rule, ctx);
         }
 
-        var (combinable, replacePart) = RuleAnalyzer.SplitLegadoRegex(rule);
-        var combo = RuleAnalyzer.SplitTopLevel(combinable, new[] { "&&", "||", "%%" });
+        var combo = RuleAnalyzer.SplitTopLevel(rule, new[] { "&&", "||", "%%" });
         if (combo.Delimiter is not null)
         {
             var values = combo.Parts
@@ -469,18 +561,187 @@ public sealed class RuleEngine
                 .Select(p => ExtractContentSingle(p, ctx))
                 .ToList();
 
-            var joined = combo.Delimiter switch
+            return combo.Delimiter switch
             {
                 "&&" => string.Concat(values.Where(v => v.Length > 0)),
                 "||" => values.FirstOrDefault(v => v.Length > 0) ?? string.Empty,
                 "%%" => string.Concat(values.Where(v => v.Length > 0)),
                 _ => ExtractContentSingle(rule, ctx),
             };
-
-            return replacePart is not null ? RuleAnalyzer.ApplyLegadoRegex(joined, replacePart) : joined;
         }
 
         return ExtractContentSingle(rule, ctx);
+    }
+
+    /// <summary>
+    /// 文本段 ↔ 脚本段顺序求值（legado <c>getString/getElements</c> 的 <c>ruleList</c> 循环）：
+    /// <c>value</c> 初值 = 原文，每遇文本段就用当前值求值，每遇脚本段就跑脚本（<c>result</c> = 当前值、
+    /// <c>src</c> = <b>原文</b>），脚本输出成为新的当前值。
+    /// <para>典型形态：<c>$.data.chapters\n@js: JSON.parse(result).map(…)</c>（光社漫畫目录）、
+    /// <c>&lt;js&gt;…&lt;/js&gt;\n$.data[*].comicList[*]</c>（快看漫画目录）。</para>
+    /// </summary>
+    private string EvalJsChain(string rule, FragmentContext rootCtx)
+    {
+        var ctx = rootCtx;
+        var value = rootCtx.Raw;
+        var rest = rule;
+        var consumed = false;
+
+        while (true)
+        {
+            var (before, script, after) = RuleAnalyzer.SplitFirstJs(rest);
+
+            if (script is null)
+            {
+                var tail = rest.Trim();
+                if (!consumed)
+                {
+                    // 没有任何脚本段被消费（理论不可达：调用方已判 HasJsSegment）
+                    return ExtractContentSingle(tail, ctx);
+                }
+
+                return tail.Length == 0 ? value : ExtractContentCore(tail, ctx);
+            }
+
+            var pre = before.Trim();
+            if (pre.Length > 0)
+            {
+                value = ExtractContentCore(pre, ctx);
+                ctx = new FragmentContext(value);
+            }
+
+            // src 恒为**本条规则的原文**（legado：整个 AnalyzeRule.content，不随分段变化）
+            value = RunJs(script, value, string.Empty, null, rootCtx.Raw);
+            ctx = new FragmentContext(value);
+            consumed = true;
+
+            rest = after;
+            if (rest.Trim().Length == 0)
+            {
+                return value;
+            }
+        }
+    }
+
+    /// <summary>
+    /// <c>@put:{key:rule,…}</c>：在当前内容上求值各条规则并落进规则变量表，返回剥掉该标记的规则。
+    /// 对标 legado <c>splitPutRule</c> + <c>putRule</c>（后者把值写进 chapter/book 变量）。
+    /// <para>典型用法（吉站漫画目录）：<c>$..chapters[*]@put:{bid:$.data.id}</c> 先把书籍 id 存下来，
+    /// 逐章规则再用 <c>…?m=@get:{bid}&amp;c={{$..id}}</c> 取值。没有这一层，章节 URL 里的
+    /// <c>@get:{bid}</c> 原样留在 URL 上 → 整份目录 0 章。</para>
+    /// </summary>
+    private string ApplyPutRule(string rule, FragmentContext ctx)
+    {
+        if (rule.IndexOf("@put:", StringComparison.OrdinalIgnoreCase) < 0)
+        {
+            return rule;
+        }
+
+        var sb = new System.Text.StringBuilder(rule.Length);
+        var pos = 0;
+        while (true)
+        {
+            var start = rule.IndexOf("@put:", pos, StringComparison.OrdinalIgnoreCase);
+            if (start < 0)
+            {
+                sb.Append(rule, pos, rule.Length - pos);
+                break;
+            }
+
+            sb.Append(rule, pos, start - pos);
+
+            var braceStart = rule.IndexOf('{', start);
+            var braceEnd = braceStart < 0 ? -1 : rule.IndexOf('}', braceStart);
+            if (braceEnd < 0)
+            {
+                // 不成对：原样保留（交给后续求值自然失败，不静默吞掉用户规则）
+                sb.Append(rule, start, rule.Length - start);
+                break;
+            }
+
+            var body = rule.Substring(braceStart + 1, braceEnd - braceStart - 1);
+            foreach (var entry in RuleAnalyzer.SplitTopLevel(body, new[] { "," }).Parts)
+            {
+                var colon = entry.IndexOf(':');
+                if (colon <= 0)
+                {
+                    continue;
+                }
+
+                var key = entry.Substring(0, colon).Trim().Trim('"', '\'');
+                var valueRule = entry.Substring(colon + 1).Trim();
+                if (key.Length == 0 || valueRule.Length == 0)
+                {
+                    continue;
+                }
+
+                _ruleVars[key] = ExtractContent(valueRule, ctx);
+            }
+
+            pos = braceEnd + 1;
+        }
+
+        return sb.ToString().Trim();
+    }
+
+    /// <summary>规则变量表（<c>@put:/@get:</c>；legado 存在 book/chapter 变量里，这里按引擎实例存）。</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _ruleVars =
+        new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// 求值书源级 <c>header</c> 规则，返回 JSON 文本（供 <see cref="UrlAnalyzer.ParseHeaderJson"/> 解析）。
+    /// <para>静态 JSON 原样返回；<c>@js:</c> / <c>&lt;js&gt;</c> 形态交脚本求值
+    /// （样本写法：<c>@js: JSON.stringify({’User-Agent’: java.getWebViewUA(), …})</c>，
+    /// 需要 <c>java</c> 与 <c>baseUrl</c> 绑定，故不能在下层抓取器里做）。</para>
+    /// <para>求值失败返回 null（调用方按"无书源头"处理，不比没有更差）。</para>
+    /// </summary>
+    internal string? EvalSourceHeaderJson(string baseUrl, BookSourceModel? source = null)
+    {
+        var owner = source ?? _jsSource;
+        var raw = owner?.Header;
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return null;
+        }
+
+        var text = raw.Trim();
+        if (text.StartsWith("@js:", StringComparison.Ordinal) || text.StartsWith("<js>", StringComparison.Ordinal))
+        {
+            // 脚本里的 baseUrl 指书源主页；java.* 走本引擎实例（每个引擎各自持有 Jint，天然线程隔离）
+            var previous = _jsSource;
+            try
+            {
+                if (source is not null)
+                {
+                    _jsSource = source;
+                }
+
+                var json = RunJs(RuleAnalyzer.StripModePrefix(text), string.Empty, baseUrl, null, string.Empty);
+                return string.IsNullOrWhiteSpace(json) ? null : json;
+            }
+            catch
+            {
+                return null;
+            }
+            finally
+            {
+                _jsSource = previous;
+            }
+        }
+
+        return text;
+    }
+
+    /// <summary>
+    /// 给请求描述挂上书源级请求头（书源头为默认值，<paramref name="spec"/> 自带的头优先）。
+    /// 引擎内所有"对书源发起请求"的地方（搜索/详情/目录/正文/图片）都应先过这一层。
+    /// </summary>
+    private RequestSpec WithSourceHeaders(RequestSpec spec, string baseUrl)
+    {
+        var sourceHeaders = UrlAnalyzer.ParseHeaderJson(EvalSourceHeaderJson(baseUrl));
+        return sourceHeaders is null
+            ? spec
+            : spec with { Headers = UrlAnalyzer.MergeHeaders(sourceHeaders, spec.Headers) };
     }
 
     /// <summary>
@@ -502,15 +763,33 @@ public sealed class RuleEngine
         var (selectorRule, script) = RuleAnalyzer.ExtractJs(ruleWithoutReplace);
         if (script is not null)
         {
+            // 选择器结果是脚本的 result：JSONPath 命中对象/数组给 JSON 文本，
+            // 纯标量列表按 \n 拼接（legado getString 的两种形态，见 EvalSegmentValue）
             var value = string.IsNullOrEmpty(selectorRule)
                 ? ctx.Raw
-                : ExtractContentSingle(selectorRule, ctx);
+                : EvalSegmentValue(selectorRule, ctx);
             var output = RunJs(script, value, string.Empty);
             // 替换段作用于脚本输出（legado：JS 也是 SourceRule，replaceRegex 对最终结果生效）
             return replacePart is not null ? RuleAnalyzer.ApplyLegadoRegex(output, replacePart) : output;
         }
 
         var combinable = ruleWithoutReplace;
+
+        // 裸字段名 + JSON 对象条目 → 直接取属性（legado AnalyzeRule.getString 的
+        // NativeObject / LinkedTreeMap 分支：`result[sourceRule.rule]`）。
+        // 典型：光社漫畫目录脚本返回 [{text,url}]，chapterName="text"、chapterUrl="url"。
+        // 缺这一支时裸名会落到 CSS 选择器 → 0 命中 → 条目虽有但标题全空 →
+        // 被"无标题跳过"过滤干净 → 用户看到的就是"无法获取目录"。
+        if (RuleAnalyzer.TryDetectModeFromRule(combinable) is null
+            && BareKeyRegex.IsMatch(combinable)
+            && ctx.Json is System.Text.Json.Nodes.JsonObject jsonObject)
+        {
+            var picked = jsonObject.TryGetPropertyValue(combinable, out var prop) && prop is not null
+                ? (prop is System.Text.Json.Nodes.JsonValue v ? v.ToString() : prop.ToJsonString())
+                : string.Empty;
+            return replacePart is not null ? RuleAnalyzer.ApplyLegadoRegex(picked, replacePart) : picked;
+        }
+
         var mode = RuleAnalyzer.DetectMode(combinable, ctx);
         var extracted = mode switch
         {
@@ -561,7 +840,8 @@ public sealed class RuleEngine
         string script,
         string value,
         string baseUrl,
-        IReadOnlyDictionary<string, object?>? globals = null)
+        IReadOnlyDictionary<string, object?>? globals = null,
+        string? src = null)
     {
         var ctx = new FragmentContext(value);
 
@@ -596,7 +876,7 @@ public sealed class RuleEngine
 
             // jsLib 透传（便宜：字符串引用赋值；JsBridge 内部按文本决定是否重新加载库）
             _js.JsLib = _jsSource?.JsLib;
-            return _js.Run(script, value, baseUrl, globals);
+            return _js.Run(script, value, baseUrl, globals, src);
         }
         finally
         {
@@ -613,7 +893,7 @@ public sealed class RuleEngine
     /// <para>闭包绑定与 <see cref="RunJs"/> 完全一致（java.getString/getElements/setContent
     /// 都作用于本次内容），否则脚本里的 <c>java.getElements(...)</c> 会求值到别处。</para>
     /// </summary>
-    private IReadOnlyList<string>? RunJsElements(string script, string value, string baseUrl)
+    private IReadOnlyList<string>? RunJsElements(string script, string value, string baseUrl, string? src = null)
     {
         var ctx = new FragmentContext(value);
         var overrideRaw = value;
@@ -638,7 +918,7 @@ public sealed class RuleEngine
             _js.EvaluateList = (r, content) => ExtractListValues(r, Ctx(content));
             _js.EvaluateElements = (r, content) => ExtractElementValues(r, Ctx(content));
             _js.JsLib = _jsSource?.JsLib;
-            return _js.RunElements(script, value, baseUrl);
+            return _js.RunElements(script, value, baseUrl, src);
         }
         finally
         {
@@ -1223,7 +1503,12 @@ public sealed class RuleEngine
         else
         {
             selectorRule = ExpandTemplates(selectorRule, ctx);
-            content = ExtractContent(selectorRule, ctx);
+            // 选择器后面还跟着脚本时，选择器结果是脚本的 `result`：
+            // JSONPath 命中对象/数组必须给**合法 JSON 文本**（光社漫畫正文
+            // `$..images.images\n@js: JSON.parse(result)`、吉站 `…[*]url\n<js> result.split("\n")`）。
+            content = script is not null
+                ? EvalSegmentValue(selectorRule, ctx)
+                : ExtractContent(selectorRule, ctx);
         }
 
         // ⑥ 尾随 JS：对提取结果再跑脚本
@@ -1447,56 +1732,76 @@ public sealed class RuleEngine
         var working = body;
         var selector = listRule;
 
-        // 前导 JS 循环：JS 输出替换原文（此阶段还没有可复用的解析结果，按字符串判定）
-        var jsLeading = RuleAnalyzer.IsJsRule(selector);
-        if (jsLeading)
+        // ① 逐段消解脚本段（legado splitSourceRule：文本段 ↔ JS 段顺序求值）。
+        //    两个方向都要支持：
+        //      · 脚本在前：<js>…</js>\n$.data[*].comicList[*]（快看漫画）→ 脚本改写原文，后续选择器再取条目；
+        //      · 脚本在后：$.data.chapters\n@js: …map(…).返回[{text,url}]（光社漫畫）→ 文本段求值结果
+        //        作为脚本的 result，脚本直接返回条目数组。
+        //    旧实现只认"整条规则以 JS 开头"，后一种形态会被当成一条普通 JSONPath，
+        //    路径里带着 @js: 文本 → 0 命中（"无法加载目录"的第三种形态）。
+        while (true)
         {
-            // ⓪ 纯 JS 列表规则（脚本后面没有选择器）：先按 legado getElements 语义
-            //    保留脚本返回值的**列表结构**——条目可以是 java.getElements 的元素快照
-            //    （包子漫画类源的 `<js>java.getElements("id.chapter-items@class.comics-chapters@a")</js>`），
-            //    也可以是脚本自己 push 出来的对象数组。这一支必须先试：数组一旦被 ToString()
-            //    成 "[object Object],…" 或 "a,b,c" 就不可逆，只能退化成 "body > *" 全空兜底。
-            var (script, remaining) = SplitLeadingJs(selector);
-            if (script.Length > 0 && remaining.Trim().Length == 0)
+            var (before, script, after) = RuleAnalyzer.SplitFirstJs(selector);
+            if (script is null)
             {
-                var items = RunJsElements(script, working, baseUrl);
+                break;
+            }
+
+            if (before.Trim().Length == 0)
+            {
+                // ⓪ 纯 JS 列表规则（脚本后面没有选择器）：先按 legado getElements 语义
+                //    保留脚本返回值的**列表结构**——条目可以是 java.getElements 的元素快照
+                //    （包子漫画类源的 `<js>java.getElements("id.chapter-items@class.comics-chapters@a")</js>`），
+                //    也可以是脚本自己 push 出来的对象数组。这一支必须先试：数组一旦被 ToString()
+                //    成 "[object Object],…" 或 "a,b,c" 就不可逆，只能退化成 "body > *" 全空兜底。
+                if (after.Trim().Length == 0)
+                {
+                    var items = RunJsElements(script, working, baseUrl);
+                    if (items is { Count: > 0 })
+                    {
+                        // nextTocUrl 仍以"原文"为上下文（脚本可能只负责给出条目）
+                        var nodeCtx = new FragmentContext(working);
+                        return (BuildChaptersFromFragments(source, rule, ToFragments(items), baseUrl, nodeCtx), nodeCtx);
+                    }
+                }
+
+                working = RunJs(script, working, baseUrl);
+                selector = after;
+                if (selector.Trim().Length == 0)
+                {
+                    // reader：JS 输出非 JSON 时用 body > * 兜底（仅 JS 分支，空 chapterList 不兜底）
+                    selector = IsJsonLike(working) ? "$[*]" : "body > *";
+                }
+
+                continue;
+            }
+
+            // 文本段在前：它的求值结果就是脚本的 result（src 仍是原文）
+            var pre = EvalSegmentValue(before.Trim(), new FragmentContext(working));
+            if (after.Trim().Length == 0)
+            {
+                var items = RunJsElements(script, pre, baseUrl, working);
                 if (items is { Count: > 0 })
                 {
-                    // nextTocUrl 仍以"原文"为上下文（脚本可能只负责给出条目）
                     var nodeCtx = new FragmentContext(working);
-                    var frags = new List<FragmentContext>(items.Count);
-                    foreach (var item in items)
-                    {
-                        if (!string.IsNullOrWhiteSpace(item))
-                        {
-                            frags.Add(new FragmentContext(item));
-                        }
-                    }
-
-                    return (BuildChaptersFromFragments(source, rule, frags, baseUrl, nodeCtx), nodeCtx);
+                    return (BuildChaptersFromFragments(source, rule, ToFragments(items), baseUrl, nodeCtx), nodeCtx);
                 }
+
+                // 脚本只是改写原文（没返回数组）：按改写后的内容重新走一遍
+                var rewritten = RunJs(script, pre, baseUrl, null, working);
+                return ParseTocList(
+                    source, rule, rewritten, baseUrl, IsJsonLike(rewritten) ? "$[*]" : "body > *");
             }
 
-            while (RuleAnalyzer.IsJsRule(selector))
-            {
-                var (output, remainingRule) = EvalLeadingJs(selector, working, baseUrl);
-                working = output;
-                selector = remainingRule;
-                if (selector.Length == 0)
-                {
-                    break;
-                }
-            }
-
-            if (selector.Trim().Length == 0)
-            {
-                // reader：JS 输出非 JSON 时用 body > * 兜底（仅 JS 分支，空 chapterList 不兜底）
-                selector = IsJsonLike(working) ? "$[*]" : "body > *";
-            }
+            working = RunJs(script, pre, baseUrl, null, working);
+            selector = after;
         }
 
         // JS 循环结束后 body 不再变化：建一份上下文供章节解析与 nextTocUrl 共用
         var ctx = new FragmentContext(working);
+
+        // @put:{k:rule} 先落变量并从选择器里剥掉（吉站漫画 `$..chapters[*]@put:{bid:$.data.id}`）
+        selector = ApplyPutRule(selector.Trim(), ctx);
 
         var mode = RuleAnalyzer.DetectMode(selector, ctx);
         var chapters = mode switch
@@ -1508,6 +1813,56 @@ public sealed class RuleEngine
         };
 
         return (chapters, ctx);
+    }
+
+    /// <summary>脚本条目字符串 → 片段（跳过空白项）。</summary>
+    private static List<FragmentContext> ToFragments(IReadOnlyList<string> items)
+    {
+        var frags = new List<FragmentContext>(items.Count);
+        foreach (var item in items)
+        {
+            if (!string.IsNullOrWhiteSpace(item))
+            {
+                frags.Add(new FragmentContext(item));
+            }
+        }
+
+        return frags;
+    }
+
+    /// <summary>
+    /// 多段规则里"文本段"的求值（供后续脚本当 <c>result</c> 用）：
+    /// JSONPath 命中**对象/数组**时返回合法 JSON 文本（脚本里 <c>JSON.parse(result)</c> 才成立），
+    /// 命中的全是字符串/数字时按 legado <c>getString</c> 语义用 <c>\n</c> 拼接
+    /// （<c>result.split("\n")</c> 这类写法才成立）；非 JSONPath 走常规求值。
+    /// </summary>
+    private string EvalSegmentValue(string rule, FragmentContext ctx)
+    {
+        var declared = RuleAnalyzer.TryDetectModeFromRule(rule);
+        var isJsonPath = declared == RuleMode.JsonPath
+            || (declared is null && ctx.IsJson);
+        if (!isJsonPath || ctx.Json is null)
+        {
+            return ExtractContent(rule, ctx);
+        }
+
+        var nodes = JsonPathEval.QueryNodes(ctx.Json, RuleAnalyzer.StripModePrefix(rule));
+        if (nodes.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        if (nodes.All(n => n is System.Text.Json.Nodes.JsonValue))
+        {
+            return string.Join("\n", nodes.Select(n => n?.ToString() ?? string.Empty));
+        }
+
+        if (nodes.Count == 1 && nodes[0] is System.Text.Json.Nodes.JsonArray single)
+        {
+            return single.ToJsonString();
+        }
+
+        return "[" + string.Join(",", nodes.Select(n => n?.ToJsonString() ?? "null")) + "]";
     }
 
     /// <summary>

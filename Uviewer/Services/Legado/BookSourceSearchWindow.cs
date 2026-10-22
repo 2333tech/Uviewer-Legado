@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,9 +10,11 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using Uviewer.Services.Legado.Models;
 using Uviewer.Services.Legado.BookSources;
 using Windows.Graphics;
+using Windows.Storage.Streams;
 using BookSourceModel = Uviewer.Services.Legado.Models.BookSource;
 using CoreTocItem = Uviewer.Services.Legado.Models.TocItem;
 
@@ -69,8 +72,33 @@ namespace Uviewer.Services.Legado
         private TextBlock? _previewText;
         private ScrollViewer? _previewScroll;
 
+        /// <summary>预览图集：页图槽位容器 + "只显示前 N 页"的提示行。</summary>
+        private StackPanel? _previewImagePanel;
+        private TextBlock? _previewImageHint;
+
+        /// <summary>预览顶栏的「部分下载」（仅图片书源可见）。</summary>
+        private Button? _partialDownloadButton;
+
+        /// <summary>预览页图下载的取消源（换条目/关窗/重渲染都作废在途请求）。</summary>
+        private CancellationTokenSource? _previewImageCts;
+
+        /// <summary>当前预览的书源是否为图片源（漫画）。</summary>
+        private bool _previewIsManga;
+
+        /// <summary>预览页图上限：只下前几页（判断"能不能显示图"够了，不必拉完整章）。</summary>
+        private const int PreviewImageLimit = 6;
+
+        /// <summary>「部分下载」进行中（重复点击守卫）。</summary>
+        private bool _partialDownloadRunning;
+
+        /// <summary>「部分下载」的取消源（关窗即取消）。</summary>
+        private CancellationTokenSource? _partialDownloadCts;
+
         /// <summary>当前预览的原文（书源引擎原始返回）与开关状态。</summary>
         private string? _previewRawChapter;
+
+        /// <summary>当前预览第一章的图片地址（探测时由引擎抽取，图片书源/漫画用）。</summary>
+        private List<string> _previewImages = new();
         private bool _previewPurify = true;
         private CoreTocItem? _previewChapter;
         private BookSourceReadingSession? _previewSession;
@@ -358,6 +386,31 @@ namespace Uviewer.Services.Legado
             };
             ToolTipService.SetToolTip(fontButton, "更改界面字体（复用主窗口顶栏的字体选择；改的是字体族，不是字号）");
 
+            // 「部分下载」= 只下前 5 章就打开（图片书源专属；文本书源隐藏）。
+            // 与左侧卡片「下载」（整本全部章）刻意分开：漫画一章几十 MB，
+            // "先看开头"与"整本离线"是两种完全不同的成本，按钮必须能区分。
+            var partialDownloadButton = new Button
+            {
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 6,
+                    Children =
+                    {
+                        new FontIcon { Glyph = "\uE896", FontSize = 13 },   // Download
+                        new TextBlock { Text = "部分下载", FontSize = 12, VerticalAlignment = VerticalAlignment.Center },
+                    },
+                },
+                Padding = new Thickness(8, 4, 8, 4),
+                Background = palette.Accent,
+                Foreground = palette.OnAccent,
+                Visibility = Visibility.Collapsed,
+            };
+            _partialDownloadButton = partialDownloadButton;
+            ToolTipService.SetToolTip(
+                partialDownloadButton,
+                "只下载前 5 章就直接打开（其余章在阅读时按「前 2 后 5」自动补齐）；想在主窗口离线读整本，请用菜单「下载全本（漫画）」");
+
             var previewTopBar = new Grid { ColumnSpacing = 6 };
             previewTopBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             previewTopBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -365,14 +418,17 @@ namespace Uviewer.Services.Legado
             previewTopBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             previewTopBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             previewTopBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            previewTopBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             Grid.SetColumn(openInHostButton, 0);
             Grid.SetColumn(previewChapterName, 1);
-            Grid.SetColumn(prevPageButton, 2);
-            Grid.SetColumn(nextPageButton, 3);
-            Grid.SetColumn(purifyToggle, 4);
-            Grid.SetColumn(fontButton, 5);
+            Grid.SetColumn(partialDownloadButton, 2);
+            Grid.SetColumn(prevPageButton, 3);
+            Grid.SetColumn(nextPageButton, 4);
+            Grid.SetColumn(purifyToggle, 5);
+            Grid.SetColumn(fontButton, 6);
             previewTopBar.Children.Add(openInHostButton);
             previewTopBar.Children.Add(previewChapterName);
+            previewTopBar.Children.Add(partialDownloadButton);
             previewTopBar.Children.Add(prevPageButton);
             previewTopBar.Children.Add(nextPageButton);
             previewTopBar.Children.Add(purifyToggle);
@@ -389,9 +445,36 @@ namespace Uviewer.Services.Legado
             };
             _previewText = previewText;
             _fontTargets.Add(previewText);
+
+            // ── 图片预览（图片书源/漫画的第一章页图） ──
+            // 面板恒在，空时 Visibility=Collapsed；每张页图一个固定高度的槽位，
+            // 加载完再把 Image 塞进去——这样滚动条长度不会在图片陆续到达时反复跳。
+            var previewImageHint = new TextBlock
+            {
+                FontSize = 11,
+                Foreground = palette.TextSecondary,
+                TextWrapping = TextWrapping.Wrap,
+                Visibility = Visibility.Collapsed,
+            };
+            _previewImageHint = previewImageHint;
+            _fontTargets.Add(previewImageHint);
+
+            var previewImagePanel = new StackPanel
+            {
+                Spacing = 6,
+                Visibility = Visibility.Collapsed,
+            };
+            _previewImagePanel = previewImagePanel;
+
+            // 文本与图片同容器：文本书源只有文本，图片书源通常只有图片（正文里常混着导航噪音）
+            var previewContent = new StackPanel { Spacing = 8 };
+            previewContent.Children.Add(previewImageHint);
+            previewContent.Children.Add(previewText);
+            previewContent.Children.Add(previewImagePanel);
+
             var previewScroll = new ScrollViewer
             {
-                Content = previewText,
+                Content = previewContent,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
                 HorizontalScrollMode = ScrollMode.Disabled,
                 HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
@@ -903,6 +986,9 @@ namespace Uviewer.Services.Legado
             prevPageButton.Click += (s, e) => PagePreview(previewScroll, up: true);
             nextPageButton.Click += (s, e) => PagePreview(previewScroll, up: false);
 
+            partialDownloadButton.Click += async (s, e) =>
+                await StartPartialDownloadAsync(partialDownloadButton, status).ConfigureAwait(true);
+
             purifyToggle.Click += async (s, e) =>
             {
                 _previewPurify = purifyToggle.IsChecked == true;
@@ -911,13 +997,13 @@ namespace Uviewer.Services.Legado
                     return;
                 }
 
-                previewText.Text = "正在重新渲染…";
-                var service = _search.Service;
-                var raw = _previewRawChapter;
-                var purify = _previewPurify;
-                var text = await Task.Run(() => RenderChapterText(service, raw, purify)).ConfigureAwait(true);
-                previewText.Text = text;
-                previewScroll.ChangeView(null, 0, null, disableAnimation: true);
+                if (_previewText is { } target)
+                {
+                    target.Text = "正在重新渲染…";
+                }
+
+                // 文本与页图一起重算：图片书源净化后图集可能变（规则有时会把 <img> 挪走）
+                await RenderPreviewBodyAsync().ConfigureAwait(true);
             };
 
             fontButton.Click += async (s, e) =>
@@ -940,6 +1026,8 @@ namespace Uviewer.Services.Legado
                 // 关窗 = 停掉渲染泵与全部探测（泵每轮检查 _hostElement，置空后自动退出）
                 searchDone = true;
                 _cts?.Cancel();
+                CancelPreviewImages();
+                _partialDownloadCts?.Cancel();
                 _probeQueue?.Dispose();
                 foreach (var context in cardContexts)
                 {
@@ -1288,8 +1376,16 @@ namespace Uviewer.Services.Legado
                                     linked.Token).ConfigureAwait(false);
                                 var raw = content?.Content;
                                 holder.FirstChapterRaw = raw;
-                                if (string.IsNullOrWhiteSpace(raw)
-                                    || string.IsNullOrWhiteSpace(LegadoHtmlText.ToPlainText(raw)))
+                                holder.FirstChapterImages = content?.ImageUrls;
+
+                                // 图片书源（漫画）的"正文"就是一组 <img>：转纯文本必然为空，
+                                // 只要抽得到图片地址就算正常——否则每个漫画源都会被标 ⚠"正文为空"。
+                                if (string.IsNullOrWhiteSpace(raw))
+                                {
+                                    problem = "第一章正文为空";
+                                }
+                                else if (string.IsNullOrWhiteSpace(LegadoHtmlText.ToPlainText(raw))
+                                    && (content?.ImageUrls is not { Count: > 0 }))
                                 {
                                     problem = "第一章正文为空";
                                 }
@@ -1400,6 +1496,23 @@ namespace Uviewer.Services.Legado
             introBody.Text = string.Empty;
             previewChapterName.Text = "第一章预览";
             previewText.Text = "正在加载第一章（已插队优先加载）…";
+
+            // 换条目先收起「部分下载」：上一条如果是漫画，按钮不能残留到文本条目上
+            _previewIsManga = false;
+            _previewImages = new List<string>();
+            UpdatePartialDownloadButton();
+            CancelPreviewImages();
+            _previewImagePanel?.Children.Clear();
+            if (_previewImagePanel is { } pendingPanel)
+            {
+                pendingPanel.Visibility = Visibility.Collapsed;
+            }
+
+            if (_previewImageHint is { } pendingHint)
+            {
+                pendingHint.Visibility = Visibility.Collapsed;
+            }
+
             previewScroll.ChangeView(null, 0, null, disableAnimation: true);
 
             // 等探测完成（Boost 已把它提到队首）
@@ -1425,37 +1538,387 @@ namespace Uviewer.Services.Legado
             introScroll.ChangeView(null, 0, null, disableAnimation: true);
 
             var raw = holder.FirstChapterRaw;
-            if (string.IsNullOrWhiteSpace(raw))
+            var firstImages = holder.FirstChapterImages;
+            if (string.IsNullOrWhiteSpace(raw) && (firstImages is not { Count: > 0 }))
             {
                 previewChapterName.Text = chapters is { Count: > 0 } ? chapters[0].ChapterName ?? "第一章" : "目录为空";
                 previewText.Text = "第一章正文为空（书源问题，见结果条目的警告标记）。";
                 return;
             }
 
-            _previewRawChapter = raw;
+            _previewRawChapter = raw ?? string.Empty;
+            _previewImages = firstImages ?? new List<string>();
             _previewChapter = chapters![0];
             _previewSession = holder.Session;
+            _previewIsManga = holder.Session?.Source.SourceKind == BookSourceKind.Image;
             previewChapterName.Text = chapters[0].ChapterName ?? "第一章";
+            UpdatePartialDownloadButton();
 
             previewText.Text = "正在渲染…";
+            await RenderPreviewBodyAsync().ConfigureAwait(true);
+        }
+
+        /// <summary>
+        /// 渲染预览主体：<b>正文纯文本</b> + <b>图片书源的第一章页图</b>（前 <see cref="PreviewImageLimit"/> 页）。
+        /// <para><b>为什么同一个面板要两种能力</b>：搜索结果是混合的——文本书源给文本，
+        /// 漫画/图片书源给图。旧实现只有 <c>TextBlock</c>，图片源的正文转纯文本后必然是空的，
+        /// 于是"目录能解析但右侧什么都没有"。</para>
+        /// <para>净化（几 MB 正则替换）在后台线程做；<b>页图必须走书源引擎的
+        /// <c>GetImageAsync</c></b>——它带 Referer 与每源 Cookie，自己开 HttpClient 会被防盗链挡成 403。</para>
+        /// </summary>
+        private async Task RenderPreviewBodyAsync()
+        {
+            var raw = _previewRawChapter;
+            var text = _previewText;
+            var scroll = _previewScroll;
+            if (raw is null || text is null || scroll is null)
+            {
+                return;
+            }
+
             var service = _search.Service;
             var purify = _previewPurify;
-            var content = raw!;
-            var text = await Task.Run(() => RenderChapterText(service, content, purify)).ConfigureAwait(true);
+            var chapterUrl = _previewChapter?.ChapterUrl ?? _previewSession?.BookUrl ?? string.Empty;
+            var known = _previewImages;
+
+            var (plain, images) = await Task.Run(() =>
+            {
+                var content = purify ? service.PurifyForDisplay(raw) : raw;
+                var text = LegadoHtmlText.ToPlainText(content ?? string.Empty);
+
+                // 引擎在抓正文时已经抽过图片地址（绝对化 + 去重），优先用它：
+                // 净化规则只针对文本，重新从净化后的 HTML 抽一次反而可能少图。
+                var urls = known.Count > 0
+                    ? new List<string>(known)
+                    : RuleEngine.ExtractImageUrls(content ?? string.Empty, chapterUrl);
+
+                if (urls.Count == 0 && !ReferenceEquals(content, raw))
+                {
+                    urls = RuleEngine.ExtractImageUrls(raw, chapterUrl);
+                }
+
+                return (text, urls);
+            }).ConfigureAwait(true);
+
             if (_hostElement is null)
             {
                 return;
             }
 
-            previewText.Text = string.IsNullOrWhiteSpace(text) ? "第一章正文为空（书源问题）。" : text;
-            previewScroll.ChangeView(null, 0, null, disableAnimation: true);
+            // 换条目/重渲染：上一轮在途的页图请求立即作废（否则旧图会填进新面板）
+            CancelPreviewImages();
+
+            var showImages = images.Count > 0;
+
+            // 纯图章（漫画那一类）的"正文"只有几十字的导航噪音，显示出来只是干扰；
+            // 而文本书源里的插图（几百上千字正文 + 一两张图）必须保留正文。
+            var imageOnly = showImages && plain.Trim().Length < 60;
+            text.Visibility = imageOnly ? Visibility.Collapsed : Visibility.Visible;
+            if (!imageOnly)
+            {
+                text.Text = string.IsNullOrWhiteSpace(plain) ? "第一章正文为空（书源问题）。" : plain;
+            }
+
+            var panel = _previewImagePanel;
+            var hint = _previewImageHint;
+            if (panel is null || hint is null)
+            {
+                scroll.ChangeView(null, 0, null, disableAnimation: true);
+                return;
+            }
+
+            panel.Children.Clear();
+            panel.Visibility = showImages ? Visibility.Visible : Visibility.Collapsed;
+
+            if (showImages)
+            {
+                var shown = Math.Min(images.Count, PreviewImageLimit);
+                hint.Visibility = images.Count > shown ? Visibility.Visible : Visibility.Collapsed;
+                hint.Text = $"第一章共 {images.Count} 页，这里预览前 {shown} 页；在主窗口打开可按页翻阅全部。";
+            }
+            else
+            {
+                hint.Visibility = Visibility.Collapsed;
+            }
+
+            scroll.ChangeView(null, 0, null, disableAnimation: true);
+
+            if (!showImages)
+            {
+                return;
+            }
+
+            var palette = LegadoTheme.For(_hostElement);
+            var slots = new List<Border>();
+            var shownCount = Math.Min(images.Count, PreviewImageLimit);
+            for (var i = 0; i < shownCount; i++)
+            {
+                var slot = CreateImageSlot(i + 1, palette);
+                slots.Add(slot);
+                panel.Children.Add(slot);
+            }
+
+            var cts = new CancellationTokenSource();
+            _previewImageCts = cts;
+            var source = _previewSession?.Source;
+            var urls = images.Take(shownCount).ToList();
+
+            // 不 await：文本/骨架先出来，页图逐张填（否则用户要盯着"正在渲染…"等网络）
+            _ = LoadPreviewImagesAsync(source, urls, slots, palette, cts.Token);
         }
 
-        /// <summary>预览文本渲染：替换净化（引擎管线）→ 纯文本（后台线程执行）。</summary>
-        private static string RenderChapterText(BookSourceService service, string raw, bool purify)
+        /// <summary>
+        /// 逐张取页图并填进槽位（<b>串行</b>：预览只要"能看见图"，不值得为它并发打站点）。
+        /// <para>取消/换条目时静默退出；单张失败只降级该槽位的文案，不影响其余页。</para>
+        /// </summary>
+        private async Task LoadPreviewImagesAsync(
+            BookSourceModel? source,
+            IReadOnlyList<string> urls,
+            IReadOnlyList<Border> slots,
+            LegadoPalette palette,
+            CancellationToken token)
         {
-            var content = purify ? service.PurifyForDisplay(raw) : raw;
-            return LegadoHtmlText.ToPlainText(content);
+            if (source is null)
+            {
+                return;
+            }
+
+            var engine = _search.Service.Engine;
+            for (var i = 0; i < slots.Count && i < urls.Count; i++)
+            {
+                if (token.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                try
+                {
+                    var bytes = await engine.GetImageAsync(source, urls[i], token).ConfigureAwait(true);
+                    if (token.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    if (bytes is null || bytes.Length == 0)
+                    {
+                        SetSlotText(slots[i], $"第 {i + 1} 页取不到（源站拒绝或图片地址失效）", palette);
+                        continue;
+                    }
+
+                    var bitmap = new BitmapImage();
+                    using (var stream = new MemoryStream(bytes, writable: false))
+                    using (var randomAccess = stream.AsRandomAccessStream())
+                    {
+                        await bitmap.SetSourceAsync(randomAccess).AsTask(token).ConfigureAwait(true);
+                    }
+
+                    if (token.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    slots[i].Child = new Image
+                    {
+                        Source = bitmap,
+                        Stretch = Stretch.Uniform,
+                        HorizontalAlignment = HorizontalAlignment.Stretch,
+                    };
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Preview image failed: {ex.Message}");
+                    SetSlotText(slots[i], $"第 {i + 1} 页加载失败", palette);
+                }
+            }
+        }
+
+        /// <summary>页图槽位：固定最小高度占位，图片陆续到达时滚动条不会反复跳。</summary>
+        private static Border CreateImageSlot(int pageNumber, LegadoPalette palette) =>
+            new()
+            {
+                MinHeight = 180,
+                CornerRadius = new CornerRadius(6),
+                Background = palette.Surface,
+                BorderBrush = palette.SurfaceBorder,
+                BorderThickness = new Thickness(1),
+                Child = BuildSlotText($"第 {pageNumber} 页 加载中…", palette),
+            };
+
+        private static void SetSlotText(Border slot, string message, LegadoPalette palette) =>
+            slot.Child = BuildSlotText(message, palette);
+
+        private static TextBlock BuildSlotText(string message, LegadoPalette palette) =>
+            new()
+            {
+                Text = message,
+                FontSize = 12,
+                Foreground = palette.TextSecondary,
+                TextWrapping = TextWrapping.Wrap,
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(12, 0, 12, 0),
+            };
+
+        /// <summary>作废在途的预览页图请求（换条目 / 重渲染 / 关窗 / 清空预览）。</summary>
+        private void CancelPreviewImages()
+        {
+            var cts = _previewImageCts;
+            _previewImageCts = null;
+            if (cts is null)
+            {
+                return;
+            }
+
+            try
+            {
+                cts.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // 已自行结束，忽略
+            }
+
+            cts.Dispose();
+        }
+
+        /// <summary>「部分下载」按钮只对图片书源（漫画）出现。</summary>
+        private void UpdatePartialDownloadButton()
+        {
+            if (_partialDownloadButton is { } button)
+            {
+                button.Visibility = _previewIsManga ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+
+        // ============================================================
+        // 部分下载（漫画：只下前 5 章就打开）
+        // ============================================================
+
+        /// <summary>
+        /// 「部分下载」：只把<b>前 <see cref="MangaLibrary.InitialChapterImageCount"/> 章</b>的图片打成章包，
+        /// 然后立刻在主窗口打开。
+        ///
+        /// <para><b>为什么要单独一个按钮</b>：卡片上的「下载」是"整本下完才打开"（章节多时几十分钟），
+        /// 而用户点开一本漫画通常只想先看开头。把两条成本完全不同的路径做成两个按钮，
+        /// 比在同一个按钮上猜用户意图更可靠。</para>
+        ///
+        /// <para><b>打开方式是"在线书源"而不是"离线清单"</b>（关键）：离线清单
+        /// （<c>OpenMangaManifestAsync</c>）不联网，翻到未下载的章只会提示"尚未下载"。
+        /// 用户要求的是"之后阅读时的下载规则遵循现有的跳转章节后下载前后"——
+        /// 必须走 <c>OpenBookAsync</c> 的在线链路：已下好的章零网络直读，
+        /// 未下的章由前 2 后 5 窗口按需补齐。</para>
+        ///
+        /// <para><b>左侧目录</b>：打开后由阅读控制器把资源管理器定位到该漫画文件夹
+        /// （<c>NavigateExplorerToMangaFolder</c>），用户直接看到每章的 CBZ。</para>
+        /// </summary>
+        private async Task StartPartialDownloadAsync(Button button, TextBlock status)
+        {
+            if (_partialDownloadRunning)
+            {
+                return;
+            }
+
+            var session = _previewSession;
+            if (session is null || _previewChapter is null)
+            {
+                status.Text = "请先点选一本漫画，再点「部分下载」。";
+                return;
+            }
+
+            var source = session.Source;
+            if (source.SourceKind != BookSourceKind.Image)
+            {
+                status.Text = "「部分下载」只适用于漫画（图片书源）。";
+                return;
+            }
+
+            _partialDownloadRunning = true;
+            var original = button.Content;
+            button.IsEnabled = false;
+            button.Content = "准备目录…";
+
+            var cts = new CancellationTokenSource();
+            _partialDownloadCts = cts;
+            var token = cts.Token;
+
+            try
+            {
+                var downloads = new MangaDownloadService(_search.Service);
+
+                // 与主窗口打开走同一个构造函数 ⇒ 落到同一个漫画文件夹（书源名 + 书籍 URL 短哈希）
+                using var manga = new MangaReadingSession(
+                    _search.Service, source, session.BookUrl, downloads.MangaRoot);
+
+                status.Text = "正在获取漫画目录…";
+                var opened = await manga.OpenOnlineAsync(token).ConfigureAwait(true);
+                if (opened.Chapters.Count == 0)
+                {
+                    status.Text = "漫画目录为空，无法部分下载（书源可能已失效）。";
+                    return;
+                }
+
+                var plan = Math.Min(MangaLibrary.InitialChapterImageCount, opened.Chapters.Count);
+                var progress = new Progress<MangaDownloadService.MangaDownloadProgress>(p =>
+                {
+                    if (_hostElement is not null && !token.IsCancellationRequested)
+                    {
+                        status.Text =
+                            $"部分下载前 {plan} 章：{p.ChaptersDone}/{p.ChaptersTotal} 章　{p.ChapterName}";
+                    }
+                });
+
+                var result = await downloads
+                    .DownloadAsync(manga, MangaLibrary.InitialChapterImageCount, progress, token)
+                    .ConfigureAwait(true);
+
+                if (!result.Success)
+                {
+                    status.Text = result.Message;
+                    return;
+                }
+
+                status.Text = "部分下载完成，正在主窗口打开…";
+
+                // 深链打开：主窗口按"在线漫画"建会话（同一文件夹），首页零网络直读已下好的章
+                var hit = new BookSourceSearchService.BookSearchHit(
+                    string.IsNullOrWhiteSpace(session.BookName) ? "漫画" : session.BookName,
+                    string.Empty,
+                    session.BookUrl,
+                    source.BookSourceName,
+                    source.BookSourceUrl ?? string.Empty);
+
+                await _onOpenBook(hit).ConfigureAwait(true);
+                status.Text = $"已在主窗口打开（左侧目录已切到该漫画文件夹，前 {plan} 章已下载）";
+            }
+            catch (OperationCanceledException)
+            {
+                status.Text = "部分下载已取消。";
+            }
+            catch (Exception ex)
+            {
+                status.Text = $"部分下载失败：{ex.Message}";
+            }
+            finally
+            {
+                if (ReferenceEquals(_partialDownloadCts, cts))
+                {
+                    _partialDownloadCts = null;
+                }
+
+                cts.Dispose();
+
+                _partialDownloadRunning = false;
+                if (_hostElement is not null)
+                {
+                    button.Content = original;
+                    button.IsEnabled = true;
+                }
+            }
         }
 
         /// <summary>把宿主"界面字体"应用到窗口内全部文字控件（字体族，不动字号）。</summary>
@@ -1484,9 +1947,29 @@ namespace Uviewer.Services.Legado
 
         private void ClearPreview()
         {
+            CancelPreviewImages();
             _previewRawChapter = null;
+            _previewImages = new List<string>();
             _previewChapter = null;
             _previewSession = null;
+            _previewIsManga = false;
+            _previewImagePanel?.Children.Clear();
+            if (_previewImagePanel is { } panel)
+            {
+                panel.Visibility = Visibility.Collapsed;
+            }
+
+            if (_previewImageHint is { } hint)
+            {
+                hint.Visibility = Visibility.Collapsed;
+            }
+
+            if (_previewText is { } text)
+            {
+                text.Visibility = Visibility.Visible;
+            }
+
+            UpdatePartialDownloadButton();
         }
 
         private void SelectCard(Border card, LegadoPalette palette)
@@ -1503,6 +1986,149 @@ namespace Uviewer.Services.Legado
         // ============================================================
         // 下载按钮（三态机，沿用旧版全部行为）
         // ============================================================
+
+        /// <summary>
+        /// 漫画卡片的「下载」：<b>整本</b>——把清单里所有章节的图片打成 CBZ，全部完成后再在主窗口打开。
+        ///
+        /// <para><b>与预览顶栏「部分下载」的分工</b>（用户明确要求）：</para>
+        /// <list type="bullet">
+        /// <item>本按钮 = 全部章节下完才打开（"我要整本离线"）；</item>
+        /// <item>「部分下载」= 只前 5 章立刻打开（"我先看开头"）。</item>
+        /// </list>
+        /// <para>下载中按钮变「取消」（与文本书源的按钮同一套三态语义）；取消保留已完成的章包。</para>
+        /// </summary>
+        private Button BuildMangaDownloadButton(
+            BookSourceSearchService.BookSearchHit hit,
+            BookSourceModel source,
+            TextBlock latestLabel,
+            LegadoPalette palette,
+            CancellationToken searchToken)
+        {
+            var button = new Button
+            {
+                Content = "下载",
+                MinWidth = 64,
+                Padding = new Thickness(10, 4, 10, 4),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = palette.Accent,
+                Foreground = palette.OnAccent,
+            };
+            ToolTipService.SetToolTip(
+                button,
+                "下载整本漫画（全部章节的图片，按章打包为 CBZ）后打开；只想先看开头几章，请用右侧预览顶栏的「部分下载」");
+
+            CancellationTokenSource? downloadCts = null;
+            var state = DownloadState.Idle;
+
+            button.Click += async (s, e) =>
+            {
+                switch (state)
+                {
+                    case DownloadState.Downloading:
+                        SetButton(DownloadState.Cancelling, "取消中…", palette.Warning);
+                        downloadCts?.Cancel();
+                        return;
+
+                    case DownloadState.Cancelling:
+                        return;
+
+                    case DownloadState.Done:
+                        // 已下载：再点 = 直接打开（不重复下载）
+                        await _onOpenBook(hit).ConfigureAwait(true);
+                        return;
+
+                    default:
+                        await StartAsync();
+                        return;
+                }
+            };
+
+            void SetButton(DownloadState next, string label, Brush? background)
+            {
+                state = next;
+                button.Content = label;
+                button.Background = background ?? button.Background;
+                button.IsEnabled = next != DownloadState.Cancelling;
+            }
+
+            async Task StartAsync()
+            {
+                var cts = CancellationTokenSource.CreateLinkedTokenSource(searchToken);
+                downloadCts = cts;
+                SetButton(DownloadState.Downloading, "取消", palette.Warning);
+
+                try
+                {
+                    var downloads = new MangaDownloadService(_search.Service);
+
+                    // 与主窗口打开共用构造函数 ⇒ 同一漫画文件夹（书源名 + 书籍 URL 短哈希）
+                    using var session = new MangaReadingSession(
+                        _search.Service, source, hit.BookUrl, downloads.MangaRoot);
+
+                    latestLabel.Text = "｜正在获取漫画目录…";
+                    var opened = await session.OpenOnlineAsync(cts.Token).ConfigureAwait(true);
+                    if (opened.Chapters.Count == 0)
+                    {
+                        SetButton(DownloadState.Idle, "重试", palette.Accent);
+                        latestLabel.Text = "｜目录为空，无法下载";
+                        return;
+                    }
+
+                    var progress = new Progress<MangaDownloadService.MangaDownloadProgress>(p =>
+                        latestLabel.Text = string.Format(
+                            CultureInfo.CurrentCulture,
+                            "｜下载中 {0}/{1} 章  {2}",
+                            p.ChaptersDone,
+                            p.ChaptersTotal,
+                            p.ChapterName));
+
+                    var result = await downloads
+                        .DownloadAllAsync(session, progress, cts.Token)
+                        .ConfigureAwait(true);
+
+                    if (result.Cancelled)
+                    {
+                        SetButton(DownloadState.Idle, "下载", palette.Accent);
+                        latestLabel.Text = "｜已取消下载（已下好的章保留）";
+                        return;
+                    }
+
+                    if (!result.Success)
+                    {
+                        SetButton(DownloadState.Idle, "重试", palette.Accent);
+                        latestLabel.Text = $"｜{result.Message}";
+                        return;
+                    }
+
+                    SetButton(DownloadState.Done, "已下载", palette.Success);
+                    latestLabel.Text = $"｜{result.Message}";
+
+                    // 在线方式打开（同一文件夹）：已下好的章零网络直读，未下的章按前 2 后 5 补
+                    await _onOpenBook(hit).ConfigureAwait(true);
+                }
+                catch (OperationCanceledException)
+                {
+                    SetButton(DownloadState.Idle, "下载", palette.Accent);
+                    latestLabel.Text = "｜已取消下载（已下好的章保留）";
+                }
+                catch (Exception ex)
+                {
+                    SetButton(DownloadState.Idle, "重试", palette.Accent);
+                    latestLabel.Text = $"｜下载失败：{ex.Message}";
+                }
+                finally
+                {
+                    cts.Dispose();
+                    if (ReferenceEquals(downloadCts, cts))
+                    {
+                        downloadCts = null;
+                    }
+                }
+            }
+
+            return button;
+        }
 
         private Button BuildDownloadButton(
             BookSourceSearchService.BookSearchHit hit,
@@ -1524,6 +2150,14 @@ namespace Uviewer.Services.Legado
                 };
                 ToolTipService.SetToolTip(blocked, "音视频结果不支持下载（本应用只处理文本类书源）");
                 return blocked;
+            }
+
+            // 漫画（图片书源）：文本下载链路完全不适用（正文转文本为空、图集没有落盘形态），
+            // 走漫画自己的"全部章节打成 CBZ"链路，下完再打开。
+            var source = _search.Service.Sources.GetByUrl(hit.SourceUrl);
+            if (source?.SourceKind == BookSourceKind.Image)
+            {
+                return BuildMangaDownloadButton(hit, source, latestLabel, palette, searchToken);
             }
 
             var button = new Button
@@ -1800,6 +2434,9 @@ namespace Uviewer.Services.Legado
 
             /// <summary>第一章原文（书源引擎原始返回）：预览零网络复用。</summary>
             public string? FirstChapterRaw { get; set; }
+
+            /// <summary>第一章抽取到的图片地址（图片书源/漫画）：预览图集的来源。</summary>
+            public List<string>? FirstChapterImages { get; set; }
 
             public string? Error { get; set; }
 

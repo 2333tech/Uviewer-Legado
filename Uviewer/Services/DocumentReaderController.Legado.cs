@@ -795,6 +795,13 @@ namespace Uviewer
                 return;
             }
 
+            // 漫画清单（.uvmanga）：走漫画离线打开，不能当文本读
+            if (MangaLibrary.LooksLikeMangaManifest(filePath))
+            {
+                await OpenMangaManifestAsync(filePath).ConfigureAwait(true);
+                return;
+            }
+
             // 先退出书源阅读模式：避免旧会话的预取任务继续抢网络/内存
             await CloseLegadoAsync().ConfigureAwait(true);
 

@@ -481,6 +481,51 @@ internal static class RuleAnalyzer
     }
 
     /// <summary>
+    /// 切出**第一段**脚本，返回 (脚本前文本, 脚本或 null, 脚本后剩余)。对标 legado
+    /// <c>JS_PATTERN = &lt;js&gt;([\w\W]*?)&lt;/js&gt;|@js:([\w\W]*)</c>。
+    /// <para><b>为什么要按脚本段切而不是先按 &&/||/%% 切</b>：legado <c>splitSourceRule</c>
+    /// 先切 JS 段，每个文本块再各自处理组合符/<c>{{}}</c>/<c>@get:</c>。代表写法：</para>
+    /// <list type="bullet">
+    /// <item><c>$.id||$.topic_id@js:"…/mobile/"+result+"/list/"</c>（快看漫画 bookUrl）：
+    ///   正确语义是"先按 &amp;&amp;/|| 取 id，再把结果拼成 URL"。先按 || 切会把
+    ///   <c>$.topic_id@js:…</c> 当成第二个备选，于是命中数量值而不是 URL。</item>
+    /// <item><c>$.data.chapters\n@js: JSON.parse(result)…</c>（光社漫畫目录）：文本段先求值，
+    ///   结果作为脚本的 <c>result</c>。</item>
+    /// </list>
+    /// <para><c>&lt;js&gt;</c> 取**第一个** `&lt;/js&gt;`（legado 正则非贪婪）；<c>@js:</c> 之后全为脚本。</para>
+    /// </summary>
+    public static (string Before, string? Script, string After) SplitFirstJs(string rule)
+    {
+        var jsOpen = rule.IndexOf("<js>", StringComparison.Ordinal);
+        var atJs = rule.IndexOf("@js:", StringComparison.Ordinal);
+
+        // 两个标记取更靠前的那个（@js: 在 <js> 之前时以 @js: 为准，其后的 <js> 属于脚本内容）
+        if (atJs >= 0 && (jsOpen < 0 || atJs < jsOpen))
+        {
+            return (rule.Substring(0, atJs), rule.Substring(atJs + 4), string.Empty);
+        }
+
+        if (jsOpen >= 0)
+        {
+            var close = rule.IndexOf("</js>", jsOpen + 4, StringComparison.Ordinal);
+            if (close > jsOpen)
+            {
+                return (
+                    rule.Substring(0, jsOpen),
+                    rule.Substring(jsOpen + 4, close - (jsOpen + 4)),
+                    rule.Substring(close + 5));
+            }
+        }
+
+        return (rule, null, string.Empty);
+    }
+
+    /// <summary>
+    /// 规则里是否含有脚本段（任意位置的 &lt;js&gt;…&lt;/js&gt; 或 @js:）。
+    /// </summary>
+    public static bool HasJsSegment(string rule) => SplitFirstJs(rule).Script is not null;
+
+    /// <summary>
     /// 列表规则前缀 <c>-</c>/<c>+</c> 表示倒序/正序（对标 reader normalize_list_rule）。
     /// 目录场景常见：`-@css:#list>li` 表示倒序取章节。
     /// </summary>

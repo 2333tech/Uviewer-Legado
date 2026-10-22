@@ -77,6 +77,69 @@ public sealed class UrlAnalyzer
         return spec with { Url = EncodeUrl(spec.Url, spec.Charset) };
     }
 
+    /// <summary>
+    /// 解析书源级 <c>header</c>（legado <c>AnalyzeUrl</c>：书源头 → 规则头 → URL 选项头，后者覆盖前者）。
+    /// <para><b>为什么必须有这一层</b>：`header` 里的 <c>User-Agent</c> 决定站点返回哪套页面。
+    /// 快看漫画的移动端 UA（<c>SearchCraft/3.6.5 …</c>）拿到的是带 <c>__NUXT__</c> 的
+    /// <c>/mobile/&lt;id&gt;/list/</c> 页面；缺 UA 时站点 302 到 <c>www.kuaikanmanhua.com/web/topic/…</c>
+    /// 的桌面 SPA——规则里的 <c>$.data[*].comicList[*]</c> 自然 0 命中。之前书源 header
+    /// **完全没有被应用到任何请求上**，这类"UA 分派页面"的源全部表现为"无法加载目录"。</para>
+    /// <para>支持两种形态：JSON 字面量（允许单引号/无引号键名的宽松写法）、
+    /// 以及 <c>@js:</c> / <c>&lt;js&gt;</c> 脚本（此时 jsonText 应已由
+    /// <see cref="RuleEngine.EvalSourceHeaderJson"/> 求值成 JSON）。</para>
+    /// </summary>
+    internal static Dictionary<string, string>? ParseHeaderJson(string? jsonText)
+    {
+        if (string.IsNullOrWhiteSpace(jsonText))
+        {
+            return null;
+        }
+
+        var analyzer = new UrlAnalyzer();
+        using var doc = TryParseStrict(jsonText) ?? analyzer.TryParseViaJs(jsonText);
+        if (doc is null || doc.RootElement.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var prop in doc.RootElement.EnumerateObject())
+        {
+            if (prop.Value.ValueKind == JsonValueKind.String)
+            {
+                headers[prop.Name] = prop.Value.GetString() ?? string.Empty;
+            }
+        }
+
+        return headers.Count > 0 ? headers : null;
+    }
+
+    /// <summary>
+    /// 合并请求头：<paramref name="baseHeaders"/> = 书源级（默认值），
+    /// <paramref name="overrideHeaders"/> = 规则/URL 选项级（优先）。
+    /// 任一侧为空时直接返回另一侧（不新建字典）。
+    /// </summary>
+    internal static IReadOnlyDictionary<string, string>? MergeHeaders(
+        IReadOnlyDictionary<string, string>? baseHeaders,
+        IReadOnlyDictionary<string, string>? overrideHeaders)
+    {
+        if (baseHeaders is null || baseHeaders.Count == 0)
+        {
+            return overrideHeaders;
+        }
+
+        var merged = new Dictionary<string, string>(baseHeaders, StringComparer.OrdinalIgnoreCase);
+        if (overrideHeaders is not null)
+        {
+            foreach (var (k, v) in overrideHeaders)
+            {
+                merged[k] = v;
+            }
+        }
+
+        return merged;
+    }
+
     /// <summary>旧版元组入口（保持对外兼容；内部实现同 BuildSpec）。</summary>
     public (string Url, string? Method, string? Body, Dictionary<string, string>? Headers, string? Charset)
         Build(string searchUrl, string key, int page)

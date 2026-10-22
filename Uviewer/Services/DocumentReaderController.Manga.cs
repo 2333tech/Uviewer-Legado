@@ -36,6 +36,9 @@ namespace Uviewer
         private int _mangaChapterIndex = -1;
         private int _mangaGeneration;
 
+        /// <summary>后台「下载全本」的取消源（再点一次菜单 = 取消；关书 = 取消）。</summary>
+        private CancellationTokenSource? _mangaFullDownloadCts;
+
         /// <summary>是否正在读漫画（图片书源的漫画模式）。</summary>
         internal bool IsMangaMode => _mangaSession is not null;
 
@@ -128,6 +131,10 @@ namespace Uviewer
                 return false;
             }
 
+            // 左侧资源管理器定位到"这本书的本地文件夹"：漫画的落盘形态就是
+            // "一个文件夹 + 每章一个 CBZ"，用户下载完最想看到的是这些章包本身。
+            NavigateExplorerToMangaFolder(session);
+
             session.PrefetchWindowAsync(opened.ChapterIndex);
             return true;
         }
@@ -165,10 +172,31 @@ namespace Uviewer
             var ok = await ShowMangaChapterAsync(chapterIndex, pageIndex, token).ConfigureAwait(true);
             if (ok)
             {
+                NavigateExplorerToMangaFolder(session);
                 ShowNotification($"已打开漫画：{session.BookName}", "\uE73E", "Green");
             }
 
             return ok;
+        }
+
+        /// <summary>
+        /// 让左侧资源管理器跳到这本漫画的文件夹（目录不存在则什么都不做）。
+        /// <para>判重交给宿主：<c>ShouldLoadExplorerFolder</c> 已在同一个文件夹时跳过重载。</para>
+        /// </summary>
+        private void NavigateExplorerToMangaFolder(MangaReadingSession session)
+        {
+            try
+            {
+                if (Directory.Exists(session.BookFolder))
+                {
+                    _appStateHost.LoadExplorerFolder(session.BookFolder);
+                }
+            }
+            catch (Exception ex)
+            {
+                // 侧栏导航失败不影响阅读（文件夹可能被独占/被删）
+                System.Diagnostics.Debug.WriteLine($"Load manga folder failed: {ex.Message}");
+            }
         }
 
         // ============================================================
@@ -421,6 +449,21 @@ namespace Uviewer
         {
             ++_mangaGeneration;
 
+            // 后台「下载全本」先取消：它持有同一份清单与章包句柄，必须比会话先停
+            var fullDownload = _mangaFullDownloadCts;
+            _mangaFullDownloadCts = null;
+            if (fullDownload is not null)
+            {
+                try
+                {
+                    fullDownload.Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                    // 已自行结束并释放，忽略
+                }
+            }
+
             var session = _mangaSession;
             _mangaSession = null;
             _mangaChapterIndex = -1;
@@ -442,46 +485,103 @@ namespace Uviewer
         // ============================================================
 
         /// <summary>
-        /// 「下载全本（漫画）」：目录全量 + 前 5 章图片落成章包。
-        /// <para>刻意<b>不</b>抓全部章节图片：一章几十 MB，整本几百 MB 的连续请求
-        /// 几乎必然触发源站风控，且用户真正需要的只是"能离线翻开头几章"。
-        /// 其余章在阅读时按前二后五窗口补齐。</para>
+        /// 「下载全本（漫画）」：把清单里全部尚未就绪的章补成 CBZ 章包。
+        /// <para><b>为什么改成后台</b>（2026-10-23 用户要求）：一章几十 MB，整本几百 MB，
+        /// 逐章 await 虽然不冻结 UI，但"下载中"的通知刷屏、且用户无法在下载期间做别的事
+        /// （再点菜单会被当成重复请求）。现在的口径：</para>
+        /// <list type="bullet">
+        /// <item>立即返回，下载在后台跑；主窗口可继续阅读/翻页/换书；</item>
+        /// <item>进度通知<b>按章节流</b>（同一章只报"开始/结束"两点，页级进度丢掉）——
+        /// 否则一章 40 页就是 40 次通知，整本几千次，通知栏会变成弹幕；</item>
+        /// <item>下载中再点一次菜单 = <b>取消</b>；关书（<see cref="CloseMangaAsync"/>）也会取消；</item>
+        /// <item>结束后<b>不</b>强制重显当前章：那样会打断正在看的页面（换包 = 重开归档）。</item>
+        /// </list>
         /// </summary>
-        internal async Task DownloadMangaAsync()
+        internal Task DownloadMangaAsync()
         {
             var session = _mangaSession;
             if (session is null)
             {
                 ShowNotification("请先打开一本漫画，再下载全本", "\uE783", "Red");
-                return;
+                return Task.CompletedTask;
             }
 
             if (session.IsOffline)
             {
                 ShowNotification("当前是离线打开的漫画，无法重新下载", "\uE783", "Red");
-                return;
+                return Task.CompletedTask;
             }
 
-            var downloads = new MangaDownloadService(BookSources);
-            var progress = new Progress<MangaDownloadService.MangaDownloadProgress>(p =>
-                ShowNotification(
-                    $"下载第 {p.ChaptersDone}/{p.ChaptersTotal} 章：{p.ChapterName}（{p.PagesDone}/{p.PagesTotal} 页）",
-                    "\uE896", "Gray"));
+            // 再点一次 = 取消在途的全本下载
+            if (_mangaFullDownloadCts is { } running)
+            {
+                running.Cancel();
+                ShowNotification("正在取消「下载全本」…", "\uE895", "Gray");
+                return Task.CompletedTask;
+            }
 
-            var result = await downloads
-                .DownloadAsync(session, MangaLibrary.InitialChapterImageCount, progress)
-                .ConfigureAwait(true);
+            var cts = new CancellationTokenSource();
+            _mangaFullDownloadCts = cts;
+            _ = RunFullDownloadAsync(session, cts);
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// 后台执行全本下载（<b>不</b>在 UI 线程等）：进度按章节流，结束时统一清理取消源。
+        /// <para>会话可能在下载途中被关掉（<see cref="CloseMangaAsync"/> 会先取消本任务），
+        /// 因此每章开始前都检查取消，且异常一律收敛成通知——后台任务抛异常会静默丢失。</para>
+        /// </summary>
+        private async Task RunFullDownloadAsync(MangaReadingSession session, CancellationTokenSource cts)
+        {
+            var token = cts.Token;
+            var total = session.Chapters.Count(c => !c.IsVolume);
+            ShowNotification($"已开始下载全本（共 {total} 章，可再次点本菜单取消）", "\uE896", "Gray");
+
+            var lastChapter = string.Empty;
+            var progress = new Progress<MangaDownloadService.MangaDownloadProgress>(p =>
+            {
+                // 章级节流：同一章只在第一次回调时报一次，避免每页一条通知
+                if (string.Equals(lastChapter, p.ChapterName, StringComparison.Ordinal))
+                {
+                    return;
+                }
+
+                lastChapter = p.ChapterName;
+                ShowNotification(
+                    $"下载全本 {p.ChaptersDone}/{p.ChaptersTotal} 章：{p.ChapterName}",
+                    "\uE896", "Gray");
+            });
+
+            var downloads = new MangaDownloadService(BookSources);
+            MangaDownloadService.MangaDownloadResult result;
+            try
+            {
+                result = await downloads
+                    .DownloadAllAsync(session, progress, token)
+                    .ConfigureAwait(true);
+            }
+            catch (OperationCanceledException)
+            {
+                result = new MangaDownloadService.MangaDownloadResult(false, true, string.Empty, "「下载全本」已取消");
+            }
+            catch (Exception ex)
+            {
+                result = new MangaDownloadService.MangaDownloadResult(false, false, string.Empty, $"「下载全本」失败：{ex.Message}");
+            }
+            finally
+            {
+                if (ReferenceEquals(_mangaFullDownloadCts, cts))
+                {
+                    _mangaFullDownloadCts = null;
+                }
+
+                cts.Dispose();
+            }
 
             ShowNotification(
                 result.Message,
                 result.Success ? "\uE73E" : "\uE783",
                 result.Success ? "Green" : "Red");
-
-            if (result.Success)
-            {
-                // 回到当前章（下载过程可能补齐了当前章的缺页）
-                await ShowMangaChapterAsync(Math.Max(0, _mangaChapterIndex), 0).ConfigureAwait(true);
-            }
         }
 
         /// <summary>
