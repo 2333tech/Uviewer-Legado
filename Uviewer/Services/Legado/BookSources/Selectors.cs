@@ -248,7 +248,7 @@ internal static class Selectors
         if (chain.Length == 1)
         {
             var single = LegadoCss.ParsePart(chain[0]);
-            if (single.Index < 0 && CssAttrKeywords.Names.Contains(single.Css))
+            if (!single.HasIndex && CssAttrKeywords.Names.Contains(single.Css))
             {
                 return new List<string> { ApplyCssAxis(RootElementOf(doc.DocumentNode), single.Css) };
             }
@@ -290,9 +290,9 @@ internal static class Selectors
         var lastSelector = LegadoCss.ParsePart(lastPart);
         foreach (var n in nodes)
         {
-            if (lastSelector.Index < 0 && IsSimpleName(lastSelector.Css))
+            if (!lastSelector.HasIndex && IsSimpleName(lastSelector.Css))
             {
-                var attr = n.GetAttributeValue(lastSelector.Css, null);
+                var attr = n.GetAttributeValue(lastSelector.Css, null) is null ? null : AttrValue(n, lastSelector.Css);
                 if (attr is not null)
                 {
                     outList.Add(attr);
@@ -323,7 +323,7 @@ internal static class Selectors
         var first = LegadoCss.ParsePart(chain[0]);
 
         List<HtmlNode> nodes;
-        if (chain.Length > 1 && first.Index < 0 && CssAttrKeywords.Names.Contains(first.Css))
+        if (chain.Length > 1 && !first.HasIndex && CssAttrKeywords.Names.Contains(first.Css))
         {
             nodes = new List<HtmlNode> { RootElementOf(scope) };
         }
@@ -361,7 +361,7 @@ internal static class Selectors
         }
 
         var first = LegadoCss.ParsePart(chain[0]);
-        var nodes = count > 1 && first.Index < 0 && CssAttrKeywords.Names.Contains(first.Css)
+        var nodes = count > 1 && !first.HasIndex && CssAttrKeywords.Names.Contains(first.Css)
             ? new List<HtmlNode> { RootElementOf(scope) }
             : SelectPart(scope, first);
 
@@ -374,8 +374,8 @@ internal static class Selectors
         return nodes;
     }
 
-    /// <summary>按单段选择器取值（含索引后缀）。非法选择器 → 空列表（不中断解析）。</summary>
-    private static List<HtmlNode> SelectPart(HtmlNode scope, (string Css, int Index, bool Exclude) part)
+    /// <summary>按单段选择器取值（含方括号/单点索引）。非法选择器 → 空列表（不中断解析）。</summary>
+    private static List<HtmlNode> SelectPart(HtmlNode scope, LegadoCss.CssPart part)
     {
         if (part.Css.Length == 0)
         {
@@ -384,7 +384,7 @@ internal static class Selectors
 
         var hits = scope.QuerySelectorAll(part.Css);
         var list = hits is null ? new List<HtmlNode>() : hits.ToList();
-        return LegadoCss.ApplyIndex(list, part.Index, part.Exclude);
+        return LegadoCss.ApplyIndex(list, part);
     }
 
     /// <summary>当前片段元素：文档节点取首个元素子节点，元素节点取自身。</summary>
@@ -429,6 +429,19 @@ internal static class Selectors
     /// ownText → 仅直接文本子节点；outerHtml/node → OuterHtml；all → InnerHtml；
     /// 其余 → 按属性名取值。
     /// </summary>
+    /// <summary>
+    /// 属性取值：把 HAP 保留的 HTML 实体解码（legado 用 Jsoup，<c>attr()</c> 返回的已是解码值）。
+    /// <para><b>为什么必须解码</b>：多参数链接的 <c>&amp;</c> 在源码里是实体，
+    /// 不解码就变成 <c>?comic_id=x&amp;chapter_slot=1</c> —— 服务端把
+    /// <c>amp;chapter_slot</c> 当成另一个参数名，请求到的页面/接口与预期完全不同。
+    /// 表现是"目录能出、点开第一章正文为空"或"章节链接 404"。</para>
+    /// </summary>
+    internal static string AttrValue(HtmlNode node, string name)
+    {
+        var raw = node.GetAttributeValue(name, string.Empty);
+        return raw.Length > 0 && raw.IndexOf('&') >= 0 ? System.Net.WebUtility.HtmlDecode(raw) : raw;
+    }
+
     private static string ApplyCssAxis(HtmlNode node, string? axis)
     {
         if (string.IsNullOrEmpty(axis))
@@ -448,7 +461,7 @@ internal static class Selectors
             "outerText" => node.InnerText,
             "innerText" => node.InnerText,
             "node" => node.OuterHtml,
-            _ => node.GetAttributeValue(axis, string.Empty),
+            _ => AttrValue(node, axis),
         };
     }
 
@@ -564,7 +577,7 @@ internal static class Selectors
         if (axis.StartsWith("attr:", StringComparison.Ordinal))
         {
             var attr = axis.Substring(5);
-            return node.GetAttributeValue(attr, string.Empty);
+            return AttrValue(node, attr);
         }
 
         return axis switch

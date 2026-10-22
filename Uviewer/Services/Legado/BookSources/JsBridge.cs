@@ -141,7 +141,31 @@ internal sealed class JsBridge
         string script,
         string value,
         string baseUrl,
-        IReadOnlyDictionary<string, object?>? globals = null)
+        IReadOnlyDictionary<string, object?>? globals = null) =>
+        RunCore(script, value, baseUrl, globals, captureList: false).Text;
+
+    /// <summary>
+    /// 执行脚本并保留<b>列表结构</b>（对标 legado <c>AnalyzeRule.getElements</c> 的
+    /// <c>Mode.Js</c> 分支：<c>evalJS</c> 返回的对象被直接当条目列表用）。
+    /// <para><b>为什么需要它</b>：legado 的列表规则允许脚本直接返回对象数组，例如
+    /// <c>&lt;js&gt;java.getElements("id.chapter-items@class.comics-chapters@a")&lt;/js&gt;</c>
+    /// （包子漫画类源）或 <c>list.map(x =&gt; ({text: …, href: …}))</c>。
+    /// 走 <see cref="Run"/> 只会拿到 <c>Array.prototype.toString()</c> 的
+    /// <c>"[object Object],[object Object]"</c>——条目信息已彻底丢失，后续只能退化成
+    /// 「整份 body 兜底」，目录恒为空。</para>
+    /// <para>返回：脚本结果不是数组 → null（调用方回退到字符串路径，语义不变）；
+    /// 是数组 → 每项一个条目片段字符串（元素快照取 <c>outerHtml()</c>，
+    /// 纯对象取 JSON 序列化，字符串/数字取原文）。</para>
+    /// </summary>
+    public IReadOnlyList<string>? RunElements(string script, string value, string baseUrl) =>
+        RunCore(script, value, baseUrl, globals: null, captureList: true).Items;
+
+    private (string Text, IReadOnlyList<string>? Items) RunCore(
+        string script,
+        string value,
+        string baseUrl,
+        IReadOnlyDictionary<string, object?>? globals,
+        bool captureList)
     {
         try
         {
@@ -195,6 +219,11 @@ internal sealed class JsBridge
                 // ② 绑定全局：result（当前内容）/ baseUrl / java API / 调用方 globals
                 engine.SetValue("result", value);
                 engine.SetValue("baseUrl", baseUrl);
+                // src = 当前内容本体（legado evalJS: bindings["src"] = content）。
+                // 不是"当前 URL"：样本里 src.match(/data-mid="(\d+)"/) 这类写法就是在正则匹配
+                // 详情页 HTML（包子漫画 / 光社漫畫的 tocUrl 规则）。缺这个绑定 → ReferenceError
+                // → 整段回退原文 → tocUrl 变成整份 HTML，目录必然为空。
+                engine.SetValue("src", value);
                 engine.SetValue("java", EnsureJava(engine, temp));
                 _currentValue = value;
                 _currentBaseUrl = baseUrl;
@@ -237,10 +266,21 @@ internal sealed class JsBridge
                 // 判 Jint 类型后落空串（legado/reader 对 JS 空结果均落空串）。
                 if (r is null || r.Type == Jint.Runtime.Types.Null || r.Type == Jint.Runtime.Types.Undefined)
                 {
-                    return string.Empty;
+                    return (string.Empty, null);
                 }
 
-                return r.ToString() ?? string.Empty;
+                // 列表模式：脚本返回数组时按条目拆片段（legado getElements 语义）。
+                // 必须在 ToString() 之前做——数组一旦被转成 "a,b,c" 就不可逆。
+                if (captureList)
+                {
+                    var items = ConvertListResult(engine, r);
+                    if (items is not null)
+                    {
+                        return (r.ToString() ?? string.Empty, items);
+                    }
+                }
+
+                return (r.ToString() ?? string.Empty, null);
             }
             finally
             {
@@ -262,9 +302,123 @@ internal sealed class JsBridge
         {
             // ⑤ legado：脚本异常时回退为原始内容；同时记录"谁抛了什么"，避免静默失真
             Diagnostics.RecordScriptError(SourceKey, Field, ex);
-            return value;
+            return (value, null);
         }
     }
+
+    /// <summary>
+    /// 把脚本返回值按"条目列表"拆成片段字符串（legado <c>getElements</c> 的 <c>Mode.Js</c> 结果）。
+    /// <para>三种条目形态：</para>
+    /// <list type="number">
+    /// <item><b>HTML 元素快照</b>（<c>java.getElements</c> 的命中项）→ <c>outerHtml()</c>，
+    /// 后续章节字段规则在该片段内重新求值（与 legado <c>setContent(Element)</c> 等价）；</item>
+    /// <item><b>纯 JS 对象/数组</b>（样本常见的 <c>list.push({text, href})</c>）→ JSON 序列化，
+    /// 让 <c>$.text</c> 这类字段规则可用；</item>
+    /// <item><b>字符串/数字/布尔</b> → 原文（有些源直接返回标题数组配 <c>@text</c> 系规则）。</item>
+    /// </list>
+    /// <para>不是数组 → null：调用方必须回退到原来的字符串路径（例如
+    /// <c>&lt;js&gt;t2s(result)&lt;/js&gt;</c> 这种脚本只是"改写原文"，返回的是整份 HTML 字符串）。</para>
+    /// </summary>
+    private static IReadOnlyList<string>? ConvertListResult(Engine engine, JsValue value)
+    {
+        var isArray = value.IsArray();
+        if (!isArray)
+        {
+            // arguments / 类数组：有 length 且能被索引访问（legado 也接受 java.util.List 之类的类数组）
+            if (!value.IsObject())
+            {
+                return null;
+            }
+
+            var lengthValue = value.AsObject().Get("length");
+            if (lengthValue.Type != Jint.Runtime.Types.Number)
+            {
+                return null;
+            }
+
+            var len = (int)lengthValue.AsNumber();
+            if (len <= 0)
+            {
+                return null;
+            }
+
+            var arrayLike = new List<string>(len);
+            var obj = value.AsObject();
+            for (var i = 0; i < len; i++)
+            {
+                var item = obj.Get(i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                if (item.Type == Jint.Runtime.Types.Undefined)
+                {
+                    continue;
+                }
+
+                arrayLike.Add(ToFragment(engine, item));
+            }
+
+            return arrayLike;
+        }
+
+        var items = value.AsArray();
+        var list = new List<string>((int)items.Length);
+        for (uint i = 0; i < items.Length; i++)
+        {
+            var item = items[i];
+            if (item.Type == Jint.Runtime.Types.Undefined || item.Type == Jint.Runtime.Types.Null)
+            {
+                continue;
+            }
+
+            list.Add(ToFragment(engine, item));
+        }
+
+        return list;
+    }
+
+    /// <summary>单条目 → 片段字符串（HTML 元素 → outerHtml；对象 → JSON；标量 → 原文）。</summary>
+    private static string ToFragment(Engine engine, JsValue item)
+    {
+        if (item.IsObject())
+        {
+            var obj = item.AsObject();
+            foreach (var fn in FragmentAccessors)
+            {
+                var member = obj.Get(fn);
+                if (member is not Jint.Native.Function.Function)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var html = engine.Invoke(member, obj);
+                    var text = html.Type == Jint.Runtime.Types.String ? html.ToString() : string.Empty;
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        return text;
+                    }
+                }
+                catch (Exception)
+                {
+                    // 快照方法不应抛；抛了就退到下一个取法（绝不因为取片段失败丢掉整条目录）
+                }
+            }
+
+            try
+            {
+                // 纯对象 → JSON（让 $.text / $..id 这类字段规则可用）
+                return System.Text.Json.JsonSerializer.Serialize(obj.ToObject());
+            }
+            catch (Exception)
+            {
+                return string.Empty;
+            }
+        }
+
+        return item.ToString() ?? string.Empty;
+    }
+
+    /// <summary>元素快照上取"整段 HTML"的方法名，按优先级尝试（见 RuleJavaApi.WrapHtmlElement）。</summary>
+    private static readonly string[] FragmentAccessors = { "outerHtml", "html" };
 
     /// <summary>
     /// 解析当前书源的 jsLib 为可执行库代码（带编译缓存，命中缓存零解析）。

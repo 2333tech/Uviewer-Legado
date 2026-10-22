@@ -15,6 +15,13 @@ internal static class UrlUtil
     /// 去掉 URL 尾部的取图选项 / WebView 配置（对标 strip_url_config）。
     /// 书源常在图片地址后跟 ,{'webView':...} 或 ##$## 配置段，取数前必须剥掉。
     /// </summary>
+    /// <summary>
+    /// URL 尾部"配置段"标记。legado 的 <c>,{…}</c> 选项块（headers/body/webView…）在
+    /// <see cref="RequestSpec"/> 里由 <see cref="UrlAnalyzer"/> 解析，**URL 本身保留原文**
+    /// （legado 的 <c>NetworkUtils.getAbsoluteURL</c> 也不剥），因此这里只处理 reader 的
+    /// <c>##$##</c> 标记；webView 两段兼容旧规则输出。
+    /// <para>需要"纯 URL"的场景（图片地址列表）单独在 <see cref="RuleEngine.CollectImages"/> 里剥。</para>
+    /// </summary>
     private static readonly string[] ConfigMarkers = { "##$##", ",{'webView'", ",{\"webView\"" };
 
     /// <summary>HTML meta charset 探测（仅扫前 4KB，对标 charset_from_html_meta）。</summary>

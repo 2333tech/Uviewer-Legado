@@ -251,7 +251,8 @@ internal static class RuleJavaApi
         obj.FastSetDataProperty("attr", JsContextObjects.CreateFunction(engine, "attr", args =>
         {
             var name = JsPureApi.AsString(args, 0);
-            return node.Attributes is null ? string.Empty : node.GetAttributeValue(name, string.Empty);
+            // 与 Selectors.AttrValue 同口径：decode 实体（脚本里 attr('data-src') 拿到的应是真 URL）
+            return node.Attributes is null ? string.Empty : Selectors.AttrValue(node, name);
         }, sink));
         obj.FastSetDataProperty("hasAttr", JsContextObjects.CreateFunction(engine, "hasAttr", args =>
             (object)(node.Attributes is not null && node.Attributes.Contains(JsPureApi.AsString(args, 0))), sink));

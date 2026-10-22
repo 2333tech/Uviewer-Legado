@@ -292,6 +292,29 @@ public sealed class RuleEngine
     private List<SearchResult> SearchBooksJs(BookSourceModel source, FragmentContext ctx, string baseUrl, SearchRule rule, string listRule)
     {
         var (script, remaining) = SplitLeadingJs(listRule);
+
+        // 纯 JS 列表规则（后面没有选择器）：脚本可以直接返回条目数组
+        // （`java.getElements(...)` / `list.push({name, author, bookUrl})`）。
+        // 走 RunJs 只能拿到 "a,b,c" / "[object Object],…" —— 条目信息已丢，
+        // 必须按 legado getElements 语义先取列表结构（与目录链同一套口径）。
+        if (script.Length > 0 && remaining.Trim().Length == 0)
+        {
+            var items = RunJsElements(script, ctx.Raw, baseUrl);
+            if (items is { Count: > 0 })
+            {
+                var books = new List<SearchResult>(items.Count);
+                foreach (var item in items)
+                {
+                    if (!string.IsNullOrWhiteSpace(item))
+                    {
+                        books.Add(BuildBook(source, rule, item, baseUrl));
+                    }
+                }
+
+                return books;
+            }
+        }
+
         var output = RunJs(script, ctx.Raw, baseUrl);
 
         var next = string.IsNullOrWhiteSpace(remaining) ? "$" : remaining;
@@ -332,11 +355,47 @@ public sealed class RuleEngine
             WordCount = ExtractField(rule.WordCount, ctx, baseUrl),
         };
 
-        var bookUrl = ExtractField(rule.BookUrl, ctx, baseUrl);
-        var coverUrl = ExtractField(rule.CoverUrl, ctx, baseUrl);
-        book.BookUrl = MakeAbsolute(bookUrl, baseUrl);
-        book.CoverUrl = MakeAbsolute(coverUrl, baseUrl);
+        var bookUrl = ExtractUrl(rule.BookUrl, ctx, baseUrl);
+        var coverUrl = ExtractUrl(rule.CoverUrl, ctx, baseUrl);
+        book.BookUrl = bookUrl.Length > 0 ? bookUrl : null;
+        book.CoverUrl = coverUrl.Length > 0 ? coverUrl : null;
         return book;
+    }
+
+    /// <summary>
+    /// URL 字段求值（对标 legado <c>getString(rule, isUrl = true)</c> → jsoup <c>getString0</c>）。
+    /// <para><b>与文本字段的唯一差别</b>：多命中时只取<b>第一个</b>非空值。
+    /// legado 对 <c>bookUrl/coverUrl/tocUrl/chapterUrl/nextContentUrl</c> 走
+    /// <c>AnalyzeByJSoup.getString0</c>（<c>list[0]</c>），文本字段才走 <c>getString</c>
+    /// （多命中 <c>\n</c> 拼接）。按拼接结果绝对化会得到
+    /// <c>https://站点/a&lt;换行&gt;/b</c> 这种畸形 URL —— 目录条目全被带去 404 页。
+    /// 本质因是样本里大量 <c>tag.a@href</c> 会同时命中卡片里外两层链接。</para>
+    /// </summary>
+    private string ExtractUrlField(string? rule, FragmentContext ctx, string baseUrl)
+    {
+        var value = ExtractField(rule, ctx, baseUrl);
+        if (value.Length == 0 || value.IndexOf('\n') < 0)
+        {
+            return value;
+        }
+
+        foreach (var line in value.Split('\n'))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length > 0)
+            {
+                return trimmed;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>URL 字段 + 绝对化（空值 → 空串，由调用方决定兜底）。</summary>
+    private string ExtractUrl(string? rule, FragmentContext ctx, string baseUrl)
+    {
+        var raw = ExtractUrlField(rule, ctx, baseUrl);
+        return raw.Length == 0 ? string.Empty : UrlUtil.ResolveUrl(baseUrl, raw);
     }
 
     /// <summary>
@@ -548,6 +607,196 @@ public sealed class RuleEngine
     }
 
     /// <summary>
+    /// 列表脚本求值（对标 legado <c>getElements</c> 的 <c>Mode.Js</c> 分支）：保留脚本返回的
+    /// <b>数组结构</b>，逐项给一个条目片段；返回 null 表示"脚本结果不是数组"，
+    /// 调用方按原来的字符串路径处理（脚本改写原文，输出仍是整份 HTML/JSON）。
+    /// <para>闭包绑定与 <see cref="RunJs"/> 完全一致（java.getString/getElements/setContent
+    /// 都作用于本次内容），否则脚本里的 <c>java.getElements(...)</c> 会求值到别处。</para>
+    /// </summary>
+    private IReadOnlyList<string>? RunJsElements(string script, string value, string baseUrl)
+    {
+        var ctx = new FragmentContext(value);
+        var overrideRaw = value;
+        var overrideCtx = ctx;
+        FragmentContext Ctx(string? content)
+        {
+            if (content is null || ReferenceEquals(content, overrideRaw))
+            {
+                return overrideCtx;
+            }
+
+            overrideRaw = content;
+            return overrideCtx = new FragmentContext(content);
+        }
+
+        var prevRule = _js.EvaluateRule;
+        var prevList = _js.EvaluateList;
+        var prevElements = _js.EvaluateElements;
+        try
+        {
+            _js.EvaluateRule = (r, content) => ExtractContent(r, Ctx(content));
+            _js.EvaluateList = (r, content) => ExtractListValues(r, Ctx(content));
+            _js.EvaluateElements = (r, content) => ExtractElementValues(r, Ctx(content));
+            _js.JsLib = _jsSource?.JsLib;
+            return _js.RunElements(script, value, baseUrl);
+        }
+        finally
+        {
+            _js.EvaluateRule = prevRule;
+            _js.EvaluateList = prevList;
+            _js.EvaluateElements = prevElements;
+        }
+    }
+
+    /// <summary>
+    /// 目录条目片段集合（对标 legado <c>AnalyzeRule.getElements</c>）：把 chapterList 规则
+    /// 求值成"每章一个片段"。三种形态统一到片段：
+    /// ① JS 段（<c>&lt;js&gt;…&lt;/js&gt;</c> 纯脚本）→ 脚本返回的数组逐项（<see cref="RunJsElements"/>）；
+    /// ② JSONPath → 命中节点各一片段；
+    /// ③ CSS → 活节点片段。
+    /// <para>顶层 <c>&amp;&amp;</c>/<c>||</c>/<c>%%</c> 按 legado 语义合并（顺序并集 / 首个非空 / 交叉）。
+    /// 缺了组合符处理，<c>class.pure-g[3,4]@class.comics-chapters__item||class.pure-g.2@…[-1:0]</c>
+    /// 这种"主选择器 + 备用选择器"的目录规则会被当成一个 CSS 选择器 → 0 章。</para>
+    /// </summary>
+    private List<FragmentContext> TocFragments(string selector, FragmentContext ctx, string baseUrl)
+    {
+        var rule = (selector ?? string.Empty).Trim();
+        if (rule.Length == 0)
+        {
+            return new List<FragmentContext>();
+        }
+
+        var combo = RuleAnalyzer.SplitTopLevel(rule, new[] { "&&", "||", "%%" });
+        if (combo.Delimiter is null)
+        {
+            return PartFragments(rule, ctx, baseUrl);
+        }
+
+        var lists = new List<List<FragmentContext>>();
+        foreach (var part in combo.Parts)
+        {
+            if (string.IsNullOrWhiteSpace(part))
+            {
+                continue;
+            }
+
+            var one = PartFragments(part.Trim(), ctx, baseUrl);
+            if (combo.Delimiter == "||" && one.Count > 0)
+            {
+                return one;
+            }
+
+            lists.Add(one);
+        }
+
+        if (combo.Delimiter == "%%")
+        {
+            var maxLen = lists.Count > 0 ? lists.Max(l => l.Count) : 0;
+            var interleaved = new List<FragmentContext>();
+            for (var i = 0; i < maxLen; i++)
+            {
+                foreach (var list in lists)
+                {
+                    if (i < list.Count)
+                    {
+                        interleaved.Add(list[i]);
+                    }
+                }
+            }
+
+            return interleaved;
+        }
+
+        var unioned = new List<FragmentContext>();
+        foreach (var list in lists)
+        {
+            unioned.AddRange(list);
+        }
+
+        return unioned;
+    }
+
+    /// <summary>单段 chapterList 规则 → 片段列表（JS / JSONPath / CSS 三态）。</summary>
+    private List<FragmentContext> PartFragments(string part, FragmentContext ctx, string baseUrl)
+    {
+        var fragments = new List<FragmentContext>();
+
+        if (RuleAnalyzer.IsJsRule(part))
+        {
+            var (script, remaining) = SplitLeadingJs(part);
+            if (remaining.Trim().Length > 0)
+            {
+                // JS + 后续选择器：先字符串化再按后续规则取片段（与原有语义一致）
+                var output = RunJs(script, ctx.Raw, baseUrl);
+                return PartFragments(remaining, new FragmentContext(output), baseUrl);
+            }
+
+            var items = RunJsElements(script, ctx.Raw, baseUrl);
+            if (items is not null)
+            {
+                foreach (var item in items)
+                {
+                    if (!string.IsNullOrWhiteSpace(item))
+                    {
+                        fragments.Add(new FragmentContext(item));
+                    }
+                }
+
+                return fragments;
+            }
+
+            // 脚本结果不是数组（只是"改写原文"）：沿用原兜底语义——输出像 JSON 用 $[*]，否则 body > *
+            var raw = RunJs(script, ctx.Raw, baseUrl);
+            var fallback = IsJsonLike(raw) ? "$[*]" : "body > *";
+            return PartFragments(fallback, new FragmentContext(raw), baseUrl);
+        }
+
+        if (RuleAnalyzer.DetectMode(part, ctx) == RuleMode.JsonPath)
+        {
+            foreach (var node in JsonPathEval.QueryNodes(ctx.Json, RuleAnalyzer.StripModePrefix(part)))
+            {
+                fragments.Add(new FragmentContext(node));
+            }
+
+            return fragments;
+        }
+
+        return Selectors.ListFragmentContexts(ctx, part);
+    }
+
+    /// <summary>
+    /// 逐片段构造章节：init 文档级副作用一次、无标题跳过、按绝对 URL 去重
+    /// （与 <see cref="ParseTocHtml"/> 同规则，两者共用这一份判定）。
+    /// </summary>
+    private List<TocItem> BuildChaptersFromFragments(
+        BookSourceModel source, TocRule rule, IReadOnlyList<FragmentContext> fragments, string baseUrl, FragmentContext docCtx)
+    {
+        var result = new List<TocItem>();
+        if (fragments.Count == 0)
+        {
+            return result;
+        }
+
+        // init 在文档级执行一次（仅副作用，与 ParseTocHtml 对齐）
+        if (!string.IsNullOrWhiteSpace(rule.Init))
+        {
+            ExtractField(rule.Init, docCtx, baseUrl);
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var fragment in fragments)
+        {
+            var chapter = BuildChapter(source, rule, fragment, baseUrl, seen, result.Count);
+            if (chapter is not null)
+            {
+                result.Add(chapter);
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
     /// 列表求值（阶段 4-5，<c>java.getStringList</c>）：与字段求值同一套模式派发，
     /// 但保留多值形态（JSONPath 逐节点 / 字段规则逐命中 / 正则逐匹配）。
     /// </summary>
@@ -662,6 +911,58 @@ public sealed class RuleEngine
         }
 
         var (combinable, _) = RuleAnalyzer.SplitLegadoRegex(rule);
+
+        // 顶层组合符（&& / || / %%）：legado 的元素列表也按这三种语义合并
+        // （AnalyzeByJSoup.getElements：&& 顺序并集、|| 首个非空即停、%% 按索引交错）。
+        // 缺了这一段，`java.getElements("id.a@class.x@a&&id.b@class.x@a")` 会把整条
+        // 当成一个 CSS 选择器 → 0 命中 → 目录脚本拿到空数组（包子漫画类源的典型写法）。
+        var combo = RuleAnalyzer.SplitTopLevel(combinable, new[] { "&&", "||", "%%" });
+        if (combo.Delimiter is not null)
+        {
+            var lists = new List<IReadOnlyList<object?>>();
+            foreach (var part in combo.Parts)
+            {
+                if (string.IsNullOrWhiteSpace(part))
+                {
+                    continue;
+                }
+
+                var value = ExtractElementValues(part.Trim(), ctx);
+                if (combo.Delimiter == "||" && value.Count > 0)
+                {
+                    return value;
+                }
+
+                lists.Add(value);
+            }
+
+            if (combo.Delimiter == "%%")
+            {
+                var maxLen = lists.Count > 0 ? lists.Max(l => l.Count) : 0;
+                var interleaved = new List<object?>();
+                for (var i = 0; i < maxLen; i++)
+                {
+                    foreach (var list in lists)
+                    {
+                        if (i < list.Count)
+                        {
+                            interleaved.Add(list[i]);
+                        }
+                    }
+                }
+
+                return interleaved;
+            }
+
+            var unioned = new List<object?>();
+            foreach (var list in lists)
+            {
+                unioned.AddRange(list);
+            }
+
+            return unioned;
+        }
+
         var mode = RuleAnalyzer.DetectMode(combinable, ctx);
         switch (mode)
         {
@@ -797,15 +1098,14 @@ public sealed class RuleEngine
             BookUrl = bookUrl ?? baseUrl,
         };
 
-        var cover = Field(rule.CoverUrl);
-        if (cover is not null)
-        {
-            info.CoverUrl = UrlUtil.ResolveUrl(baseUrl, cover);
-        }
+        // URL 字段走"多命中取首个"（legado getString(isUrl=true)）：封面规则
+        // tag.amp-img.0@src 之类若命中多个，拼接结果不是合法 URL。
+        var cover = ExtractUrl(rule.CoverUrl, ctx, baseUrl);
+        info.CoverUrl = cover.Length > 0 ? cover : null;
 
-        var toc = Field(rule.TocUrl);
+        var toc = ExtractUrlField(rule.TocUrl, ctx, baseUrl);
         // reader：tocUrl 为空时回退详情页 URL
-        info.TocUrl = toc is not null ? UrlUtil.ResolveUrl(baseUrl, toc) : (bookUrl ?? baseUrl);
+        info.TocUrl = toc.Length > 0 ? UrlUtil.ResolveUrl(baseUrl, toc) : (bookUrl ?? baseUrl);
         return info;
     }
 
@@ -969,7 +1269,8 @@ public sealed class RuleEngine
             return null;
         }
 
-        var value = ExtractContent(rule.NextContentUrl, ctx ?? new FragmentContext(body));
+        // URL 字段多命中取首个（legado getString0）
+        var value = ExtractUrlField(rule.NextContentUrl, ctx ?? new FragmentContext(body), baseUrl);
         return string.IsNullOrWhiteSpace(value) ? null : UrlUtil.ResolveUrl(baseUrl, value.Trim());
     }
 
@@ -1028,6 +1329,16 @@ public sealed class RuleEngine
     /// 属性优先级：src → data-src → data-original → data-url（懒加载站点常见写法）；
     /// 每个 URL 绝对化后按首次出现顺序去重入列。
     /// </summary>
+    /// <summary>
+    /// 剥掉图片地址尾部行内选项（<c>,{…}</c>）。legado 用 <c>Regex("\\s*,\\s*(?=\\{)")</c> 切分
+    /// 地址与请求选项；这里图片只要地址（Referer 等选项在图片下载链路上不消费）。
+    /// </summary>
+    private static string StripImageOptions(string url)
+    {
+        var idx = url.IndexOf(",{", StringComparison.Ordinal);
+        return idx > 0 ? url[..idx].TrimEnd() : url;
+    }
+
     internal static List<string> CollectImages(HtmlDocument doc, string baseUrl, List<string> result)
     {
         var nodes = doc.DocumentNode.SelectNodes("//img");
@@ -1039,17 +1350,21 @@ public sealed class RuleEngine
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var node in nodes)
         {
+            // 属性值统一走 Selectors.AttrValue：HAP 保留源文本实体，
+            // 图片 CDN 常带 query（?v=1&type=webp），不解码 &amp; 会请求到错误地址。
             var raw = FirstNonEmpty(
-                node.GetAttributeValue("src", string.Empty),
-                node.GetAttributeValue("data-src", string.Empty),
-                node.GetAttributeValue("data-original", string.Empty),
-                node.GetAttributeValue("data-url", string.Empty));
+                Selectors.AttrValue(node, "src"),
+                Selectors.AttrValue(node, "data-src"),
+                Selectors.AttrValue(node, "data-original"),
+                Selectors.AttrValue(node, "data-url"));
             if (raw.Length == 0)
             {
                 continue;
             }
 
-            var url = UrlUtil.ResolveUrl(baseUrl, raw.Trim());
+            // 图片地址允许带 legado 的行内选项块（`地址,{"headers":{...}}`，包子漫画类源就这么写）。
+            // 图片是"直接取字节"，不经过 RequestSpec，故这里剥掉选项后只留纯 URL。
+            var url = UrlUtil.ResolveUrl(baseUrl, StripImageOptions(raw.Trim()));
             if (url.Length > 0 && seen.Add(url))
             {
                 result.Add(url);
@@ -1099,7 +1414,13 @@ public sealed class RuleEngine
         return ExtractContent(rule, ctx);
     }
 
-    /// <summary>preUpdateJs：输出非空则替换原文（对标 reader prepare_toc_body）。</summary>
+    /// <summary>
+    /// <c>tocRule.preUpdateJs</c>：<b>只取副作用，不替换原文</b>（legado <c>WebBook.runPreUpdateJs</c>：
+    /// <c>AnalyzeRule(book, source, preUpdateJs = true).evalJS(preUpdateJs)</c>，返回值丢弃）。
+    /// <para><b>曾经的错误</b>：把脚本输出当新原文（"输出非空就替换"）。样本里的写法全是
+    /// <c>book.canUpdate=false</c>、<c>java.put(...)</c> 这类赋值，脚本值 "false" 非空 →
+    /// 整份目录页被替换成 5 个字符 → 目录恒为空。包子漫画（优+）就是这么"无法获取目录"的。</para>
+    /// </summary>
     private string PrepareTocBody(string body, string baseUrl, TocRule rule)
     {
         var script = rule.PreUpdateJs;
@@ -1108,8 +1429,8 @@ public sealed class RuleEngine
             return body;
         }
 
-        var result = RunJs(RuleAnalyzer.StripModePrefix(script), body, baseUrl);
-        return result.Trim().Length > 0 ? result : body;
+        RunJs(RuleAnalyzer.StripModePrefix(script), body, baseUrl);
+        return body;
     }
 
     /// <summary>
@@ -1130,11 +1451,37 @@ public sealed class RuleEngine
         var jsLeading = RuleAnalyzer.IsJsRule(selector);
         if (jsLeading)
         {
+            // ⓪ 纯 JS 列表规则（脚本后面没有选择器）：先按 legado getElements 语义
+            //    保留脚本返回值的**列表结构**——条目可以是 java.getElements 的元素快照
+            //    （包子漫画类源的 `<js>java.getElements("id.chapter-items@class.comics-chapters@a")</js>`），
+            //    也可以是脚本自己 push 出来的对象数组。这一支必须先试：数组一旦被 ToString()
+            //    成 "[object Object],…" 或 "a,b,c" 就不可逆，只能退化成 "body > *" 全空兜底。
+            var (script, remaining) = SplitLeadingJs(selector);
+            if (script.Length > 0 && remaining.Trim().Length == 0)
+            {
+                var items = RunJsElements(script, working, baseUrl);
+                if (items is { Count: > 0 })
+                {
+                    // nextTocUrl 仍以"原文"为上下文（脚本可能只负责给出条目）
+                    var nodeCtx = new FragmentContext(working);
+                    var frags = new List<FragmentContext>(items.Count);
+                    foreach (var item in items)
+                    {
+                        if (!string.IsNullOrWhiteSpace(item))
+                        {
+                            frags.Add(new FragmentContext(item));
+                        }
+                    }
+
+                    return (BuildChaptersFromFragments(source, rule, frags, baseUrl, nodeCtx), nodeCtx);
+                }
+            }
+
             while (RuleAnalyzer.IsJsRule(selector))
             {
-                var (output, remaining) = EvalLeadingJs(selector, working, baseUrl);
+                var (output, remainingRule) = EvalLeadingJs(selector, working, baseUrl);
                 working = output;
-                selector = remaining;
+                selector = remainingRule;
                 if (selector.Length == 0)
                 {
                     break;
@@ -1151,11 +1498,13 @@ public sealed class RuleEngine
         // JS 循环结束后 body 不再变化：建一份上下文供章节解析与 nextTocUrl 共用
         var ctx = new FragmentContext(working);
 
-        var chapters = RuleAnalyzer.DetectMode(selector, ctx) switch
+        var mode = RuleAnalyzer.DetectMode(selector, ctx);
+        var chapters = mode switch
         {
             RuleMode.JsonPath => ParseTocJson(source, rule, ctx, baseUrl, selector),
             RuleMode.Regex => ParseTocRegex(source, rule, working, baseUrl, selector),
-            _ => ParseTocHtml(source, rule, ctx, baseUrl, selector),
+            // CSS/HTML：走片段合并（支持 chapterList 里的 && / || / %% 组合符）
+            _ => BuildChaptersFromFragments(source, rule, TocFragments(selector, ctx, baseUrl), baseUrl, ctx),
         };
 
         return (chapters, ctx);
@@ -1300,7 +1649,8 @@ public sealed class RuleEngine
             return null;
         }
 
-        var rawUrl = ExtractField(rule.ChapterUrl, ctx, baseUrl).Trim();
+        // URL 字段多命中取首个（legado getString0）：`tag.a@href` 常同时命中卡片外层与内层
+        var rawUrl = ExtractUrlField(rule.ChapterUrl, ctx, baseUrl).Trim();
         var isVolume = RuleAnalyzer.IsTruthy(ExtractField(rule.IsVolume, ctx, baseUrl));
         var url = FinalizeChapterUrl(baseUrl, rawUrl, title, isVolume, index);
         if (!seen.Add(url))
