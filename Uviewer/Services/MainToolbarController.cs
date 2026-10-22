@@ -27,6 +27,8 @@ namespace Uviewer.Services
         public Func<Task> ShowLegadoParallelSettingsAsync { get; init; } = null!;
         /// <summary>在线更新（差分更新当前打开的书源下载文件）。</summary>
         public Func<Task> ShowLegadoOnlineUpdateAsync { get; init; } = null!;
+        /// <summary>下载全本（漫画）：目录全量 + 前 5 章图片打包。</summary>
+        public Func<Task> DownloadLegadoMangaAsync { get; init; } = null!;
         /// <summary>导入净化（替换）规则 JSON。</summary>
         public Func<Task> ImportLegadoReplaceRulesAsync { get; init; } = null!;
         /// <summary>查看已导入净化规则并逐条开关。</summary>
@@ -118,6 +120,7 @@ namespace Uviewer.Services
             _toolbar.LegadoDownloadSettingsRequested += (_, _) => RunAsync(_handlers.ShowLegadoDownloadSettingsAsync);
             _toolbar.LegadoParallelSettingsRequested += (_, _) => RunAsync(_handlers.ShowLegadoParallelSettingsAsync);
             _toolbar.LegadoOnlineUpdateRequested += (_, _) => RunAsync(_handlers.ShowLegadoOnlineUpdateAsync);
+            _toolbar.LegadoMangaDownloadRequested += (_, _) => RunAsync(_handlers.DownloadLegadoMangaAsync);
             _toolbar.LegadoImportReplaceRulesRequested += (_, _) => RunAsync(_handlers.ImportLegadoReplaceRulesAsync);
             _toolbar.LegadoShowReplaceRulesRequested += (_, _) => RunAsync(_handlers.ShowLegadoReplaceRulesAsync);
             _toolbar.LegadoImportTitleRulesRequested += (_, _) => RunAsync(_handlers.ImportLegadoTitleRulesAsync);

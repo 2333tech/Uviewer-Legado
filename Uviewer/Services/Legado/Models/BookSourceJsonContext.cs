@@ -42,6 +42,9 @@ namespace Uviewer.Services.Legado.Models;
 [JsonSerializable(typeof(ReadingPosition))]
 [JsonSerializable(typeof(List<ReadingPosition>))]
 [JsonSerializable(typeof(ReadingPosition[]))]
+// 漫画落盘（书级清单 / 章级配置）：与书源存储同一套 JSON 口径，便于外部工具读取。
+[JsonSerializable(typeof(MangaManifest))]
+[JsonSerializable(typeof(MangaChapterImages))]
 public partial class BookSourceJsonContext : JsonSerializerContext;
 
 /// <summary>序列化辅助：统一使用源生成上下文，零反射、零运行时编码配置。</summary>

@@ -23,6 +23,14 @@ namespace Uviewer.Services
         public Func<bool> IsArchiveOpen { get; init; } = null!;
         public Action ShowLastPageOverlay { get; init; } = null!;
         public Action FocusViewer { get; init; } = null!;
+
+        /// <summary>
+        /// 到达当前序列边界时的续接钩子（可选）。参数 = 方向（true 前进）；
+        /// 返回 true 表示"已接管"（例如漫画换到下一章的章包），调用方直接结束本次导航。
+        /// <para>只有漫画模式会注册它；普通图片浏览保持原有"最后一页"提示行为。</para>
+        /// </summary>
+        // EN: Optional hook for crossing the edge of the current sequence (manga: switch chapter archive).
+        public Func<bool, Task<bool>>? NavigateBeyondEdgeAsync { get; init; }
     }
 
     internal sealed class ImageNavigationCoordinator
@@ -128,6 +136,21 @@ namespace Uviewer.Services
                 if (_handlers.ShouldPreloadAfterNavigate())
                 {
                     _handlers.StartPreload(forward);
+                }
+            }
+            else if (!canNavigate && _handlers.NavigateBeyondEdgeAsync is not null)
+            {
+                // 序列边界：优先交给续接钩子（漫画换章包 / 下一章首图）。
+                // 钩子返回 false 时才继续走原有的"最后一页"提示。
+                if (await _handlers.NavigateBeyondEdgeAsync(forward).ConfigureAwait(true))
+                {
+                    _handlers.FocusViewer();
+                    return;
+                }
+
+                if (forward && entries.Count > 0 && _handlers.IsArchiveOpen())
+                {
+                    _handlers.ShowLastPageOverlay();
                 }
             }
             else if (forward && entries.Count > 0 && _handlers.IsArchiveOpen())

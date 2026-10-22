@@ -257,6 +257,9 @@ namespace Uviewer
 
             await CloseLegadoAsync().ConfigureAwait(true);
 
+            // 打开文本书源 ⇒ 必然离开漫画（漫画会话持有归档句柄与清单写闸）
+            await CloseMangaAsync().ConfigureAwait(true);
+
             var session = new BookSourceReadingSession(service, source, bookUrl);
             var generation = ++_legadoGeneration;
 
@@ -531,7 +534,8 @@ namespace Uviewer
                 search,
                 async hit =>
                 {
-                    await OpenLegadoBookAsync(hit.SourceUrl, hit.BookUrl).ConfigureAwait(true);
+                    // 图片书源自动进漫画模式，文本书源走原文本阅读（见 OpenBookAsync）
+                    await OpenBookAsync(hit.SourceUrl, hit.BookUrl).ConfigureAwait(true);
                 },
                 async filePath =>
                 {
@@ -793,6 +797,9 @@ namespace Uviewer
 
             // 先退出书源阅读模式：避免旧会话的预取任务继续抢网络/内存
             await CloseLegadoAsync().ConfigureAwait(true);
+
+            // 打开本地文本 ⇒ 离开漫画
+            await CloseMangaAsync().ConfigureAwait(true);
 
             try
             {
@@ -1132,6 +1139,13 @@ namespace Uviewer
         /// </summary>
         internal async Task ShowOnlineUpdateAsync()
         {
+            // 漫画：清单（book.uvmanga）即身份来源，走漫画自己的差分更新
+            if (IsMangaMode)
+            {
+                await UpdateMangaAsync().ConfigureAwait(true);
+                return;
+            }
+
             var path = _currentTextFilePath;
             if (string.IsNullOrEmpty(path) || !File.Exists(path))
             {

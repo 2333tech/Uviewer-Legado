@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Windows.Storage;
 using Uviewer.Models;
 using Uviewer.Services;
+using Uviewer.Services.Legado;
 using Uviewer.Services.Legado.BookSources;
 
 namespace Uviewer
@@ -150,6 +151,14 @@ namespace Uviewer
 
         internal async Task LoadTextFileAsync(StorageFile file)
         {
+            // 漫画入口：.uvmanga 是"这本书是漫画"的声明（类似 .slnx），双击即进漫画模式。
+            // 放在最前面拦：既不解析 JSON 当正文，也不会走文本分章/净化/编码探测那一整套。
+            if (MangaLibrary.LooksLikeMangaManifest(file.Path))
+            {
+                await OpenMangaManifestAsync(file.Path).ConfigureAwait(true);
+                return;
+            }
+
             // Save position of current file before switching
             await AddToRecentAsync(true);
 
@@ -637,6 +646,20 @@ SwitchToTextMode();
             if (IsLegadoMode)
             {
                 _ = CloseLegadoAsync();
+            }
+
+            // 漫画：显示自己的章包时保留会话；打开的归档不在漫画书文件夹内 ⇒ 用户已离开漫画。
+            // 不能无条件关闭——漫画正是走这条"显示图片"的路径进来的。
+            if (IsMangaMode)
+            {
+                var archivePath = _archiveSession.CurrentPath;
+                var bookFolder = _mangaSession!.BookFolder;
+                var insideMangaBook = !string.IsNullOrEmpty(archivePath) &&
+                    string.Equals(Path.GetDirectoryName(archivePath), bookFolder, StringComparison.OrdinalIgnoreCase);
+                if (!insideMangaBook)
+                {
+                    _ = CloseMangaAsync();
+                }
             }
 
             ImageArea.Visibility = Visibility.Visible;

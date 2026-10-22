@@ -63,6 +63,12 @@ namespace Uviewer
         /// <summary>阅读模式下触发一次"上一章 / 下一章"。返回 false 表示当前不接管。</summary>
         internal async Task<bool> NavigateReadingChapterAsync(bool forward)
         {
+            // 漫画模式：章由章包（.cbz）定义，与文本目录无关，直接分派
+            if (IsMangaMode)
+            {
+                return await NavigateMangaChapterAsync(forward).ConfigureAwait(true);
+            }
+
             if (!IsReadingMode || !_isTextMode || _isEpubMode)
             {
                 return false;

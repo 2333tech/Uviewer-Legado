@@ -117,6 +117,13 @@ namespace Uviewer
             public void UpdateStatusBar(ImageEntry entry, CanvasBitmap bitmap) => _window._imageViewerController.UpdateStatusBar(entry, bitmap);
             public Task DisplayCurrentImageAsync() => _window._imageViewerController.DisplayCurrentImageAsync();
             public Task NavigateToImageAsync(int index) => _window._imageNavigationCoordinator.NavigateToImageAsync(index);
+
+            // EN: Manga chapters are packaged as CBZ; the reader opens one archive per chapter.
+            public Task OpenArchiveAsync(string archivePath, string? entryKey) =>
+                _window._archiveDocumentController.LoadImagesFromArchiveAsync(archivePath, entryKey);
+
+            public Task<bool> CloseArchiveAsync() => _window._archiveDocumentController.CloseCurrentArchiveAsync();
+
             public ViewingContext CreateViewingContext() => _window.CreateViewingContext();
             public SharpenParams CreateSharpenParams() => _window.CreateSharpenParams();
             public Task LoadImageResourceAndInvalidateAsync(

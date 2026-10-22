@@ -29,6 +29,7 @@ namespace Uviewer
                             ShowLegadoDownloadSettingsAsync = () => window._documentReaderController.ShowDownloadSettingsAsync(),
                             ShowLegadoParallelSettingsAsync = () => window._documentReaderController.ShowParallelSettingsAsync(),
                             ShowLegadoOnlineUpdateAsync = () => window._documentReaderController.ShowOnlineUpdateAsync(),
+                            DownloadLegadoMangaAsync = () => window._documentReaderController.DownloadMangaAsync(),
                             ImportLegadoReplaceRulesAsync = () => window._documentReaderController.ImportReplaceRulesAsync(),
                             ShowLegadoReplaceRulesAsync = () => window._documentReaderController.ShowReplaceRulesAsync(),
                             ImportLegadoTitleRulesAsync = () => window._documentReaderController.ImportTitleRulesAsync(),
@@ -98,8 +99,26 @@ namespace Uviewer
                             HandleFavoritePinClickedAsync = item => window._bookmarkInteractionController.HandleFavoritePinClickedAsync(item),
                             HandleRecentClickedAsync = item => window._bookmarkInteractionController.HandleRecentClickedAsync(item),
                             HandleRecentRemoveClickedAsync = item => window._bookmarkInteractionController.HandleRecentRemoveClickedAsync(item),
-                            ShowPdfToc = () => window._pdfDocumentController.ShowToc(),
-                            OpenPdfTocItem = item => window._pdfDocumentController.OpenTocItem(item),
+                            ShowPdfToc = () =>
+                            {
+                                // 漫画模式：同一个目录按钮位显示漫画目录（与 PDF 互斥）
+                                if (window._documentReaderController.IsMangaMode)
+                                {
+                                    window._documentReaderController.ShowMangaToc();
+                                    return;
+                                }
+
+                                window._pdfDocumentController.ShowToc();
+                            },
+                            OpenPdfTocItem = item =>
+                            {
+                                if (window._documentReaderController.TryHandleMangaTocClick(item))
+                                {
+                                    return;
+                                }
+
+                                window._pdfDocumentController.OpenTocItem(item);
+                            },
                             ShowGoToPage = () =>
                             {
                                 if (window._isEpubMode) _ = window._epubReaderController.ShowEpubGoToLineDialog();

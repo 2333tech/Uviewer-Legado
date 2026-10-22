@@ -740,6 +740,8 @@
   <data name="LegadoParallelSettingsHint" xml:space="preserve"><value>调整多源搜索与整本下载的并发数（搜索 1–64，下载 1–16）。并发越高越快，但对站点压力也越大。</value></data>
   <data name="LegadoOnlineUpdate" xml:space="preserve"><value>在线更新</value></data>
   <data name="LegadoOnlineUpdateHint" xml:space="preserve"><value>按当前打开书籍的原始链接标记在线更新：只下载新增/变化的章节，远程目录大规模修改时另存新文件。</value></data>
+  <data name="LegadoMangaDownload" xml:space="preserve"><value>下载全本（漫画）</value></data>
+  <data name="LegadoMangaDownloadHint" xml:space="preserve"><value>漫画：抓取完整目录，图片只下载前 5 章并按章打包为 CBZ（避免风控）；其余章在阅读时按「前 2 后 5」补齐。</value></data>
   <data name="LegadoManageSourcesHint" xml:space="preserve"><value>书源、净化规则与标题规则的统一入口</value></data>
   <data name="LegadoImportReplaceRules" xml:space="preserve"><value>导入净化规则 JSON…</value></data>
   <data name="LegadoShowReplaceRules" xml:space="preserve"><value>查看 / 开关净化规则</value></data>

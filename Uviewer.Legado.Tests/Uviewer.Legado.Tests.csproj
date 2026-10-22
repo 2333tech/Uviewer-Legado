@@ -46,12 +46,18 @@
     <!-- 章节缓存：源键/指纹/有效期/窗口/分章/切片/装配 + 落盘存储（纯逻辑 + 文件 IO，无 WinUI） -->
     <Compile Include="..\Uviewer\Services\Legado\TextCacheModels.cs" Link="Host\TextCacheModels.cs" />
     <Compile Include="..\Uviewer\Services\Legado\TextCacheStore.cs" Link="Host\TextCacheStore.cs" />
+    <!-- 书源筛选（关键词/类别/自定义分组）：书源管理与书源搜索共用同一套判定（纯逻辑，零 WinUI） -->
+    <Compile Include="..\Uviewer\Services\Legado\BookSourceFilter.cs" Link="Host\BookSourceFilter.cs" />
     <!-- 搜索结果相关性评分（纯逻辑：书名/作者分档打分，零 WinUI 依赖） -->
     <Compile Include="..\Uviewer\Services\Legado\SearchRelevance.cs" Link="Host\SearchRelevance.cs" />
     <!-- 下载目录规则：默认值/校验/规范化（纯逻辑，零 WinUI 依赖） -->
     <Compile Include="..\Uviewer\Services\Legado\DownloadPathRules.cs" Link="Host\DownloadPathRules.cs" />
     <!-- 整本下载/差分在线更新：合并 TXT 写入 + sidecar + UpdateAsync（纯逻辑 + 引擎调用，零 WinUI） -->
     <Compile Include="..\Uviewer\Services\Legado\BookSourceDownloadService.cs" Link="Host\BookSourceDownloadService.cs" />
+    <!-- 漫画：落盘库（CBZ 章包 + 清单）、阅读会话、下载/在线更新（纯逻辑 + 文件 IO，零 WinUI） -->
+    <Compile Include="..\Uviewer\Services\Legado\MangaLibrary.cs" Link="Host\MangaLibrary.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\MangaReadingSession.cs" Link="Host\MangaReadingSession.cs" />
+    <Compile Include="..\Uviewer\Services\Legado\MangaDownloadService.cs" Link="Host\MangaDownloadService.cs" />
   </ItemGroup>
 
   <ItemGroup>

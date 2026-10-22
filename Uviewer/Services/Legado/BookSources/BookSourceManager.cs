@@ -123,20 +123,28 @@ public sealed class BookSourceManager
         long order = 0;
         try
         {
-            using (var stream = BookSourceJsonReader.OpenRead(_filePath))
-            {
-                await foreach (var source in BookSourceSerializer.EnumerateBookSourcesAsync(stream, cancellationToken).ConfigureAwait(false))
+            // 强制在线程池执行：本方法常由 UI 线程的首次访问触发（打开书源管理/搜索）。
+            // 26 MB / 3600+ 条的解析若在调用线程上跑，窗口会先冻结数秒；
+            // 流式枚举在首个真正异步读之前的那一段是同步的，靠 ConfigureAwait 救不了。
+            await Task.Run(
+                async () =>
                 {
-                    // 无主键条目不入库（数据安全，同导入路径）
-                    if (!IsValid(source))
+                    using (var stream = BookSourceJsonReader.OpenRead(_filePath))
                     {
-                        continue;
-                    }
+                        await foreach (var source in BookSourceSerializer.EnumerateBookSourcesAsync(stream, cancellationToken).ConfigureAwait(false))
+                        {
+                            // 无主键条目不入库（数据安全，同导入路径）
+                            if (!IsValid(source))
+                            {
+                                continue;
+                            }
 
-                    // 同 URL 后者覆盖前者，序号取后者（保持文件内顺序）
-                    fresh[source.BookSourceUrl] = new Entry(source, order++);
-                }
-            }
+                            // 同 URL 后者覆盖前者，序号取后者（保持文件内顺序）
+                            fresh[source.BookSourceUrl] = new Entry(source, order++);
+                        }
+                    }
+                },
+                cancellationToken).ConfigureAwait(false);
 
             LastLoadError = null;
         }

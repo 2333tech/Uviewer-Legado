@@ -57,12 +57,20 @@ namespace Uviewer
                         ResetFastNavigationAsync = window._imageViewerController.ResetFastNavigationAsync,
                         UpdateFastNavigationUi = window._imageViewerController.UpdateFastNavigationUI,
                         DisplayCurrentImageAsync = window._imageViewerController.DisplayCurrentImageAsync,
-                        SaveCurrentPositionAsync = () => window._bookmarkInteractionController.AddCurrentRecentAsync(true),
+                        // 漫画：每次翻页把"章 + 页"写进 book.uvmanga；非漫画模式是空操作。
+                        SaveCurrentPositionAsync = async () =>
+                        {
+                            window._documentReaderController.SaveMangaPosition();
+                            await window._bookmarkInteractionController.AddCurrentRecentAsync(true);
+                        },
                         ShouldPreloadAfterNavigate = () => window._archiveSession.CurrentArchive != null || window._pdfDocumentController.HasOpenDocument,
                         StartPreload = window._imageViewerController.StartImagePreload,
                         IsArchiveOpen = () => window._archiveSession.HasArchive,
                         ShowLastPageOverlay = () => window.ShowNotification(Strings.LastPageReached, "\uE8A7", "Gold"),
-                        FocusViewer = () => window.RootGrid.Focus(FocusState.Programmatic)
+                        FocusViewer = () => window.RootGrid.Focus(FocusState.Programmatic),
+                        // 章末/章首再翻：漫画会换成相邻章的章包（返回 true 表示已接管）
+                        NavigateBeyondEdgeAsync = forward =>
+                            window._documentReaderController.NavigateMangaBeyondEdgeAsync(forward)
                     });
 
                     window._animatedWebpService = new AnimatedWebpService(window._sharpeningService, window.DispatcherQueue);

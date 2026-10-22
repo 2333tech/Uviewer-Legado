@@ -64,9 +64,15 @@ namespace Uviewer.Services.Legado
             int? maxConcurrency = null,
             IProgress<SearchProgress>? progress = null,
             Action<SearchGroup>? onGroup = null,
-            CancellationToken token = default)
+            CancellationToken token = default,
+            BookSourceFilter? filter = null)
         {
-            var sources = _service.GetSearchableSources();
+            // 候选过滤要逐条做能力评估（3600+ 条启用源 ≈ 15 MB 脚本文本扫描）。
+            // 本方法由 UI 线程点击"搜索"进入，同步评估会把窗口冻住数秒（与书源管理卡死同源），
+            // 因此先在后台算候选集，再回到 worker 流程。
+            // filter（类别/分组/关键词）在同一个后台任务里生效：3637 条的字符串匹配本身很便宜，
+            // 但没必要在 UI 线程上做——它紧挨着能力评估，一起挪走最省事也最安全。
+            var sources = await Task.Run(() => _service.GetSearchableSources(filter), token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(keyword) || sources.Count == 0)
             {
                 progress?.Report(new SearchProgress(0, 0));

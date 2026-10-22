@@ -495,26 +495,48 @@ namespace Uviewer.Services.Legado
     /// <para><paramref name="progress"/> 以「已完成/总数」回报，UI 需显示为 "X/X"。
     /// 多源搜索常在数十秒量级，没有进度用户无法区分"正在搜"与"卡死"。</para>
     /// </summary>
-    public Task<List<SearchResult>> SearchAllAsync(
+    public async Task<List<SearchResult>> SearchAllAsync(
         string keyword,
         int? maxConcurrency = null,
         IProgress<SearchProgress>? progress = null,
-        CancellationToken token = default)
+        CancellationToken token = default,
+        BookSourceFilter? filter = null)
     {
-        var candidates = GetSearchableSources();
-        return _search.SearchAllAsync(candidates, keyword, maxConcurrency, progress, token);
+        // 候选过滤是逐条能力评估（3600+ 源 ≈ 15 MB 脚本文本），必须离开 UI 线程
+        var candidates = await Task.Run(() => GetSearchableSources(filter), token).ConfigureAwait(false);
+        return await _search.SearchAllAsync(candidates, keyword, maxConcurrency, progress, token)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
-    /// 可参与搜索的书源：已启用 + 有 searchUrl/ruleSearch + 阅读链路不需阶段 4。
+    /// 可参与搜索的书源：已启用 + 有 searchUrl/ruleSearch + 阅读链路不需阶段 4，
+    /// 并按 <paramref name="filter"/>（关键词 / 类别 / 分组）再做一层筛选。
     /// <para>这里只按**阅读链路**（ruleToc/ruleContent）过滤，而不是要求整源完整——
     /// 一个源可能搜索规则用了 java.*（阶段 4 未做）但目录/正文是干净的，
     /// 这种源仍应让用户能搜到并深链阅读，只是结果可能不准。全源严格过滤会砍掉过多可用源。</para>
+    /// <para><b>音视频/文件源不吃阅读链路过滤</b>：这三类源本来就不提供阅读
+    /// （音视频只做「⚠ 不支持音视频」标注，见长期约定），拿阅读能力去过滤它们
+    /// 等于用错误的理由隐藏结果——用户按"音频"筛选后一个源都不剩，会以为库里没有音频源。</para>
     /// </summary>
-    public List<BookSourceModel> GetSearchableSources() => _sources.GetEnabled()
-        .Where(s => !string.IsNullOrWhiteSpace(s.SearchUrl) && s.RuleSearch is not null)
-        .Where(s => !BookSourceCapabilities.ReadingNeedsStage4(s))
-        .ToList();
+    public List<BookSourceModel> GetSearchableSources(BookSourceFilter? filter = null)
+    {
+        var query = _sources.GetEnabled()
+            .Where(s => !string.IsNullOrWhiteSpace(s.SearchUrl) && s.RuleSearch is not null);
+
+        if (filter is not null)
+        {
+            query = query.Where(filter.Matches);
+        }
+
+        // 只有"要真的打开来读"的类别才做阅读能力过滤
+        var readable = filter?.Kind is not (BookSourceKind.Audio or BookSourceKind.Video or BookSourceKind.File);
+        if (readable)
+        {
+            query = query.Where(s => !BookSourceCapabilities.ReadingNeedsStage4(s));
+        }
+
+        return query.ToList();
+    }
 
     // ============================================================
     // 书源管理（查看 / 编辑 / 导入 / 启停）
@@ -586,6 +608,27 @@ namespace Uviewer.Services.Legado
     {
         SaveSource(source);
         return _sources.SaveAsync(token);
+    }
+
+    /// <summary>
+    /// 批量保存多条书源，<b>只落盘一次</b>。
+    /// <para><b>为什么需要单独一个方法</b>：<see cref="SaveSourceAsync"/> 每次都整体重写
+    /// <c>booksources.json</c>（用户实测 27 MB / 3637 条）。批量改分组时逐条调用等于写 N 次整库，
+    /// 几千条就是几十 GB 的写入量——那是"点一下卡死半小时"，不是"慢一点"。</para>
+    /// </summary>
+    public async Task SaveSourcesAsync(IReadOnlyList<BookSourceModel> sources, CancellationToken token = default)
+    {
+        if (sources is null || sources.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var source in sources)
+        {
+            SaveSource(source);   // 只改内存（Upsert 保留原位，顺序不变）
+        }
+
+        await _sources.SaveAsync(token).ConfigureAwait(false);
     }
 
         /// <summary>

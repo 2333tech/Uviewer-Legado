@@ -298,6 +298,12 @@ namespace Uviewer
         /// <summary>在线更新菜单项的悬停提示。</summary>
         public static string LegadoOnlineUpdateHint => GetString("LegadoOnlineUpdateHint");
 
+        /// <summary>下载全本（漫画）菜单项。</summary>
+        public static string LegadoMangaDownload => GetString("LegadoMangaDownload");
+
+        /// <summary>下载全本（漫画）菜单项的悬停提示。</summary>
+        public static string LegadoMangaDownloadHint => GetString("LegadoMangaDownloadHint");
+
         /// <summary>书源管理二级菜单的悬停提示（概括其下含哪些能力）。</summary>
         public static string LegadoManageSourcesHint => GetString("LegadoManageSourcesHint");
 

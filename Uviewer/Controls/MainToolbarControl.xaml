@@ -144,6 +144,13 @@
                                         <FontIcon Glyph="&#xE72C;"/>
                                     </MenuFlyoutItem.Icon>
                                 </MenuFlyoutItem>
+                                <!-- 下载全本（漫画）：目录全量 + 前 5 章图片，其余章阅读时按需补齐 -->
+                                <MenuFlyoutItem x:Name="LegadoMangaDownloadMenuItem" Text="{x:Bind app:Strings.LegadoMangaDownload}"
+                                                ToolTipService.ToolTip="{x:Bind app:Strings.LegadoMangaDownloadHint}">
+                                    <MenuFlyoutItem.Icon>
+                                        <FontIcon Glyph="&#xE896;"/>
+                                    </MenuFlyoutItem.Icon>
+                                </MenuFlyoutItem>
                                 <MenuFlyoutSeparator/>
                                 <MenuFlyoutItem x:Name="LegadoImportReplaceRulesMenuItem" Text="{x:Bind app:Strings.LegadoImportReplaceRules}">
                                     <MenuFlyoutItem.Icon>

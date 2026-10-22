@@ -224,6 +224,9 @@ namespace Uviewer
         internal string GetTextSettingsFilePath() => _viewHost.GetTextSettingsFilePath();
         internal void UpdateStatusBar(ImageEntry entry, CanvasBitmap bitmap) => _imageNavigationHost.UpdateStatusBar(entry, bitmap);
         internal Task DisplayCurrentImageAsync() => _imageNavigationHost.DisplayCurrentImageAsync();
+        internal Task OpenArchiveAsync(string archivePath, string? entryKey) =>
+            _imageNavigationHost.OpenArchiveAsync(archivePath, entryKey);
+        internal Task<bool> CloseArchiveAsync() => _imageNavigationHost.CloseArchiveAsync();
         internal Task NavigateEpubAsync(int direction) => _epubNavigationHost.NavigateEpubAsync(direction);
         internal Task LoadEpubChapterAsync(
             int index,

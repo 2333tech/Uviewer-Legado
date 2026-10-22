@@ -33,6 +33,9 @@ namespace Uviewer.Controls
 
         /// <summary>在线更新入口被点击（差分更新当前打开的书源下载文件）。</summary>
         public event EventHandler? LegadoOnlineUpdateRequested;
+
+        /// <summary>下载全本（漫画）入口被点击（目录全量 + 前 5 章图片打包成 CBZ）。</summary>
+        public event EventHandler? LegadoMangaDownloadRequested;
         /// <summary>导入净化（替换）规则 JSON 入口被点击。</summary>
         public event EventHandler? LegadoImportReplaceRulesRequested;
         /// <summary>查看已导入净化规则（逐条开关）入口被点击。</summary>
@@ -154,6 +157,7 @@ namespace Uviewer.Controls
             LegadoDownloadSettingsMenuItem.Click += (_, _) => LegadoDownloadSettingsRequested?.Invoke(this, EventArgs.Empty);
             LegadoParallelSettingsMenuItem.Click += (_, _) => LegadoParallelSettingsRequested?.Invoke(this, EventArgs.Empty);
             LegadoOnlineUpdateMenuItem.Click += (_, _) => LegadoOnlineUpdateRequested?.Invoke(this, EventArgs.Empty);
+            LegadoMangaDownloadMenuItem.Click += (_, _) => LegadoMangaDownloadRequested?.Invoke(this, EventArgs.Empty);
             LegadoImportReplaceRulesMenuItem.Click += (_, _) => LegadoImportReplaceRulesRequested?.Invoke(this, EventArgs.Empty);
             LegadoShowReplaceRulesMenuItem.Click += (_, _) => LegadoShowReplaceRulesRequested?.Invoke(this, EventArgs.Empty);
             LegadoImportTitleRulesMenuItem.Click += (_, _) => LegadoImportTitleRulesRequested?.Invoke(this, EventArgs.Empty);
@@ -678,6 +682,12 @@ namespace Uviewer.Controls
         public void SetPdfTocItems(object itemsSource) => PdfTocListView.ItemsSource = itemsSource;
         public void HideTextTocFlyout() => TocFlyout.Hide();
         public void HidePdfTocFlyout() => PdfTocFlyout.Hide();
+
+        // EN: Opens the image-mode TOC flyout at its button (manga uses the same slot as PDF TOC).
+        /// <summary>
+        /// 在图片工具条的目录按钮处展开目录下拉（漫画模式用：同一按钮位，PDF 与漫画互斥）。
+        /// </summary>
+        public void ShowPdfTocFlyout() => PdfTocFlyout.ShowAt(PdfTocButton);
 
         public void ScrollTextTocIntoView(object item) => ScrollIntoView(TocListView, item);
         public void ScrollPdfTocIntoView(object item) => ScrollIntoView(PdfTocListView, item);

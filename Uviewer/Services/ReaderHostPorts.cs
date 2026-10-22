@@ -95,6 +95,17 @@ namespace Uviewer.Services
         void UpdateStatusBar(ImageEntry entry, CanvasBitmap bitmap);
         Task DisplayCurrentImageAsync();
         Task NavigateToImageAsync(int index);
+
+        /// <summary>
+        /// 打开一个归档（ZIP/CBZ…）并把其中的图片作为当前导航序列；<paramref name="entryKey"/>
+        /// 指定起始条目（null = 归档排序后的第一项）。漫画按"一章一个 CBZ"分章加载就走这里。
+        /// </summary>
+        // EN: Opens an archive (CBZ/ZIP) as the current image sequence, optionally starting at one entry.
+        Task OpenArchiveAsync(string archivePath, string? entryKey);
+
+        /// <summary>关闭当前归档（切到别处时调用；无归档时立即返回 true）。</summary>
+        Task<bool> CloseArchiveAsync();
+
         ViewingContext CreateViewingContext();
         SharpenParams CreateSharpenParams();
         Task LoadImageResourceAndInvalidateAsync(

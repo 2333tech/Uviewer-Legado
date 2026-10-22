@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 
@@ -26,6 +27,16 @@ namespace Uviewer.Services.Legado
         /// 生成一个文本字段。<paramref name="commit"/> 为 null 时字段只读（用于展示主键等信息）。
         /// </summary>
         public static UIElement Field(
+            string label, string? value, Action<string>? commit, bool multi = false, bool tall = false)
+            => FieldWithBox(label, value, commit, multi, tall).Row;
+
+        /// <summary>
+        /// 同 <see cref="Field"/>，但把内部 <see cref="TextBox"/> 一并返回。
+        /// <para><b>用于哪类字段</b>：值可能被<b>别的控件</b>改写的输入框——例如"分组"既可直接
+        /// 编辑文本，也可由右侧"加入已有分组"下拉追加。拿不到同一个 TextBox 就只能整体重建
+        /// 表单（在一个控件自己的事件里把它删掉），既闪又容易踩到 WinUI 的联动问题。</para>
+        /// </summary>
+        public static (UIElement Row, TextBox Box) FieldWithBox(
             string label, string? value, Action<string>? commit, bool multi = false, bool tall = false)
         {
             // ⚠ 属性顺序即行为：AcceptsReturn/TextWrapping 必须在 Text 之前设。
@@ -60,7 +71,7 @@ namespace Uviewer.Services.Legado
                 };
             }
 
-            return Labeled(label, box);
+            return (Labeled(label, box), box);
         }
 
         /// <summary>
@@ -117,6 +128,69 @@ namespace Uviewer.Services.Legado
             // ToggleSwitch 无 Click 事件，用 Toggled（切换即提交）
             toggle.Toggled += (s, e) => onChange(toggle, toggle.IsOn);
             return toggle;
+        }
+
+        /// <summary>
+        /// 生成一个下拉选择字段（标签 + ComboBox + 可选说明）。
+        /// <para><b>为什么闭集字段要用下拉而不是文本框</b>：像「类别」（<c>bookSourceType</c>）
+        /// 这种必须与枚举严格对齐的字段，一旦允许自由输入，用户写成 "漫画" 或 "9" 就会得到
+        /// 引擎不认识的取值（按类型分派的地方会静默退化成"文本"）。选项由调用方给，取值即原值。</para>
+        /// </summary>
+        public static UIElement Combo<T>(
+            string label,
+            IReadOnlyList<(string Label, T Value)> options,
+            T selected,
+            Action<T> commit,
+            string? hint = null)
+        {
+            var combo = new ComboBox
+            {
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                MinWidth = 160,
+            };
+
+            var selectedIndex = 0;
+            for (var i = 0; i < options.Count; i++)
+            {
+                combo.Items.Add(new ComboBoxItem { Content = options[i].Label, Tag = options[i].Value });
+                if (EqualityComparer<T>.Default.Equals(options[i].Value, selected))
+                {
+                    selectedIndex = i;
+                }
+            }
+
+            // 先定选中项再挂事件：否则初始化那一次 SelectionChanged 会当成用户操作提交一遍
+            combo.SelectedIndex = selectedIndex;
+            combo.SelectionChanged += (s, e) =>
+            {
+                if (combo.SelectedItem is ComboBoxItem item)
+                {
+                    commit((T)item.Tag);
+                }
+            };
+
+            if (string.IsNullOrEmpty(hint))
+            {
+                return Labeled(label, combo);
+            }
+
+            var stack = new StackPanel { Spacing = 2 };
+            stack.Children.Add(new TextBlock
+            {
+                Text = label,
+                FontSize = 12,
+                Opacity = 0.75,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            stack.Children.Add(combo);
+            stack.Children.Add(new TextBlock
+            {
+                Text = hint,
+                FontSize = 11,
+                Opacity = 0.55,
+                TextWrapping = TextWrapping.Wrap,
+            });
+            return stack;
         }
     }
 }

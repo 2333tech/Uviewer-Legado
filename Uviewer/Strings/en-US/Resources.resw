@@ -740,6 +740,8 @@
   <data name="LegadoParallelSettingsHint" xml:space="preserve"><value>Adjust concurrent search / download counts (search 1–64, download 1–16). Higher is faster but puts more load on source sites.</value></data>
   <data name="LegadoOnlineUpdate" xml:space="preserve"><value>Update online…</value></data>
   <data name="LegadoOnlineUpdateHint" xml:space="preserve"><value>Re-fetch chapters of the currently opened downloaded book via its source link (only new/changed chapters are downloaded).</value></data>
+  <data name="LegadoMangaDownload" xml:space="preserve"><value>Download manga…</value></data>
+  <data name="LegadoMangaDownloadHint" xml:space="preserve"><value>Manga: fetch the full chapter list but download images for the first 5 chapters only, packed as CBZ files (rate-limit friendly). Later chapters are fetched on demand (2 before / 5 after).</value></data>
   <data name="LegadoManageSourcesHint" xml:space="preserve"><value>Book sources, purification rules and title rules in one place</value></data>
   <data name="LegadoImportReplaceRules" xml:space="preserve"><value>Import purification rules JSON…</value></data>
   <data name="LegadoShowReplaceRules" xml:space="preserve"><value>View / toggle purification rules</value></data>

@@ -85,6 +85,41 @@ namespace Uviewer.Services.Legado
         /// <summary>搜索进行中（取消按钮/重复回车守卫）。</summary>
         private bool _searchRunning;
 
+        /// <summary>上次使用的搜索范围（类别 / 分组）：窗口内反复搜索时沿用，不必每次重设。</summary>
+        private BookSourceKind? _lastKind;
+        private string? _lastGroup;
+
+        /// <summary>类别下拉里某个取值对应的索引（找不到 = 0，即「全部类别」）。</summary>
+        private static int KindIndexOf(BookSourceKind? kind)
+        {
+            for (var i = 0; i < BookSourceGroups.KindOptions.Count; i++)
+            {
+                if (BookSourceGroups.KindOptions[i].Kind == kind)
+                {
+                    return i;
+                }
+            }
+
+            return 0;
+        }
+
+        /// <summary>把筛选条件说成人话（状态行用）：如「漫画 · 分组「精选」」，未筛选则为「全部书源」。</summary>
+        private static string DescribeScope(BookSourceFilter filter)
+        {
+            var parts = new List<string>(2);
+            if (filter.Kind is { } kind)
+            {
+                parts.Add(BookSourceGroups.DescribeKind(kind));
+            }
+
+            if (!string.IsNullOrWhiteSpace(filter.Group))
+            {
+                parts.Add($"分组「{filter.Group}」");
+            }
+
+            return parts.Count == 0 ? "全部书源" : string.Join(" · ", parts);
+        }
+
         public BookSourceSearchWindow(
             FrameworkElement themeSource,
             BookSourceSearchService search,
@@ -123,17 +158,64 @@ namespace Uviewer.Services.Legado
             var palette = LegadoTheme.For(_themeSource);
             _probeQueue = new PriorityWorkQueue(maxConcurrency: 4);
 
-            // ── 头部：关键词输入 + 搜索/取消按钮 ──
+            // ── 头部：关键词输入 + 类别/分组范围 + 搜索/取消按钮 ──
             var input = new TextBox
             {
                 PlaceholderText = "输入书名或作者（回车搜索）",
                 Text = initialKeyword ?? string.Empty,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
             };
+
+            // 搜索范围：类别（对齐 bookSourceType）+ 自定义分组（bookSourceGroup）。
+            // 3637 条启用源全量搜一遍要几十秒，而且结果里混着漫画/音频源；
+            // 限定范围既是"只看我要的类型"，也是把一次搜索从几分钟压到几秒的手段。
+            var kindBox = new ComboBox
+            {
+                MinWidth = 118,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            foreach (var (label, kind) in BookSourceGroups.KindOptions)
+            {
+                kindBox.Items.Add(new ComboBoxItem { Content = label, Tag = kind });
+            }
+
+            var groupBox = new ComboBox
+            {
+                MinWidth = 156,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            groupBox.Items.Add(new ComboBoxItem { Content = "全部分组", Tag = null });
+            foreach (var (groupName, count) in BookSourceGroups.Collect(_search.Service.Sources.GetAll()))
+            {
+                groupBox.Items.Add(new ComboBoxItem { Content = $"{groupName}（{count}）", Tag = groupName });
+            }
+
+            // 恢复上次选择：同一个窗口内反复搜索时，用户不该每轮都重设范围
+            kindBox.SelectedIndex = KindIndexOf(_lastKind);
+            var lastGroupIndex = 0;
+            if (_lastGroup is not null)
+            {
+                for (var i = 1; i < groupBox.Items.Count; i++)
+                {
+                    if (groupBox.Items[i] is ComboBoxItem { Tag: string name }
+                        && string.Equals(name, _lastGroup, StringComparison.OrdinalIgnoreCase))
+                    {
+                        lastGroupIndex = i;
+                        break;
+                    }
+                }
+            }
+
+            groupBox.SelectedIndex = lastGroupIndex;
+
+            ToolTipService.SetToolTip(kindBox, "只搜索指定类别的书源（文本 / 漫画 / 音频 / 视频 / 文件）");
+            ToolTipService.SetToolTip(groupBox, "只搜索属于该分组的书源（分组在「书源管理」里编辑）");
+
             var progressText = new TextBlock { Text = string.Empty, Opacity = 0.75, FontSize = 12 };
+            _fontTargets.Add(progressText);
             var status = new TextBlock
             {
-                Text = "就绪。搜索会并发查询所有已启用书源；点选结果可预览简介与第一章。",
+                Text = "就绪。搜索会并发查询所有已启用书源；用顶栏两个下拉可只看某类别/某分组。点选结果可预览简介与第一章。",
                 TextWrapping = TextWrapping.Wrap,
                 FontSize = 12,
                 Foreground = palette.TextSecondary,
@@ -350,10 +432,16 @@ namespace Uviewer.Services.Legado
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             Grid.SetColumn(input, 0);
-            Grid.SetColumn(searchButton, 1);
-            Grid.SetColumn(cancelButton, 2);
+            Grid.SetColumn(kindBox, 1);
+            Grid.SetColumn(groupBox, 2);
+            Grid.SetColumn(searchButton, 3);
+            Grid.SetColumn(cancelButton, 4);
             header.Children.Add(input);
+            header.Children.Add(kindBox);
+            header.Children.Add(groupBox);
             header.Children.Add(searchButton);
             header.Children.Add(cancelButton);
 
@@ -363,6 +451,13 @@ namespace Uviewer.Services.Legado
                 Padding = new Thickness(14, 12, 14, 14),
                 Background = palette.Surface,
             };
+
+            // ★ 本窗口是独立 Window：它<b>不继承</b>主窗口根元素的 RequestedTheme，
+            // 默认按"应用级主题"解析——用户把主窗口切到深色时，这里仍是浅色。
+            // 后果不只是底色：FlyoutPresenter / ListView / ScrollBar / Button 这些
+            // <b>默认样式</b>全按浅色渲染，而文字色取自 palette（深色主题下是白字），
+            // 于是"点最新章节弹出的目录"变成浅底白字，完全不可读。这里显式跟随宿主。
+            root.RequestedTheme = _themeSource.ActualTheme;
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -415,6 +510,196 @@ namespace Uviewer.Services.Legado
             var cardContexts = new List<CardContext>();
             var downloads = new BookSourceDownloadService(_search.Service);
 
+            // ★ 渲染预算（2026-10-22 修"搜索一段时间后整机卡死"）：
+            // 用户本地有 3637 个启用源，一次搜索的命中量可达<b>数千到数万</b>条。
+            // 旧实现把每条命中都在 UI 线程上建一张卡（≈10 个控件）直接塞进 StackPanel
+            // （外层 ScrollViewer + StackPanel = 无虚拟化，全部参与测量/布局），
+            // 几万张卡 = 几十万个元素 → UI 线程被锁死几十分钟，主窗口同一线程也一起"未响应"。
+            // 现在的口径：
+            //   ① 每批只建 RenderBatchSize 张卡，批间让出消息循环（界面持续可交互）；
+            //   ② 列表最多保留 MaxRenderedCards 张（按相关度，后来更相关的会顶掉最差的一张）；
+            //   ③ 后台探测只对前 MaxProbedCards 张自动发起，其余"点击/预览才探"。
+            const int MaxRenderedCards = 300;
+            const int MaxProbedCards = 48;
+            const int RenderBatchSize = 24;
+
+            var pendingHits = new Queue<BookSourceSearchService.BookSearchHit>();
+            var pendingGate = new object();
+            var pumpRunning = false;
+            var searchDone = true;
+            var currentKeyword = string.Empty;
+            int rendered = 0, probesStarted = 0, droppedHits = 0;
+
+            int PendingCount()
+            {
+                lock (pendingGate)
+                {
+                    return pendingHits.Count;
+                }
+            }
+
+            void RefreshProgress()
+            {
+                if (totalSources > 0)
+                {
+                    progressBar.IsIndeterminate = false;
+                    progressBar.Maximum = totalSources;
+                    progressBar.Value = completed;
+                }
+
+                var suffix = droppedHits > 0 ? $"（列表只显示相关度最高的 {MaxRenderedCards} 条）" : string.Empty;
+                progressText.Text = totalSources > 0
+                    ? $"已搜索 {completed}/{totalSources} 个书源　·　命中 {hitCount} 本{suffix}"
+                    : "正在准备书源…";
+            }
+
+            /// <summary>移除列表末尾（相关度最低）的那张卡，并清掉它的上下文。</summary>
+            void DropLastCard()
+            {
+                if (ranked.Count == 0)
+                {
+                    return;
+                }
+
+                var victim = ranked[^1];
+                ranked.RemoveAt(ranked.Count - 1);
+                resultPanel.Children.Remove(victim.Card);
+                for (var i = cardContexts.Count - 1; i >= 0; i--)
+                {
+                    if (ReferenceEquals(cardContexts[i].Card, victim.Card))
+                    {
+                        cardContexts.RemoveAt(i);
+                        break;
+                    }
+                }
+
+                rendered--;
+            }
+
+            /// <summary>渲染一条命中（含预算控制）。只在 UI 线程调用。</summary>
+            void AddCard(BookSourceSearchService.BookSearchHit hit, CancellationToken token)
+            {
+                if (rendered >= MaxRenderedCards)
+                {
+                    // 满额：只有比"当前最差的一张"更相关才进；否则只计数不建控件
+                    var incoming = SearchRelevance.Score(hit.Name, hit.Author, currentKeyword);
+                    if (ranked.Count == 0
+                        || incoming <= ranked[^1].Score
+                        || ReferenceEquals(_selectedCard, ranked[^1].Card))
+                    {
+                        droppedHits++;
+                        return;
+                    }
+
+                    DropLastCard();
+                    droppedHits++;   // 被顶掉的那条也算"省略"，状态行数字才对得上
+                }
+
+                var probeNow = probesStarted < MaxProbedCards;
+                if (probeNow)
+                {
+                    probesStarted++;
+                }
+
+                var context = BuildResultCard(hit, downloads, palette, token, probeNow);
+                InsertByRelevance(resultPanel, ranked, hit, currentKeyword, context.Card, sequence++);
+                cardContexts.Add(context);
+                rendered++;
+            }
+
+            /// <summary>确保渲染泵在跑（幂等；只在 UI 线程调用）。</summary>
+            void EnsurePump()
+            {
+                if (pumpRunning)
+                {
+                    return;
+                }
+
+                pumpRunning = true;
+                _ = PumpAsync();
+            }
+
+            /// <summary>
+            /// 渲染泵：从待渲染队列按批取命中，在 UI 线程建卡，批间让出消息循环。
+            /// <para>不自带 CancellationTokenSource：每轮读 <see cref="_cts"/>，因此用户取消后
+            /// 再搜一次时，同一个泵会自然接着渲染新搜索的结果（不需要重建泵）。</para>
+            /// </summary>
+            async Task PumpAsync()
+            {
+                try
+                {
+                    while (true)
+                    {
+                        var cts = _cts;
+                        if (cts is null || _hostElement is null)
+                        {
+                            return;   // 窗口已关闭
+                        }
+
+                        if (cts.IsCancellationRequested)
+                        {
+                            if (searchDone)
+                            {
+                                return;   // 已取消且没有新搜索接管
+                            }
+
+                            await Task.Delay(20);
+                            continue;
+                        }
+
+                        var batch = new List<BookSourceSearchService.BookSearchHit>(RenderBatchSize);
+                        bool drained;
+                        lock (pendingGate)
+                        {
+                            while (batch.Count < RenderBatchSize && pendingHits.Count > 0)
+                            {
+                                batch.Add(pendingHits.Dequeue());
+                            }
+
+                            drained = pendingHits.Count == 0;
+                        }
+
+                        foreach (var hit in batch)
+                        {
+                            if (cts.IsCancellationRequested)
+                            {
+                                return;
+                            }
+
+                            AddCard(hit, cts.Token);
+                        }
+
+                        if (batch.Count > 0)
+                        {
+                            RefreshProgress();
+                        }
+
+                        if (drained)
+                        {
+                            if (searchDone)
+                            {
+                                return;   // 搜索已结束且队列已空
+                            }
+
+                            await Task.Delay(30);   // 还在搜：等下一波命中
+                        }
+                        else
+                        {
+                            await Task.Delay(1);    // 还有积压：继续建，但每批都让出消息循环
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 泵内部异常不能冒泡成"未观察的任务异常"（那会让列表无声停止更新）
+                    System.Diagnostics.Debug.WriteLine($"Search render pump failed: {ex}");
+                }
+                finally
+                {
+                    pumpRunning = false;
+                }
+            }
+
             var runSearch = new Func<Task>(async () =>
             {
                 var keyword = input.Text?.Trim() ?? string.Empty;
@@ -422,6 +707,17 @@ namespace Uviewer.Services.Legado
                 {
                     return;
                 }
+
+                // 范围在按下搜索的瞬间定型：搜索途中用户再改下拉也不影响这一轮
+                // （否则半途改类别，前半段与后半段的候选集不一致，命中数就说不清了）
+                var filter = new BookSourceFilter
+                {
+                    Kind = kindBox.SelectedItem is ComboBoxItem { Tag: BookSourceKind kind } ? kind : null,
+                    Group = groupBox.SelectedItem is ComboBoxItem { Tag: string group } ? group : null,
+                };
+                _lastKind = filter.Kind;
+                _lastGroup = filter.Group;
+                var scope = DescribeScope(filter);
 
                 _cts?.Cancel();
                 _cts?.Dispose();
@@ -431,41 +727,46 @@ namespace Uviewer.Services.Legado
                 _searchRunning = true;
                 searchButton.IsEnabled = false;
                 input.IsEnabled = false;
+                kindBox.IsEnabled = false;
+                groupBox.IsEnabled = false;
                 cancelButton.Visibility = Visibility.Visible;
                 cancelButton.IsEnabled = true;
                 cancelButton.Content = "取消";
                 completed = 0;
                 totalSources = 0;
                 hitCount = 0;
+                currentKeyword = keyword;
                 resultPanel.Children.Clear();
                 ranked.Clear();
                 sequence = 0;
+
+                // 旧一轮结果的探测会话要显式释放（每次搜索最多 MaxProbedCards 个；
+                // 不释放的话反复搜索会把会话连同其引擎状态一起攒在内存里）
+                foreach (var old in cardContexts)
+                {
+                    old.Holder.Session?.Dispose();
+                }
+
                 cardContexts.Clear();
+                lock (pendingGate)
+                {
+                    pendingHits.Clear();
+                }
+
+                rendered = 0;
+                probesStarted = 0;
+                droppedHits = 0;
+                searchDone = false;
                 ClearPreview();
                 _selectedCard = null;
                 introPanel.Visibility = Visibility.Collapsed;
                 progressBar.Visibility = Visibility.Visible;
                 progressBar.IsIndeterminate = true;
-                _fontTargets.Add(progressText);
-            progressText.Text = string.Empty;
-                status.Text = $"正在搜索“{keyword}”…";
+                progressText.Text = string.Empty;
+                status.Text = $"正在搜索“{keyword}”（{scope}）…";
 
                 try
                 {
-                    void RefreshProgress()
-                    {
-                        if (totalSources > 0)
-                        {
-                            progressBar.IsIndeterminate = false;
-                            progressBar.Maximum = totalSources;
-                            progressBar.Value = completed;
-                        }
-
-                        progressText.Text = totalSources > 0
-                            ? $"已搜索 {completed}/{totalSources} 个书源　·　命中 {hitCount} 本"
-                            : "正在准备书源…";
-                    }
-
                     var progress = new Progress<SearchProgress>(p =>
                     {
                         if (cts.IsCancellationRequested)
@@ -478,6 +779,7 @@ namespace Uviewer.Services.Legado
                         RefreshProgress();
                     });
 
+                    // 工作线程回调：只入队 + 计数，<b>不在</b>这里建控件（建卡一律交给渲染泵）
                     void OnGroup(BookSourceSearchService.SearchGroup group)
                     {
                         if (cts.IsCancellationRequested)
@@ -485,32 +787,33 @@ namespace Uviewer.Services.Legado
                             return;
                         }
 
-                        dispatcher.TryEnqueue(() =>
+                        lock (pendingGate)
                         {
-                            if (cts.IsCancellationRequested)
-                            {
-                                return;
-                            }
-
                             foreach (var hit in group.Hits)
                             {
-                                hitCount++;
-
-                                // 相关性降序插入：完全匹配的书名永远在最上面
-                                var context = BuildResultCard(hit, downloads, palette, cts.Token);
-                                InsertByRelevance(resultPanel, ranked, hit, keyword, context.Card, sequence++);
-                                cardContexts.Add(context);
+                                pendingHits.Enqueue(hit);
                             }
+                        }
 
-                            RefreshProgress();
-                        });
+                        Interlocked.Add(ref hitCount, group.Hits.Count);
+                        dispatcher.TryEnqueue(EnsurePump);
                     }
 
-                    var groups = await _search.SearchAsync(keyword, null, progress, OnGroup, cts.Token);
+                    EnsurePump();
+
+                    var groups = await _search.SearchAsync(keyword, null, progress, OnGroup, cts.Token, filter);
 
                     if (cts.IsCancellationRequested)
                     {
                         return;
+                    }
+
+                    searchDone = true;
+
+                    // 等渲染泵把积压的画完（最多 3s），让状态行与列表内容一致
+                    for (var i = 0; i < 100 && (pumpRunning || PendingCount() > 0); i++)
+                    {
+                        await Task.Delay(30);
                     }
 
                     if (totalSources > 0)
@@ -519,10 +822,13 @@ namespace Uviewer.Services.Legado
                         progressBar.Value = totalSources;
                     }
 
-                    progressText.Text = $"已搜索 {completed}/{totalSources} 个书源　·　命中 {hitCount} 本";
+                    progressText.Text = $"已搜索 {completed}/{totalSources} 个书源　·　命中 {hitCount} 本"
+                        + (droppedHits > 0 ? $"（列表只显示相关度最高的 {MaxRenderedCards} 条）" : string.Empty);
                     status.Text = hitCount == 0
-                        ? $"“{keyword}”没有结果。书源站点可能已失效或改版（{totalSources} 个源全部查询完毕）。"
-                        : $"“{keyword}”命中 {hitCount} 本，来自 {groups.Count} 个书源。点选结果预览简介与第一章，点右侧按钮下载整本。";
+                        ? $"“{keyword}”没有结果（范围：{scope}，{totalSources} 个源全部查询完毕）。书源站点可能已失效或改版；可放宽类别/分组后再试。"
+                        : droppedHits > 0
+                            ? $"“{keyword}”命中 {hitCount} 本（范围：{scope}），来自 {groups.Count} 个书源；列表按相关度只显示前 {MaxRenderedCards} 条（其余 {droppedHits} 条相关度更低，已省略）。点选结果预览简介与第一章，点右侧按钮下载整本。"
+                            : $"“{keyword}”命中 {hitCount} 本（范围：{scope}），来自 {groups.Count} 个书源。点选结果预览简介与第一章，点右侧按钮下载整本。";
                 }
                 catch (OperationCanceledException)
                 {
@@ -542,9 +848,12 @@ namespace Uviewer.Services.Legado
                 {
                     if (ReferenceEquals(_cts, cts))
                     {
+                        searchDone = true;
                         _searchRunning = false;
                         searchButton.IsEnabled = true;
                         input.IsEnabled = true;
+                        kindBox.IsEnabled = true;
+                        groupBox.IsEnabled = true;
                         cancelButton.Visibility = Visibility.Collapsed;
                         progressBar.Visibility = Visibility.Collapsed;
                     }
@@ -628,6 +937,8 @@ namespace Uviewer.Services.Legado
             // 窗口关闭 = 取消搜索与全部探测、释放会话（独立窗口无主窗口生命周期牵连）
             window.Closed += (s, e) =>
             {
+                // 关窗 = 停掉渲染泵与全部探测（泵每轮检查 _hostElement，置空后自动退出）
+                searchDone = true;
                 _cts?.Cancel();
                 _probeQueue?.Dispose();
                 foreach (var context in cardContexts)
@@ -686,7 +997,8 @@ namespace Uviewer.Services.Legado
             BookSourceSearchService.BookSearchHit hit,
             BookSourceDownloadService downloads,
             LegadoPalette palette,
-            CancellationToken searchToken)
+            CancellationToken searchToken,
+            bool probeNow)
         {
             var primary = new TextBlock
             {
@@ -731,8 +1043,32 @@ namespace Uviewer.Services.Legado
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 MaxLines = 1,
                 VerticalAlignment = VerticalAlignment.Center,
+                // ★ 必须左对齐（而不是默认的拉伸占满 Star 列）：目录弹层是 <c>ShowAt(这个元素)</c>
+                // 定位的，元素若被拉满整行，弹层就会贴着整行右边缘出现——用户看到的是
+                // "点第一章的文字，弹层却从很远的地方冒出来"（反馈里的"各部件错位"）。
+                HorizontalAlignment = HorizontalAlignment.Left,
             };
             ToolTipService.SetToolTip(latestLabel, "点击立即优先加载目录");
+
+            // 状态标记槽（下载按钮左侧）：探测产出 ❌/⚠ 后由探测回调填充
+            var statusHolder = new Grid { MinWidth = 18, VerticalAlignment = VerticalAlignment.Center };
+
+            // 惰性探测：卡片数量受限（见 RenderHit 的 MaxProbedCards），预算内的卡片直接开探，
+            // 预算外的等用户点它再探。用户点/预览都会调用这里，语义是"最多探一次"。
+            void StartProbeOnce()
+            {
+                if (latestHolder.ProbeStarted)
+                {
+                    return;
+                }
+
+                latestHolder.ProbeStarted = true;
+                latestLabel.Text = "｜排队获取目录…";
+                ToolTipService.SetToolTip(latestLabel, "点击立即优先加载目录");
+                EnqueueProbe(hit, latestHolder, latestLabel, statusHolder, palette, searchToken);
+            }
+
+            latestHolder.EnsureProbe = StartProbeOnce;
 
             latestLabel.PointerEntered += (s2, e2) => latestLabel.Foreground = palette.TextPrimary;
             latestLabel.PointerExited += (s2, e2) => latestLabel.Foreground = palette.TextSecondary;
@@ -751,6 +1087,7 @@ namespace Uviewer.Services.Legado
 
                 e2.Handled = true;
                 // 点击目录 = 该条目立刻优先加载（插队探测；目录已就绪则直接弹出）
+                StartProbeOnce();
                 latestHolder.Boost();
                 ShowChapterListFlyout(latestLabel, latestHolder, hit, palette);
             };
@@ -773,8 +1110,6 @@ namespace Uviewer.Services.Legado
 
             var downloadButton = BuildDownloadButton(hit, downloads, latestLabel, palette, searchToken);
 
-            // 状态标记槽（下载按钮左侧）：探测产出 ❌/⚠ 后由探测回调填充
-            var statusHolder = new Grid { MinWidth = 18, VerticalAlignment = VerticalAlignment.Center };
 
             var grid = new Grid { ColumnSpacing = 8 };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -835,9 +1170,15 @@ namespace Uviewer.Services.Legado
                 ToolTipService.SetToolTip(latestLabel, "音视频结果不支持目录/阅读");
                 latestHolder.ProbeDone.TrySetResult(false);
             }
+            else if (probeNow)
+            {
+                StartProbeOnce();
+            }
             else
             {
-                EnqueueProbe(hit, latestHolder, latestLabel, statusHolder, palette, searchToken);
+                // 探测预算用尽：不自动开探（几千条结果逐个探测 = 把所有站点打一遍、UI 也扛不住），
+                // 改成"点/预览时才探"，用户不关心的条目零网络开销。
+                latestLabel.Text = "｜点击加载目录";
             }
 
             return context;
@@ -846,27 +1187,35 @@ namespace Uviewer.Services.Legado
         /// <summary>
         /// 音视频结果徽标：Fluent Warning 字形 + Caution 语义色 + 「不支持音视频」。
         /// <para><b>为什么标黄而不是标红</b>：这不是错误，而是产品边界（本应用只做文本阅读）。</para>
+        /// <para><b>为什么用 FontIcon 而不是 TextBlock + 内联 Run</b>（2026-10-22 修）：
+        /// 在 <c>TextBlock.Inlines</c> 的 <c>Run</c> 上设 <c>FontFamily="Segoe Fluent Icons"</c> 时，
+        /// 字形并没有从图示字体取，而是落回界面字体——<c>\uE7BA</c> 在界面字体里没有码位，
+        /// 渲染成<b>方框（tofu）</b>，配上 Caution 黄就成了用户看到的"黄方框"。
+        /// <see cref="FontIcon"/> 自己持有字形与字体，是本项目所有图标（顶栏/工具条）的统一做法，
+        /// 不存在该问题。</para>
         /// </summary>
-        private static TextBlock BuildUnsupportedMediaBadge(LegadoPalette palette)
+        private static FrameworkElement BuildUnsupportedMediaBadge(LegadoPalette palette)
         {
-            var badge = new TextBlock
+            var badge = new StackPanel
             {
-                FontSize = 12,
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
                 VerticalAlignment = VerticalAlignment.Center,
                 IsHitTestVisible = false,
             };
 
-            badge.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+            badge.Children.Add(new FontIcon
             {
-                Text = "\uE7BA ",
-                FontFamily = new FontFamily("Segoe Fluent Icons"),
+                Glyph = "\uE7BA",   // Warning（Fluent）
                 FontSize = 11,
                 Foreground = palette.Caution,
             });
-            badge.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
+            badge.Children.Add(new TextBlock
             {
                 Text = "不支持音视频",
+                FontSize = 12,
                 Foreground = palette.TextSecondary,
+                VerticalAlignment = VerticalAlignment.Center,
             });
 
             ToolTipService.SetToolTip(badge, "该结果来自音视频类书源（bookSourceType 1 音频 / 4 视频）。本应用只处理文本，音视频不在支持范围内。");
@@ -1025,6 +1374,9 @@ namespace Uviewer.Services.Legado
         {
             var holder = context.Holder;
             var hit = context.Hit;
+
+            // 预算外卡片尚未开探：预览一定要探，否则下面 await ProbeDone 会永远等下去
+            holder.EnsureProbe?.Invoke();
             holder.Boost();
 
             var introTitle = _introTitle;
@@ -1326,6 +1678,14 @@ namespace Uviewer.Services.Legado
 
         /// <summary>
         /// 弹出该书目录（探测已缓存的目录，零网络；点开时该条目已插队优先加载）。
+        /// <para><b>底色/文字/布局为什么全部显式指定</b>（2026-10-22 修）：
+        /// <see cref="Flyout"/> 的 <c>FlyoutPresenter</c> 底色来自<b>默认样式</b>的主题资源，
+        /// 而弹层放在 Popup 里，主题不保证跟随本窗口；实测深色窗口里弹出的是浅色底，
+        /// 配 palette 的白字 → 完全不可读。这里三件事一起做，任一层失效都不影响可读性：
+        /// ① 内容外包一层 <see cref="Border"/>，底色/描边用 palette 显式给（不依赖主题资源）；
+        /// ② 该 Border 的 <c>RequestedTheme</c> 跟随锚点元素，让内部的 ListView 滚动条、
+        ///    指针悬停高亮也走同一套主题；③ 列表给<b>确定高度</b>——ListView 在"无限高度"
+        ///    下会退化成全量实现，几千章的目录会把 UI 线程锁死。</para>
         /// </summary>
         private void ShowChapterListFlyout(
             FrameworkElement anchor,
@@ -1333,75 +1693,93 @@ namespace Uviewer.Services.Legado
             BookSourceSearchService.BookSearchHit hit,
             LegadoPalette palette)
         {
-            var list = new ListView
+            var xamlRoot = _hostElement?.XamlRoot ?? anchor.XamlRoot;
+            if (xamlRoot is null)
             {
-                SelectionMode = ListViewSelectionMode.None,
-                IsItemClickEnabled = false,
-            };
+                return;
+            }
 
-            if (holder.Chapters is { Count: > 0 })
+            const double rowHeight = 36;
+            const double maxListHeight = 324;
+
+            var panel = new StackPanel { Spacing = 6 };
+
+            panel.Children.Add(new TextBlock
             {
-                foreach (var chapter in holder.Chapters)
+                Text = $"目录 · {hit.Name}",
+                FontSize = 15,
+                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                Foreground = palette.TextPrimary,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxLines = 1,
+            });
+
+            if (holder.Chapters is { Count: > 0 } chapters)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = $"共 {chapters.Count} 章　·　点击条目外的空白可关闭",
+                    FontSize = 11,
+                    Foreground = palette.TextSecondary,
+                });
+
+                var list = new ListView
+                {
+                    SelectionMode = ListViewSelectionMode.None,
+                    IsItemClickEnabled = false,
+                    Padding = new Thickness(0),
+                    // 固定高度（而非 MaxHeight）：ListView 需要确定的可视高度才会虚拟化，
+                    // 否则 5000 章的目录会一次性实例化 5000 个 TextBlock → 弹层卡死。
+                    Height = Math.Min(Math.Max(chapters.Count, 3) * rowHeight, maxListHeight),
+                };
+
+                foreach (var chapter in chapters)
                 {
                     list.Items.Add(new TextBlock
                     {
                         Text = string.IsNullOrWhiteSpace(chapter.ChapterName) ? "(无标题)" : chapter.ChapterName,
-                        FontSize = 14,
+                        FontSize = 13,
                         Foreground = palette.TextPrimary,
                         TextTrimming = TextTrimming.CharacterEllipsis,
                         MaxLines = 1,
-                        Margin = new Thickness(0, 3, 0, 3),
+                        VerticalAlignment = VerticalAlignment.Center,
                         IsHitTestVisible = false,
                     });
                 }
+
+                panel.Children.Add(list);
             }
             else
             {
-                list.Items.Add(new TextBlock
+                // 目录未就绪/为空：只放一段说明，不塞 ListView（空列表还会占一个滚动区）
+                panel.Children.Add(new TextBlock
                 {
                     Text = holder.Error ?? "目录尚未取到（已插队优先加载，可稍后再点）",
                     FontSize = 12,
                     Foreground = palette.TextSecondary,
                     TextWrapping = TextWrapping.Wrap,
-                    IsHitTestVisible = false,
+                    MaxWidth = 296,
                 });
             }
 
-            var panel = new Grid { Width = 320, MaxHeight = 420 };
-            panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-            var title = new TextBlock
+            var content = new Border
             {
-                Text = $"目录 · {hit.Name}",
-                FontSize = 16,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                Foreground = palette.TextPrimary,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-                Margin = new Thickness(0, 0, 0, 10),
+                Width = 320,
+                Padding = new Thickness(12, 10, 12, 12),
+                Background = palette.Surface,
+                BorderBrush = palette.SurfaceBorder,
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Child = panel,
+                // 弹层内部控件（滚动条/悬停高亮）也跟随锚点实际主题
+                RequestedTheme = anchor.ActualTheme,
             };
-
-            var count = new TextBlock
-            {
-                Text = holder.Chapters is { Count: > 0 } ? $"共 {holder.Chapters.Count} 章" : string.Empty,
-                FontSize = 11,
-                Foreground = palette.TextSecondary,
-                Margin = new Thickness(0, -6, 0, 8),
-            };
-
-            var header = new StackPanel();
-            header.Children.Add(title);
-            header.Children.Add(count);
-            Grid.SetRow(header, 0);
-            Grid.SetRow(list, 1);
-            panel.Children.Add(header);
-            panel.Children.Add(list);
 
             var flyout = new Flyout
             {
-                XamlRoot = _hostElement?.XamlRoot ?? anchor.XamlRoot,
+                XamlRoot = xamlRoot,
                 Placement = FlyoutPlacementMode.Bottom,
-                Content = panel,
+                Content = content,
             };
 
             flyout.ShowAt(anchor);
@@ -1427,6 +1805,15 @@ namespace Uviewer.Services.Legado
 
             /// <summary>探测队列句柄：用户交互（点选/点目录）时插队。</summary>
             public PriorityWorkQueue.IPriorityWorkHandle? BoostHandle { get; set; }
+
+            /// <summary>
+            /// 惰性探测入口（卡片构造时注入，语义"最多探一次"）。
+            /// <para>只有探测预算内的卡片在渲染时立即调用；预算外的等用户点"目录"或点选预览时才探。</para>
+            /// </summary>
+            public Action? EnsureProbe { get; set; }
+
+            /// <summary>探测是否已发起（幂等守卫：点目录 + 点选预览可能先后触发）。</summary>
+            public bool ProbeStarted { get; set; }
 
             public void Boost() => BoostHandle?.Boost();
 

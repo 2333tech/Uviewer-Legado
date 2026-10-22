@@ -255,8 +255,13 @@ public static class BookSourceCapabilities
     /// <summary>评估结果缓存：键 =（bookSourceUrl, 内容指纹）。报告本身只有几十字节，容量上限纯防御。</summary>
     private static readonly ConcurrentDictionary<(string Url, int Fingerprint), SourceCapabilityReport> Cache = new();
 
-    /// <summary>缓存容量上限：超过即整体清空（编辑频繁时旧键自然失效，不值得做逐条淘汰）。</summary>
-    private const int CacheCapacity = 4096;
+    /// <summary>
+    /// 缓存容量上限：超过即整体清空（编辑频繁时旧键自然失效，不值得做逐条淘汰）。
+    /// <para><b>必须显著大于用户的真实书源条数</b>：实际导入常是 3600+ 条全量源，
+    /// 原来的 4096 只要编辑几条就会触发 Clear → 下一次列表刷新/搜索又要重扫
+    /// 15 MB 脚本文本（数秒到数十秒）。留 5 倍余量后基本不会触发。</para>
+    /// </summary>
+    private const int CacheCapacity = 20000;
 
     /// <summary>
     /// 带（主键 + 内容指纹）缓存的完整评估：与 <see cref="AssessDetailed"/> 结果完全一致，
