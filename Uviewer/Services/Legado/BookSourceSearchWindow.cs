@@ -1584,7 +1584,7 @@ namespace Uviewer.Services.Legado
             var (plain, images) = await Task.Run(() =>
             {
                 var content = purify ? service.PurifyForDisplay(raw) : raw;
-                var text = LegadoHtmlText.ToPlainText(content ?? string.Empty);
+                var plainText = LegadoHtmlText.ToPlainText(content ?? string.Empty);
 
                 // 引擎在抓正文时已经抽过图片地址（绝对化 + 去重），优先用它：
                 // 净化规则只针对文本，重新从净化后的 HTML 抽一次反而可能少图。
@@ -1597,7 +1597,7 @@ namespace Uviewer.Services.Legado
                     urls = RuleEngine.ExtractImageUrls(raw, chapterUrl);
                 }
 
-                return (text, urls);
+                return (plainText, urls);
             }).ConfigureAwait(true);
 
             if (_hostElement is null)
