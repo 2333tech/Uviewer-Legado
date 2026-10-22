@@ -88,6 +88,12 @@ namespace Uviewer.Services.Legado
         /// <summary>预览页图上限：只下前几页（判断"能不能显示图"够了，不必拉完整章）。</summary>
         private const int PreviewImageLimit = 6;
 
+        /// <summary>
+        /// Skia 兜底解码的目标边长（像素）。预览栏宽约 400–700，取 900 让竖版漫画页
+        /// 仍有余量放大，同时把 PNG 编码量和内存压在可接受范围。
+        /// </summary>
+        private const int PreviewImageDecodeSize = 900;
+
         /// <summary>「部分下载」进行中（重复点击守卫）。</summary>
         private bool _partialDownloadRunning;
 
@@ -1377,6 +1383,7 @@ namespace Uviewer.Services.Legado
                                 var raw = content?.Content;
                                 holder.FirstChapterRaw = raw;
                                 holder.FirstChapterImages = content?.ImageUrls;
+                                holder.FirstChapterUrl = first.ChapterUrl;
 
                                 // 图片书源（漫画）的"正文"就是一组 <img>：转纯文本必然为空，
                                 // 只要抽得到图片地址就算正常——否则每个漫画源都会被标 ⚠"正文为空"。
@@ -1537,12 +1544,71 @@ namespace Uviewer.Services.Legado
             introBody.Text = intro;
             introScroll.ChangeView(null, 0, null, disableAnimation: true);
 
+            var first = chapters is { Count: > 0 } ? chapters[0] : null;
+            var session = holder.Session;
             var raw = holder.FirstChapterRaw;
             var firstImages = holder.FirstChapterImages;
+            string? refetchError = null;
+
+            // ── 预览固定「目录第一章」 ──
+            // 探测缓存只当加速用。缓存章节与目录第一条不一致、或正文与图片都为空时，
+            // 这里补抓一次：用户看到的必须永远是目录第一话，而不是探测那一次的残留
+            // （探测可能赶上临时超时/风控，或目录在两次请求之间被站点换了顺序）。
+            if (first is not null && session is not null
+                && !string.IsNullOrWhiteSpace(first.ChapterUrl)
+                && (!string.Equals(holder.FirstChapterUrl, first.ChapterUrl, StringComparison.Ordinal)
+                    || (string.IsNullOrWhiteSpace(raw) && firstImages is not { Count: > 0 })))
+            {
+                previewChapterName.Text = first.ChapterName ?? "第一章";
+                previewText.Text = "正在加载第一章（目录第一话）…";
+
+                // 搜索 CTS 可能在"重新搜索"时被换掉并 Dispose：取不到就当不取消，
+                // 后面用 _hostElement 判断窗口是否还在（关窗后不再碰 UI）。
+                var previewToken = CancellationToken.None;
+                try
+                {
+                    previewToken = _cts?.Token ?? CancellationToken.None;
+                }
+                catch (ObjectDisposedException)
+                {
+                    // 旧 CTS 已释放，退化成不取消
+                }
+
+                try
+                {
+                    var refetched = await _search.Service.Engine.GetContentAsync(
+                        session.Source, first.ChapterUrl, session.Source.BookSourceUrl,
+                        previewToken).ConfigureAwait(true);
+
+                    if (_hostElement is null)
+                    {
+                        return;
+                    }
+
+                    raw = refetched?.Content;
+                    firstImages = refetched?.ImageUrls;
+                    holder.FirstChapterRaw = raw;
+                    holder.FirstChapterImages = firstImages;
+                    holder.FirstChapterUrl = first.ChapterUrl;
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    // 补抓失败不吞掉已抓到的缓存：下面照常渲染（可能只是慢/临时失败）
+                    System.Diagnostics.Debug.WriteLine($"Preview first chapter refetch failed: {ex.Message}");
+                    refetchError = ex.Message;
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(raw) && (firstImages is not { Count: > 0 }))
             {
                 previewChapterName.Text = chapters is { Count: > 0 } ? chapters[0].ChapterName ?? "第一章" : "目录为空";
-                previewText.Text = "第一章正文为空（书源问题，见结果条目的警告标记）。";
+                previewText.Text = refetchError is null
+                    ? "第一章正文为空（书源问题，见结果条目的警告标记）。"
+                    : $"第一章加载失败：{refetchError}";
                 return;
             }
 
@@ -1705,16 +1771,16 @@ namespace Uviewer.Services.Legado
                         continue;
                     }
 
-                    var bitmap = new BitmapImage();
-                    using (var stream = new MemoryStream(bytes, writable: false))
-                    using (var randomAccess = stream.AsRandomAccessStream())
-                    {
-                        await bitmap.SetSourceAsync(randomAccess).AsTask(token).ConfigureAwait(true);
-                    }
-
+                    var bitmap = await DecodePreviewImageAsync(bytes, token).ConfigureAwait(true);
                     if (token.IsCancellationRequested)
                     {
                         return;
+                    }
+
+                    if (bitmap is null)
+                    {
+                        SetSlotText(slots[i], $"第 {i + 1} 页解码失败（格式不支持）", palette);
+                        continue;
                     }
 
                     slots[i].Child = new Image
@@ -1733,6 +1799,94 @@ namespace Uviewer.Services.Legado
                     System.Diagnostics.Debug.WriteLine($"Preview image failed: {ex.Message}");
                     SetSlotText(slots[i], $"第 {i + 1} 页加载失败", palette);
                 }
+            }
+        }
+
+        /// <summary>
+        /// 预览页图解码：<b>先走系统 WIC，再走 SkiaSharp 兜底</b>。
+        /// <para><b>为什么必须兜底</b>：漫画站点近年普遍发 <c>image/webp</c>（快看是
+        /// <c>RIFF/WEBP</c>）。Windows 的 WIC 只在装了 "Webp Image Extensions" 时才认 WebP，
+        /// 没装的机器上 <c>BitmapImage.SetSourceAsync</c> 直接抛异常，槽位就只剩
+        /// "第 1 页加载失败"——目录能解析、图片地址也正确，却一张都看不见。</para>
+        /// <para>兜底复用宿主已有的 <see cref="ArchiveThumbnailEncoder"/>（SkiaSharp 解码 +
+        /// 等比缩放 + PNG 编码），后台线程做，预览宽度量级下开销可以接受。</para>
+        /// </summary>
+        /// <returns>解码好的位图；两条路都失败返回 <c>null</c>（由调用方降级成文案）。</returns>
+        private static async Task<ImageSource?> DecodePreviewImageAsync(byte[] bytes, CancellationToken token)
+        {
+            // ① 系统解码器：jpg/png/gif/bmp 一步到位，不解码两次
+            try
+            {
+                var native = new BitmapImage();
+                using (var stream = new MemoryStream(bytes, writable: false))
+                using (var randomAccess = stream.AsRandomAccessStream())
+                {
+                    await native.SetSourceAsync(randomAccess).AsTask(token).ConfigureAwait(true);
+                }
+
+                // 有的机器不抛异常但解出 0×0（缺 codec 的另一副面孔），同样视为失败
+                if (native.PixelWidth > 0 && native.PixelHeight > 0)
+                {
+                    return native;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Preview native decode failed (fallback to skia): {ex.Message}");
+            }
+
+            if (token.IsCancellationRequested)
+            {
+                return null;
+            }
+
+            // ② SkiaSharp 转码：WebP / AVIF 之类系统缺 codec 的格式
+            var png = await Task.Run(() =>
+            {
+                try
+                {
+                    using var stream = new MemoryStream(bytes, writable: false);
+                    return ArchiveThumbnailEncoder.Encode(stream, PreviewImageDecodeSize, token);
+                }
+                catch (OperationCanceledException)
+                {
+                    return null;
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"Preview skia decode failed: {ex.Message}");
+                    return null;
+                }
+            }, token).ConfigureAwait(true);
+
+            if (png is null || png.Length == 0 || token.IsCancellationRequested)
+            {
+                return null;
+            }
+
+            try
+            {
+                var converted = new BitmapImage();
+                using (var stream = new MemoryStream(png, writable: false))
+                using (var randomAccess = stream.AsRandomAccessStream())
+                {
+                    await converted.SetSourceAsync(randomAccess).AsTask(token).ConfigureAwait(true);
+                }
+
+                return converted;
+            }
+            catch (OperationCanceledException)
+            {
+                return null;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Preview converted decode failed: {ex.Message}");
+                return null;
             }
         }
 
@@ -2437,6 +2591,13 @@ namespace Uviewer.Services.Legado
 
             /// <summary>第一章抽取到的图片地址（图片书源/漫画）：预览图集的来源。</summary>
             public List<string>? FirstChapterImages { get; set; }
+
+            /// <summary>
+            /// 上面两份缓存对应的<b>章节地址</b>（不是书名 URL）。
+            /// <para>预览要求"固定第一章"：只有地址与目录第一条一致时缓存才算数，
+            /// 否则（探测期间目录变了、缓存是别的章）预览会自己补抓。</para>
+            /// </summary>
+            public string? FirstChapterUrl { get; set; }
 
             public string? Error { get; set; }
 
